@@ -11,7 +11,7 @@ enum SheetStyle {
     static let label = Color(hex: 0xB4B9C8)
     static let text = Color(hex: 0xF2F3F7)
     static let divider = Color.white.opacity(0.08)
-    static let radius: CGFloat = 10
+    static let radius: CGFloat = 8
 }
 
 struct ExportSheet: View {
@@ -40,31 +40,24 @@ struct ExportSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Export")
-                    .font(.system(size: 23, weight: .bold))
-                    .foregroundStyle(SheetStyle.text)
-                Spacer()
-                Text(model.title)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(SheetStyle.label)
-                    .lineLimit(1)
-            }
-            .padding(.bottom, 20)
+            Text("Export")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(SheetStyle.text)
+                .padding(.bottom, 16)
 
-            HStack(alignment: .center, spacing: 24) {
-                form.frame(width: 318)
+            HStack(alignment: .center, spacing: 20) {
+                form.frame(width: 284)
                 Rectangle().fill(SheetStyle.divider).frame(width: 1)
                 summaryColumn.frame(width: Self.previewWidth)
             }
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.bottom, 24)
+            .padding(.bottom, 20)
 
             footer
         }
-        .padding(.horizontal, 32)
-        .padding(.top, 26)
-        .padding(.bottom, 28)
+        .padding(.horizontal, 24)
+        .padding(.top, 20)
+        .padding(.bottom, 22)
         .background(SheetStyle.background)
         .preferredColorScheme(.dark)
         .onAppear(perform: setUp)
@@ -75,14 +68,14 @@ struct ExportSheet: View {
         }
     }
 
-    static let previewWidth: CGFloat = 316
-    static let fieldHeight: CGFloat = 30
+    static let previewWidth: CGFloat = 288
+    static let fieldHeight: CGFloat = 28
 
     // MARK: Left column
 
     private var form: some View {
         let h = Self.fieldHeight
-        return VStack(spacing: 10) {
+        return VStack(spacing: 8) {
             row("Filename") {
                 HStack(spacing: 0) {
                     TextField("", text: $name)
@@ -93,9 +86,9 @@ struct ExportSheet: View {
                         .padding(.leading, -4)
                     Spacer(minLength: 0)
                 }
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(SheetStyle.text)
-                .padding(.horizontal, 13)
+                .padding(.horizontal, 11)
                 .frame(height: h)
                 .sheetField(focused: nameFocused)
                 .clipped()
@@ -133,10 +126,10 @@ struct ExportSheet: View {
                     }
                 }
                 row("Audio") {
-                    HStack(spacing: 12) {
+                    HStack(spacing: 10) {
                         AccentSwitch(isOn: $settings.includeAudio)
                         Text("Include audio")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(SheetStyle.text)
                         Spacer()
                     }
@@ -149,9 +142,9 @@ struct ExportSheet: View {
     private func row<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
         HStack(spacing: 0) {
             Text(title)
-                .font(.system(size: 13))
+                .font(.system(size: 12))
                 .foregroundStyle(SheetStyle.label)
-                .frame(width: 96, alignment: .leading)
+                .frame(width: 84, alignment: .leading)
             content()
         }
     }
@@ -162,7 +155,7 @@ struct ExportSheet: View {
         let p = model.project
         let size = settings.renderSize(for: p)
         let w = Self.previewWidth
-        return VStack(alignment: .leading, spacing: 16) {
+        return VStack(alignment: .leading, spacing: 12) {
             PreviewPlayerBox(player: player, showsVideo: isVideo)
                 .frame(width: w, height: (w * 9 / 16).rounded())
 
@@ -182,20 +175,20 @@ struct ExportSheet: View {
                 Spacer(minLength: 8)
                 stat("doc", estimatedSize)
             }
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 4)
         }
     }
 
     private var statDivider: some View {
-        Rectangle().fill(Color.white.opacity(0.14)).frame(width: 1, height: 16)
+        Rectangle().fill(Color.white.opacity(0.14)).frame(width: 1, height: 13)
     }
 
     private func stat(_ symbol: String?, _ text: String) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             if let symbol {
-                Image(systemName: symbol).font(.system(size: 14)).foregroundStyle(SheetStyle.label)
+                Image(systemName: symbol).font(.system(size: 11.5)).foregroundStyle(SheetStyle.label)
             }
-            Text(text).font(.system(size: 13)).foregroundStyle(SheetStyle.label).lineLimit(1)
+            Text(text).font(.system(size: 11.5)).foregroundStyle(SheetStyle.label).lineLimit(1)
         }
     }
 
@@ -287,7 +280,7 @@ struct ExportSheet: View {
                     .font(.system(size: 16))
                     .foregroundStyle(Color(hex: 0x3DDC97))
                 Text(url.lastPathComponent)
-                    .font(.system(size: 12.5))
+                    .font(.system(size: 12))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -313,7 +306,7 @@ struct ExportSheet: View {
     }
 
     private var buttons: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             PillButton(title: "Cancel", prominent: false, large: true, shortcut: .cancelAction) { model.showExport = false }
             PillButton(title: "Export", prominent: true, large: true, shortcut: .defaultAction) { start() }
                 .disabled(model.project.duration <= 0)
@@ -331,14 +324,14 @@ private struct FolderButton: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Text((folder.path as NSString).abbreviatingWithTildeInPath)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(SheetStyle.text)
                     .lineLimit(1)
                     .truncationMode(.head)
                 Spacer(minLength: 4)
-                Image(systemName: "folder").font(.system(size: 14)).foregroundStyle(hovering ? SheetStyle.text : SheetStyle.label)
+                Image(systemName: "folder").font(.system(size: 12)).foregroundStyle(hovering ? SheetStyle.text : SheetStyle.label)
             }
-            .padding(.horizontal, 13)
+            .padding(.horizontal, 11)
             .frame(height: height)
             .sheetField(hovering: hovering)
             .contentShape(Rectangle())
@@ -443,16 +436,16 @@ private struct PreviewPlayerBox: View {
             }
             if !player.isPlaying || hovering {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 34, weight: .bold))
+                    .font(.system(size: 26, weight: .bold))
                     .foregroundStyle(.white)
                     .shadow(color: .black.opacity(0.5), radius: 6)
                     .scaleEffect(hovering ? 1.08 : 1)
                     .animation(.easeOut(duration: 0.12), value: hovering)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.white.opacity(hovering ? 0.28 : 0.14)))
-        .shadow(color: .black.opacity(0.35), radius: 14, y: 6)
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Color.white.opacity(hovering ? 0.28 : 0.14)))
+        .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { player.toggle() }
@@ -472,17 +465,16 @@ struct PillButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: large ? 14 : 12, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Color.white)
-                .padding(.horizontal, large ? 28 : 15)
-                .frame(height: large ? 38 : 28)
+                .padding(.horizontal, large ? 18 : 15)
+                .frame(height: 28)
                 .background(
                     Capsule().fill(prominent
-                        ? AnyShapeStyle(LinearGradient(colors: [Color(hex: 0xFF8A3D), Color(hex: 0xF2541F)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                        ? AnyShapeStyle(Theme.accent)
                         : AnyShapeStyle(large ? (hovering ? Color(hex: 0x363A48) : Color(hex: 0x2B2E3A)) : Color.white.opacity(hovering ? 0.14 : 0.08)))
                 )
-                .overlay(Capsule().strokeBorder(Color.white.opacity(prominent ? 0.18 : 0.05)))
-                .shadow(color: prominent && large ? Color(hex: 0xF2541F).opacity(hovering ? 0.5 : 0.3) : .clear, radius: 10, y: 3)
+                .overlay(Capsule().strokeBorder(Color.white.opacity(prominent ? 0 : 0.05)))
                 .brightness(prominent && hovering ? 0.05 : 0)
                 .contentShape(Capsule())
         }
@@ -514,15 +506,15 @@ private struct SheetMenu<Content: View>: View {
         Menu {
             content()
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 if let symbol {
-                    Image(systemName: symbol).font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.accent)
+                    Image(systemName: symbol).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.accent)
                 }
-                Text(label).font(.system(size: 13, weight: .medium)).foregroundStyle(SheetStyle.text).lineLimit(1)
+                Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(SheetStyle.text).lineLimit(1)
                 Spacer(minLength: 4)
-                Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).foregroundStyle(SheetStyle.text.opacity(0.85))
+                Image(systemName: "chevron.down").font(.system(size: 8.5, weight: .bold)).foregroundStyle(SheetStyle.text.opacity(0.85))
             }
-            .padding(.horizontal, 13)
+            .padding(.horizontal, 11)
             .frame(height: height)
             .frame(maxWidth: .infinity)
             .sheetField(hovering: hovering)
@@ -543,14 +535,13 @@ private struct AccentSwitch: View {
     var body: some View {
         ZStack(alignment: isOn ? .trailing : .leading) {
             Capsule()
-                .fill(isOn ? AnyShapeStyle(LinearGradient(colors: [Color(hex: 0xFF8A3D), Color(hex: 0xF2541F)], startPoint: .leading, endPoint: .trailing))
-                           : AnyShapeStyle(Color(hex: 0x3A3E4D)))
+                .fill(isOn ? Theme.accent : Color(hex: 0x3A3E4D))
             Circle()
                 .fill(Color.white)
                 .shadow(color: .black.opacity(0.3), radius: 1.5, y: 0.5)
-                .padding(2.5)
+                .padding(2)
         }
-        .frame(width: 40, height: 23)
+        .frame(width: 34, height: 20)
         .brightness(hovering ? 0.06 : 0)
         .animation(.easeOut(duration: 0.14), value: isOn)
         .contentShape(Capsule())
