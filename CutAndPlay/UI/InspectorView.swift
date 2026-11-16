@@ -66,6 +66,9 @@ struct InspectorView: View {
                     Button(item.0) { model.setSequence(width: item.1, height: item.2) }
                 }
             }
+            FrameSizeFields(width: p.width, height: p.height) { w, h in
+                model.setSequence(width: w, height: h)
+            }
         }
         InspectorSection("Frame rate") {
             MenuField(label: Self.fpsLabel(p.fps)) {
@@ -94,20 +97,15 @@ struct InspectorView: View {
                           format: { "\(Int($0.rounded()))%" },
                           onEditing: { began in
                               if began {
-                                  let all = model.project.linked(ids)
-                                  speedOrigin = model.project.clips.filter { all.contains($0.id) }
+                                  speedOrigin = model.project.clips
                               } else {
                                   speedOrigin = nil
                                   model.commitLive()
                               }
                           },
                           onChange: { applySpeed($0 / 100, ids: ids) })
-                HStack(spacing: 5) {
-                    ForEach([50, 100, 200, 400, 1000, 3000], id: \.self) { pct in
-                        Chip(label: pct >= 1000 ? "\(pct / 100)×" : "\(pct)%", active: abs(first.speed * 100 - Double(pct)) < 0.5) {
-                            model.setSpeed(Double(pct) / 100)
-                        }
-                    }
+                if abs(first.speed - 1) > 0.001 {
+                    Chip(label: "Reset to 100%", active: false) { model.setSpeed(1) }
                 }
             }
         }
@@ -149,10 +147,8 @@ struct InspectorView: View {
         }
         // Always derive from the clips as they were when the drag began, so rounding never accumulates.
         model.live(autoCommit: false) { p in
-            for o in origin {
-                if let i = p.index(of: o.id) { p.clips[i] = o }
-            }
-            p.setSpeed(ids: Set(origin.map(\.id)), speed: speed)
+            p.clips = origin
+            p.setSpeed(ids: p.linked(ids), speed: speed)
         }
     }
 
@@ -170,6 +166,11 @@ struct InspectorView: View {
                               }
                           }
                       })
+            CurvePicker(selection: first.inCurve, rising: true) { curve in
+                model.mutate { p in
+                    for i in p.clips.indices where ids.contains(p.clips[i].id) { p.clips[i].fadeInCurve = curve }
+                }
+            }
             SliderRow(caption: "Out", value: first.fadeOut, range: 0...maxFade, format: { String(format: "%.2fs", $0) },
                       onEditing: { if !$0 { model.commitLive() } },
                       onChange: { v in
@@ -179,6 +180,11 @@ struct InspectorView: View {
                               }
                           }
                       })
+            CurvePicker(selection: first.outCurve, rising: false) { curve in
+                model.mutate { p in
+                    for i in p.clips.indices where ids.contains(p.clips[i].id) { p.clips[i].fadeOutCurve = curve }
+                }
+            }
         }
     }
 
@@ -284,8 +290,9 @@ private struct SliderRow: View {
                         .multilineTextAlignment(.trailing)
                         .focused($focused)
                         .onSubmit(commit)
+                        .onExitCommand { editing = false }
                         .onChange(of: focused) { _, isFocused in
-                            if !isFocused { editing = false }
+                            if !isFocused, editing { commit() }
                         }
                 } else {
                     Text(format(value))
@@ -375,5 +382,112 @@ private struct ColorField: View {
         ColorPicker("", selection: Binding(get: { color.color }, set: { onChange(RGBA($0)) }), supportsOpacity: false)
             .labelsHidden()
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Width × height entry for a custom sequence size. Return or clicking away applies, Esc reverts.
+private struct FrameSizeFields: View {
+    let width: Int
+    let height: Int
+    let apply: (Int, Int) -> Void
+    @State private var w = ""
+    @State private var h = ""
+    @FocusState private var focus: Int?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            field($w, tag: 0)
+            Text("×").font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+            field($h, tag: 1)
+        }
+        .onAppear(perform: sync)
+        .onChange(of: width) { _, _ in sync() }
+        .onChange(of: height) { _, _ in sync() }
+        .onChange(of: focus) { _, new in
+            if new == nil { commit() }
+        }
+    }
+
+    private func field(_ text: Binding<String>, tag: Int) -> some View {
+        TextField("", text: text)
+            .textFieldStyle(.plain)
+            .multilineTextAlignment(.center)
+            .font(Theme.mono(11))
+            .foregroundStyle(Theme.text)
+            .focused($focus, equals: tag)
+            .onSubmit {
+                commit()
+                focus = nil
+            }
+            .onExitCommand {
+                sync()
+                focus = nil
+            }
+            .frame(height: 26)
+            .frame(maxWidth: .infinity)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Theme.accent.opacity(focus == tag ? 0.9 : 0)))
+    }
+
+    private func sync() {
+        w = String(width)
+        h = String(height)
+    }
+
+    private func commit() {
+        guard let nw = Int(w.filter(\.isNumber)), let nh = Int(h.filter(\.isNumber)) else { return sync() }
+        // Encoders need even dimensions.
+        let cw = min(8192, max(16, nw / 2 * 2)), ch = min(8192, max(16, nh / 2 * 2))
+        if cw != width || ch != height { apply(cw, ch) } else { sync() }
+    }
+}
+
+/// Four small curve thumbnails for choosing a fade shape.
+private struct CurvePicker: View {
+    let selection: FadeCurve
+    let rising: Bool
+    let onPick: (FadeCurve) -> Void
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Color.clear.frame(width: 29, height: 1)
+            ForEach(FadeCurve.allCases, id: \.self) { curve in
+                CurveChip(curve: curve, rising: rising, active: curve == selection) { onPick(curve) }
+            }
+        }
+    }
+}
+
+private struct CurveChip: View {
+    let curve: FadeCurve
+    let rising: Bool
+    let active: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Canvas { ctx, size in
+                let inset: CGFloat = 5
+                let w = size.width - inset * 2, h = size.height - inset * 2
+                var path = Path()
+                for i in 0...20 {
+                    let x = Double(i) / 20
+                    let y = curve.apply(rising ? x : 1 - x)
+                    let pt = CGPoint(x: inset + CGFloat(x) * w, y: inset + (1 - CGFloat(y)) * h)
+                    if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
+                }
+                ctx.stroke(path, with: .color(active ? Theme.accent : (hovering ? Theme.text : Theme.textDim)),
+                           style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 24)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(active ? Theme.accent.opacity(0.16) : (hovering ? Theme.hover : Theme.field)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(curve.label)
     }
 }

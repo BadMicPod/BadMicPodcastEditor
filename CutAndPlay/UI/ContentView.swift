@@ -34,22 +34,19 @@ struct ContentView: View {
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 6) {
                     Text(model.title)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(Theme.text)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Theme.textDim)
                     if model.isDirty {
                         Circle().fill(Theme.textFaint).frame(width: 5, height: 5)
                     }
                 }
             }
+            .withoutGlass()
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    model.showExport = true
-                } label: {
-                    Label("Export", systemImage: "square.and.arrow.up")
-                        .labelStyle(.titleAndIcon)
-                }
-                .help("Export (⌘E)")
+                PillButton(title: "Export", prominent: true) { model.showExport = true }
+                    .help("Export (⌘E)")
             }
+            .withoutGlass()
         }
         .sheet(isPresented: $model.showExport) {
             ExportSheet(model: model, exporter: model.exporter)
@@ -77,7 +74,9 @@ enum KeyCommands {
     }
 
     private static func handle(_ e: NSEvent, _ model: EditorModel) -> Bool {
-        guard let window = NSApp.keyWindow, window.attachedSheet == nil, !(window is NSPanel) else { return false }
+        // Only the main editor window gets bare-key shortcuts; sheets and panels keep Return/Esc for themselves.
+        guard let window = NSApp.keyWindow, window.attachedSheet == nil, window.sheetParent == nil,
+              !(window is NSPanel) else { return false }
         if let responder = window.firstResponder, responder is NSText { return false }
         let flags = e.modifierFlags.intersection([.command, .option, .control])
         guard flags.isEmpty else { return false }
@@ -107,5 +106,17 @@ enum KeyCommands {
             }
         }
         return true
+    }
+}
+
+extension ToolbarContent {
+    /// Opts a toolbar item out of the system's shared glass background where that exists.
+    @ToolbarContentBuilder
+    func withoutGlass() -> some ToolbarContent {
+        if #available(macOS 26.0, *) {
+            sharedBackgroundVisibility(.hidden)
+        } else {
+            self
+        }
     }
 }

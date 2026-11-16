@@ -4,7 +4,6 @@ import AppKit
 struct TimelineLayout {
     static let ruler: CGFloat = 26
     static let zone: CGFloat = 26
-    static let trackHeight: CGFloat = 62
     static let gap: CGFloat = 1
     static let divider: CGFloat = 9
     static let headerWidth: CGFloat = 138
@@ -22,19 +21,22 @@ struct TimelineLayout {
     private(set) var audioZoneY: CGFloat = 0
     private(set) var contentHeight: CGFloat = 0
 
-    init(project: Project) {
+    /// Height everything except the track rows takes up.
+    static let fixedHeight = zone * 2 + divider
+
+    init(project: Project, rowHeight: CGFloat) {
         var y: CGFloat = 0
         videoZoneY = y
         y += Self.zone
         for (i, t) in project.videoTracks.enumerated().reversed() {
-            rows.append(Row(track: t, index: i, y: y, height: Self.trackHeight))
-            y += Self.trackHeight + Self.gap
+            rows.append(Row(track: t, index: i, y: y, height: rowHeight))
+            y += rowHeight + Self.gap
         }
         dividerY = y
         y += Self.divider
         for (i, t) in project.audioTracks.enumerated() {
-            rows.append(Row(track: t, index: i, y: y, height: Self.trackHeight))
-            y += Self.trackHeight + Self.gap
+            rows.append(Row(track: t, index: i, y: y, height: rowHeight))
+            y += rowHeight + Self.gap
         }
         audioZoneY = y
         y += Self.zone

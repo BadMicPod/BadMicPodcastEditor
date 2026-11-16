@@ -14,12 +14,24 @@ struct RenderLayer {
     let end: Double
     let fadeIn: Double
     let fadeOut: Double
+    let inCurve: FadeCurve
+    let outCurve: FadeCurve
     let source: Source
+
+    init(clip: Clip, source: Source) {
+        start = clip.start
+        end = clip.end
+        fadeIn = clip.fadeIn
+        fadeOut = clip.fadeOut
+        inCurve = clip.inCurve
+        outCurve = clip.outCurve
+        self.source = source
+    }
 
     func opacity(at t: Double) -> Double {
         var o = 1.0
-        if fadeIn > 0 { o = min(o, (t - start) / fadeIn) }
-        if fadeOut > 0 { o = min(o, (end - t) / fadeOut) }
+        if fadeIn > 0 { o = min(o, inCurve.apply((t - start) / fadeIn)) }
+        if fadeOut > 0 { o = min(o, outCurve.apply((end - t) / fadeOut)) }
         return max(0, min(1, o))
     }
 }

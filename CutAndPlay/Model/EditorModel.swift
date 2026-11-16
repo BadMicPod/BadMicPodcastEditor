@@ -20,8 +20,11 @@ final class TimelineViewState: ObservableObject {
     @Published var pps: CGFloat = 80
     @Published var scrollX: CGFloat = 0
     @Published var scrollY: CGFloat = 0
-    var viewWidth: CGFloat = 900
-    var viewHeight: CGFloat = 300
+    @Published var rowHeight: CGFloat = 62
+    @Published var viewWidth: CGFloat = 900
+    @Published var viewHeight: CGFloat = 300
+
+    static let rowRange: ClosedRange<CGFloat> = 30...110
 }
 
 /// Publishes only when the visible frame number changes.
@@ -85,6 +88,7 @@ final class EditorModel: ObservableObject {
             let args = CommandLine.arguments
             if let i = args.firstIndex(of: "--open"), args.count > i + 1 {
                 self.open(url: URL(fileURLWithPath: args[i + 1]))
+                if args.contains("--show-export") { self.showExport = true }
                 if let j = args.firstIndex(of: "--seek"), args.count > j + 1, let t = Double(args[j + 1]) {
                     try? await Task.sleep(nanoseconds: 1_500_000_000)
                     self.seek(to: t)
@@ -303,6 +307,7 @@ final class EditorModel: ObservableObject {
                     project.assets.append(asset)
                     isDirty = true
                     imported.append(asset)
+                    offerMatch(asset)
                 } else {
                     failed.append(url.lastPathComponent)
                 }
@@ -313,6 +318,25 @@ final class EditorModel: ObservableObject {
                 importError = "Couldn't import " + failed.joined(separator: ", ") + "." + hint
             }
             completion?(imported)
+        }
+    }
+
+    /// Asked once, on the first video brought into a project: adopt its frame size and rate?
+    private func offerMatch(_ asset: MediaAsset) {
+        guard asset.kind == .video, !project.settingsLocked, asset.width > 0, asset.height > 0 else { return }
+        let fps = Self.standardFPS(asset.fps)
+        project.settingsLocked = true
+        if asset.width == project.width, asset.height == project.height, fps == project.fps { return }
+        let alert = NSAlert()
+        alert.messageText = "Match the sequence to “\(asset.name)”?"
+        alert.informativeText = "\(asset.width) × \(asset.height) · \(InspectorView.fpsLabel(fps))\nThe sequence is currently \(project.width) × \(project.height) · \(InspectorView.fpsLabel(project.fps))."
+        alert.addButton(withTitle: "Match")
+        alert.addButton(withTitle: "Keep Current")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        mutate { p in
+            p.width = asset.width
+            p.height = asset.height
+            p.fps = fps
         }
     }
 
@@ -366,13 +390,6 @@ final class EditorModel: ObservableObject {
         guard !clips.isEmpty else { return }
         let ids = Set(clips.map(\.id))
         mutate { p in
-            let assets = p.assets
-            let firstVideo = clips.compactMap { c in assets.first { $0.id == c.assetID } }.first { $0.kind == .video }
-            if p.clips.isEmpty, !p.settingsLocked, let a = firstVideo, a.width > 0, a.height > 0 {
-                p.width = a.width
-                p.height = a.height
-                p.fps = Self.standardFPS(a.fps)
-            }
             p.clips.append(contentsOf: clips)
             p.materializeTokens()
             p.resolveOverlaps(keeping: ids)

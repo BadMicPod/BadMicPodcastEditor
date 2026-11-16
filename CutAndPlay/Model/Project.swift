@@ -37,6 +37,30 @@ struct TextStyle: Codable, Hashable {
     var y = 0.5
 }
 
+enum FadeCurve: String, Codable, CaseIterable {
+    case linear, easeIn, easeOut, smooth
+
+    var label: String {
+        switch self {
+        case .linear: return "Linear"
+        case .easeIn: return "Exponential"
+        case .easeOut: return "Logarithmic"
+        case .smooth: return "S-Curve"
+        }
+    }
+
+    /// Maps fade progress (0 = silent/transparent, 1 = full) through the curve.
+    func apply(_ x: Double) -> Double {
+        let x = min(1, max(0, x))
+        switch self {
+        case .linear: return x
+        case .easeIn: return x * x * x
+        case .easeOut: return 1 - pow(1 - x, 3)
+        case .smooth: return x * x * (3 - 2 * x)
+        }
+    }
+}
+
 struct Clip: Identifiable, Codable, Hashable {
     var id = UUID()
     var trackID: UUID
@@ -48,12 +72,16 @@ struct Clip: Identifiable, Codable, Hashable {
     var speed: Double = 1
     var fadeIn: Double = 0
     var fadeOut: Double = 0
+    var fadeInCurve: FadeCurve?
+    var fadeOutCurve: FadeCurve?
     var gainDB: Double = 0
     var linkID: UUID?
     var color = RGBA(r: 0.16, g: 0.16, b: 0.2, a: 1)
     var text = TextStyle()
 
     var end: Double { start + duration }
+    var inCurve: FadeCurve { fadeInCurve ?? .linear }
+    var outCurve: FadeCurve { fadeOutCurve ?? .linear }
 
     mutating func clampFades() {
         fadeIn = min(max(0, fadeIn), duration)
@@ -316,22 +344,32 @@ extension Project {
         }
     }
 
-    /// Changes playback speed keeping the same source span; never runs into the next clip.
+    /// Changes playback speed of the given clips, keeping each one's source span.
+    /// Changed clips on a track stay butted together (later ones slide by however much earlier ones
+    /// grew or shrank), and anything that would be overlapped is pushed later instead.
     mutating func setSpeed(ids: Set<UUID>, speed: Double) {
         let speed = min(max(speed, 0.05), 100)
-        for id in ids {
-            guard let i = index(of: id), clips[i].kind.usesSource else { continue }
-            var c = clips[i]
-            let span = c.duration * c.speed
-            var dur = span / speed
-            let nextStart = clips.filter { $0.trackID == c.trackID && $0.id != c.id && $0.start >= c.end - 1e-6 }
-                .map(\.start).min() ?? .infinity
-            dur = min(dur, nextStart - c.start)
-            dur = max(snapFrame(dur), 1 / fps)
-            c.speed = speed
-            c.duration = dur
-            c.clampFades()
-            clips[i] = c
+        for track in videoTracks + audioTracks {
+            let order = clips.indices.filter { clips[$0].trackID == track.id }.sorted { clips[$0].start < clips[$1].start }
+            guard order.contains(where: { ids.contains(clips[$0].id) && clips[$0].kind.usesSource }) else { continue }
+            var shift = 0.0
+            var prevEnd = 0.0
+            for i in order {
+                var c = clips[i]
+                if ids.contains(c.id), c.kind.usesSource {
+                    let newDuration = max(snapFrame(c.duration * c.speed / speed), 1 / fps)
+                    c.start += shift
+                    shift += newDuration - c.duration
+                    c.speed = speed
+                    c.duration = newDuration
+                    c.clampFades()
+                } else if ids.contains(c.id) {
+                    c.start += shift
+                }
+                c.start = max(c.start, prevEnd)
+                prevEnd = c.end
+                clips[i] = c
+            }
         }
     }
 

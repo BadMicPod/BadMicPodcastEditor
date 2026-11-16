@@ -76,6 +76,9 @@ enum SelfTest {
         text.text.string = "Cut and Play"
         text.fadeIn = 0.5
         text.fadeOut = 0.5
+        text.fadeOutCurve = .smooth
+        c1.fadeInCurve = .easeIn
+        c1a.fadeInCurve = .easeIn
         project.clips = [c1, c1a, c2, c2a, solid, text]
 
         if let small = project.assets.first(where: { $0.kind == .video && $0.id != video.id }) {
@@ -119,6 +122,24 @@ enum SelfTest {
                 p.clips = [c]
                 ok = await export(p, media, s, to: outDir.appendingPathComponent(name)) && ok
             }
+        }
+        // Speed change on several clips: they stay butted together, and untouched clips are pushed, never overlapped.
+        do {
+            var p = Project()
+            p.assets = project.assets
+            let t = p.videoTracks[0].id
+            let a = Clip(trackID: t, kind: .video, assetID: video.id, start: 0, duration: 2)
+            let b = Clip(trackID: t, kind: .video, assetID: video.id, start: 2, duration: 2, sourceStart: 2)
+            let c = Clip(trackID: t, kind: .solid, start: 4, duration: 1)
+            p.clips = [a, b, c]
+            var fast = p
+            fast.setSpeed(ids: [a.id, b.id], speed: 2)
+            var slow = p
+            slow.setSpeed(ids: [a.id, b.id], speed: 0.5)
+            let f = fast.clips.map { [$0.start, $0.end] }, sl = slow.clips.map { [$0.start, $0.end] }
+            let pass = f == [[0, 1], [1, 2], [4, 5]] && sl == [[0, 4], [4, 8], [8, 9]]
+            log("SPEED GROUP \(pass ? "OK" : "FAIL") fast=\(f) slow=\(sl)")
+            ok = ok && pass
         }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")
     }

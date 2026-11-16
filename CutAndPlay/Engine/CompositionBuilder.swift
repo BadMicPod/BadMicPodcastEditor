@@ -86,8 +86,7 @@ enum CompositionBuilder {
                         }
                         guard let ct = compTrack, insert(clip, source: src, range: rt.videoRange, into: ct, cursor: &cursor) else { continue }
                         hash(clip, into: &hasher)
-                        layers.append(RenderLayer(start: clip.start, end: clip.end, fadeIn: clip.fadeIn, fadeOut: clip.fadeOut,
-                                                  source: .track(ct.trackID, rt.orientation)))
+                        layers.append(RenderLayer(clip: clip, source: .track(ct.trackID, rt.orientation)))
                     case .image:
                         guard let cg = media.still(clip.assetID) else { continue }
                         let img = CIImage(cgImage: cg)
@@ -96,16 +95,13 @@ enum CompositionBuilder {
                         let fitted = img.transformed(by: CGAffineTransform(a: s, b: 0, c: 0, d: s,
                                                                            tx: (frame.width - e.width * s) / 2,
                                                                            ty: (frame.height - e.height * s) / 2))
-                        layers.append(RenderLayer(start: clip.start, end: clip.end, fadeIn: clip.fadeIn, fadeOut: clip.fadeOut,
-                                                  source: .image(fitted)))
+                        layers.append(RenderLayer(clip: clip, source: .image(fitted)))
                     case .solid:
                         let c = clip.color
-                        layers.append(RenderLayer(start: clip.start, end: clip.end, fadeIn: clip.fadeIn, fadeOut: clip.fadeOut,
-                                                  source: .color(CIColor(red: c.r, green: c.g, blue: c.b, alpha: c.a))))
+                        layers.append(RenderLayer(clip: clip, source: .color(CIColor(red: c.r, green: c.g, blue: c.b, alpha: c.a))))
                     case .text:
                         guard let img = TextRenderer.image(clip.text, renderSize: renderSize) else { continue }
-                        layers.append(RenderLayer(start: clip.start, end: clip.end, fadeIn: clip.fadeIn, fadeOut: clip.fadeOut,
-                                                  source: .image(img)))
+                        layers.append(RenderLayer(clip: clip, source: .image(img)))
                     case .audio:
                         continue
                     }
@@ -143,12 +139,12 @@ enum CompositionBuilder {
                     let fi = min(time(clip.fadeIn), end - start)
                     let fo = min(time(clip.fadeOut), end - start - fi)
                     if fi > .zero {
-                        p.setVolumeRamp(fromStartVolume: 0, toEndVolume: gain, timeRange: CMTimeRange(start: start, duration: fi))
+                        ramp(p, from: start, duration: fi, gain: gain, curve: clip.inCurve, rising: true)
                     } else {
                         p.setVolume(gain, at: start)
                     }
                     if fo > .zero {
-                        p.setVolumeRamp(fromStartVolume: gain, toEndVolume: 0, timeRange: CMTimeRange(start: end - fo, duration: fo))
+                        ramp(p, from: end - fo, duration: fo, gain: gain, curve: clip.outCurve, rising: false)
                     }
                 }
             }
@@ -172,6 +168,22 @@ enum CompositionBuilder {
 
         return BuiltTimeline(composition: comp.copy() as! AVComposition, videoComposition: vc, audioMix: mix,
                              duration: total, signature: hasher.finalize(), hasAudio: !mixParams.isEmpty)
+    }
+
+    /// Volume ramps are linear, so curved fades are approximated with short linear pieces.
+    private static func ramp(_ p: AVMutableAudioMixInputParameters, from start: CMTime, duration: CMTime,
+                             gain: Float, curve: FadeCurve, rising: Bool) {
+        let pieces = curve == .linear ? 1 : 16
+        var t0 = start
+        for i in 0..<pieces {
+            let x0 = Double(i) / Double(pieces), x1 = Double(i + 1) / Double(pieces)
+            let t1 = i == pieces - 1 ? start + duration : start + CMTimeMultiplyByFloat64(duration, multiplier: x1)
+            guard t1 > t0 else { continue }
+            let v0 = gain * Float(curve.apply(rising ? x0 : 1 - x0))
+            let v1 = gain * Float(curve.apply(rising ? x1 : 1 - x1))
+            p.setVolumeRamp(fromStartVolume: v0, toEndVolume: v1, timeRange: CMTimeRange(start: t0, end: t1))
+            t0 = t1
+        }
     }
 
     private static func hash(_ clip: Clip, into hasher: inout Hasher) {

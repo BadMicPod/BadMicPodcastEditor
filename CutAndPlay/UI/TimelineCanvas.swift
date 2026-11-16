@@ -11,7 +11,7 @@ struct TimelineCanvasView: NSViewRepresentable {
 
 /// The playhead lives in its own layer-backed view so moving it never redraws the clips.
 final class PlayheadView: NSView {
-    static let width: CGFloat = 15
+    static let width: CGFloat = 16
 
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -19,16 +19,23 @@ final class PlayheadView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let mid = bounds.midX
+        let l = mid - 5.5, r = mid + 5.5
+        let top: CGFloat = 5, shoulder: CGFloat = 13, tip: CGFloat = 19, rad: CGFloat = 3
+        // One closed shape: rounded cap narrowing to a point, with the stem running straight out of the tip.
+        let p = CGMutablePath()
+        p.move(to: CGPoint(x: l, y: top + rad))
+        p.addArc(tangent1End: CGPoint(x: l, y: top), tangent2End: CGPoint(x: l + rad, y: top), radius: rad)
+        p.addLine(to: CGPoint(x: r - rad, y: top))
+        p.addArc(tangent1End: CGPoint(x: r, y: top), tangent2End: CGPoint(x: r, y: top + rad), radius: rad)
+        p.addLine(to: CGPoint(x: r, y: shoulder))
+        p.addLine(to: CGPoint(x: mid + 0.5, y: tip))
+        p.addLine(to: CGPoint(x: mid + 0.5, y: bounds.height))
+        p.addLine(to: CGPoint(x: mid - 0.5, y: bounds.height))
+        p.addLine(to: CGPoint(x: mid - 0.5, y: tip))
+        p.addLine(to: CGPoint(x: l, y: shoulder))
+        p.closeSubpath()
+        ctx.addPath(p)
         ctx.setFillColor(Theme.NS.accent.cgColor)
-        ctx.fill(CGRect(x: mid - 0.75, y: 14, width: 1.5, height: bounds.height - 14))
-        let head = CGMutablePath()
-        let top: CGFloat = 5, w: CGFloat = 11, h: CGFloat = 15
-        head.addRoundedRect(in: CGRect(x: mid - w / 2, y: top, width: w, height: h - 5), cornerWidth: 2.5, cornerHeight: 2.5)
-        head.move(to: CGPoint(x: mid - w / 2, y: top + h - 7))
-        head.addLine(to: CGPoint(x: mid, y: top + h))
-        head.addLine(to: CGPoint(x: mid + w / 2, y: top + h - 7))
-        head.closeSubpath()
-        ctx.addPath(head)
         ctx.fillPath()
     }
 }
@@ -38,7 +45,7 @@ final class TimelineCanvas: NSView {
     private var view: TimelineViewState { model.view }
     private var bag = Set<AnyCancellable>()
     private let playheadView = PlayheadView()
-    private var layout = TimelineLayout(project: Project())
+    private var layout = TimelineLayout(project: Project(), rowHeight: 62)
 
     // MARK: Interaction state
 
@@ -89,6 +96,8 @@ final class TimelineCanvas: NSView {
         self.model = model
         super.init(frame: .zero)
         wantsLayer = true
+        clipsToBounds = true
+        layer?.masksToBounds = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         playheadView.wantsLayer = true
         playheadView.layerContentsRedrawPolicy = .onSetNeedsDisplay
@@ -109,11 +118,25 @@ final class TimelineCanvas: NSView {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        view.viewWidth = newSize.width
-        view.viewHeight = newSize.height
+        let state = view
+        DispatchQueue.main.async {
+            if state.viewWidth != newSize.width { state.viewWidth = newSize.width }
+            if state.viewHeight != newSize.height { state.viewHeight = newSize.height }
+        }
         playheadView.frame.size = CGSize(width: PlayheadView.width, height: newSize.height)
         playheadView.needsDisplay = true
         clampScroll()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // Keep keyboard focus on the timeline rather than the first text field SwiftUI finds.
+        for delay in [0.0, 0.4] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, let window = self.window, !(window.firstResponder is NSText) || delay > 0 else { return }
+                window.makeFirstResponder(self)
+            }
+        }
     }
 
     override func updateTrackingAreas() {
@@ -778,7 +801,7 @@ final class TimelineCanvas: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let project = model.project
-        layout = TimelineLayout(project: project)
+        layout = TimelineLayout(project: project, rowHeight: view.rowHeight)
         let ruler = TimelineLayout.ruler
 
         Theme.NS.bg.setFill()
@@ -847,17 +870,6 @@ final class TimelineCanvas: NSView {
         }
 
         drawRuler(ctx, project: project)
-
-        // Horizontal scroll indicator
-        let total = max(CGFloat(project.duration) * pps + bounds.width * 0.5, view.scrollX + bounds.width)
-        if total > bounds.width + 1 {
-            let w = max(24, bounds.width / total * bounds.width)
-            let sx = view.scrollX / total * bounds.width
-            let bar = CGRect(x: sx + 2, y: bounds.height - 5, width: w - 4, height: 3)
-            ctx.setFillColor(NSColor(white: 1, alpha: 0.16).cgColor)
-            ctx.addPath(CGPath(roundedRect: bar, cornerWidth: 1.5, cornerHeight: 1.5, transform: nil))
-            ctx.fillPath()
-        }
 
         // Value bubble
         if let b = bubble {
@@ -985,33 +997,29 @@ final class TimelineCanvas: NSView {
         }
 
         // Fades
-        let fi = CGFloat(c.fadeIn) * pps, fo = CGFloat(c.fadeOut) * pps
-        if fi > 0.5 {
-            ctx.beginPath()
-            ctx.move(to: CGPoint(x: r.minX, y: r.minY))
-            ctx.addLine(to: CGPoint(x: r.minX + fi, y: r.minY))
-            ctx.addLine(to: CGPoint(x: r.minX, y: r.maxY))
-            ctx.closePath()
-            ctx.setFillColor(NSColor(white: 0, alpha: 0.55).cgColor)
-            ctx.fillPath()
+        for isIn in [true, false] {
+            let w = CGFloat(isIn ? c.fadeIn : c.fadeOut) * pps
+            guard w > 0.5 else { continue }
+            let curve = isIn ? c.inCurve : c.outCurve
+            let edge = isIn ? r.minX : r.maxX
+            let dir: CGFloat = isIn ? 1 : -1
+            let line = CGMutablePath()
+            let steps = 24
+            for i in 0...steps {
+                let n = Double(i) / Double(steps)
+                let pt = CGPoint(x: edge + dir * CGFloat(n) * w, y: r.maxY - CGFloat(curve.apply(n)) * r.height)
+                if i == 0 { line.move(to: pt) } else { line.addLine(to: pt) }
+            }
+            if let shade = line.mutableCopy() {
+                shade.addLine(to: CGPoint(x: edge, y: r.minY))
+                shade.closeSubpath()
+                ctx.addPath(shade)
+                ctx.setFillColor(NSColor(white: 0, alpha: 0.55).cgColor)
+                ctx.fillPath()
+            }
+            ctx.addPath(line)
             ctx.setStrokeColor(NSColor(white: 1, alpha: 0.85).cgColor)
             ctx.setLineWidth(1)
-            ctx.move(to: CGPoint(x: r.minX, y: r.maxY))
-            ctx.addLine(to: CGPoint(x: r.minX + fi, y: r.minY))
-            ctx.strokePath()
-        }
-        if fo > 0.5 {
-            ctx.beginPath()
-            ctx.move(to: CGPoint(x: r.maxX, y: r.minY))
-            ctx.addLine(to: CGPoint(x: r.maxX - fo, y: r.minY))
-            ctx.addLine(to: CGPoint(x: r.maxX, y: r.maxY))
-            ctx.closePath()
-            ctx.setFillColor(NSColor(white: 0, alpha: 0.55).cgColor)
-            ctx.fillPath()
-            ctx.setStrokeColor(NSColor(white: 1, alpha: 0.85).cgColor)
-            ctx.setLineWidth(1)
-            ctx.move(to: CGPoint(x: r.maxX, y: r.maxY))
-            ctx.addLine(to: CGPoint(x: r.maxX - fo, y: r.minY))
             ctx.strokePath()
         }
 
