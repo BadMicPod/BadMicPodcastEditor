@@ -86,7 +86,7 @@ enum CompositionBuilder {
                         }
                         guard let ct = compTrack, insert(clip, source: src, range: rt.videoRange, into: ct, cursor: &cursor) else { continue }
                         hash(clip, into: &hasher)
-                        layers.append(RenderLayer(clip: clip, source: .track(ct.trackID, rt.orientation)))
+                        layers.append(RenderLayer(clip: clip, source: .track(ct.trackID, rt.orientation), cube: GradeBaker.cube(for: clip.grade)))
                     case .image:
                         guard let cg = media.still(clip.assetID) else { continue }
                         let img = CIImage(cgImage: cg)
@@ -95,13 +95,13 @@ enum CompositionBuilder {
                         let fitted = img.transformed(by: CGAffineTransform(a: s, b: 0, c: 0, d: s,
                                                                            tx: (frame.width - e.width * s) / 2,
                                                                            ty: (frame.height - e.height * s) / 2))
-                        layers.append(RenderLayer(clip: clip, source: .image(fitted)))
+                        layers.append(RenderLayer(clip: clip, source: .image(fitted), cube: GradeBaker.cube(for: clip.grade)))
                     case .solid:
                         let c = clip.color
-                        layers.append(RenderLayer(clip: clip, source: .color(CIColor(red: c.r, green: c.g, blue: c.b, alpha: c.a))))
+                        layers.append(RenderLayer(clip: clip, source: .color(CIColor(red: c.r, green: c.g, blue: c.b, alpha: c.a)), cube: GradeBaker.cube(for: clip.grade)))
                     case .text:
                         guard let img = TextRenderer.image(clip.text, renderSize: renderSize) else { continue }
-                        layers.append(RenderLayer(clip: clip, source: .image(img)))
+                        layers.append(RenderLayer(clip: clip, source: .image(img), cube: GradeBaker.cube(for: clip.grade)))
                     case .audio:
                         continue
                     }

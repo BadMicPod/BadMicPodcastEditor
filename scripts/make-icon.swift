@@ -17,8 +17,8 @@ ctx.restoreGState()
 ctx.addPath(shape)
 ctx.clip()
 ctx.interpolationQuality = .high
-// The artwork sits small in its frame, so enlarge it a little inside the tile.
-let scale: CGFloat = 1.15
+// Full-bleed artwork fills the tile exactly; pass a third argument above 1 to enlarge art that sits small in its frame.
+let scale: CGFloat = args.count > 3 ? CGFloat(Double(args[3]) ?? 1) : 1
 let side = box.width * scale
 ctx.draw(cg, in: CGRect(x: box.midX - side / 2, y: box.midY - side / 2, width: side, height: side))
 let out = NSBitmapImageRep(cgImage: ctx.makeImage()!)

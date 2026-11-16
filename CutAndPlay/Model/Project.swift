@@ -78,6 +78,8 @@ struct Clip: Identifiable, Codable, Hashable {
     var linkID: UUID?
     var color = RGBA(r: 0.16, g: 0.16, b: 0.2, a: 1)
     var text = TextStyle()
+    /// Colour correction for visual clips; nil means untouched.
+    var grade: ColorGrade?
 
     var end: Double { start + duration }
     var inCurve: FadeCurve { fadeInCurve ?? .linear }

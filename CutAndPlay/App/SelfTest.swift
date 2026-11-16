@@ -77,6 +77,11 @@ enum SelfTest {
         text.fadeIn = 0.5
         text.fadeOut = 0.5
         text.fadeOutCurve = .smooth
+        // Grade the sped-up section: mono look plus a strong warm push in the highlights.
+        var grade = ColorGrade()
+        grade.look = "Mono"
+        grade.highlights = WheelPoint(x: 1, y: 0)
+        c2.grade = grade
         c1.fadeInCurve = .easeIn
         c1a.fadeInCurve = .easeIn
         project.clips = [c1, c1a, c2, c2a, solid, text]

@@ -17,8 +17,11 @@ struct RenderLayer {
     let inCurve: FadeCurve
     let outCurve: FadeCurve
     let source: Source
+    /// Baked colour cube for this clip's grade, if it has one.
+    let cube: Data?
 
-    init(clip: Clip, source: Source) {
+    init(clip: Clip, source: Source, cube: Data? = nil) {
+        self.cube = cube
         start = clip.start
         end = clip.end
         fadeIn = clip.fadeIn
@@ -138,6 +141,12 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
                 image = img
             case .color(let color):
                 image = CIImage(color: color).cropped(to: frame)
+            }
+            if let cube = layer.cube {
+                image = image.applyingFilter("CIColorCube", parameters: [
+                    "inputCubeDimension": GradeCube.dimension,
+                    "inputCubeData": cube,
+                ])
             }
             if opacity < 0.999 {
                 image = image.applyingFilter("CIColorMatrix", parameters: [

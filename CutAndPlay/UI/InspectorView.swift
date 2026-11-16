@@ -1,11 +1,13 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct InspectorView: View {
     static let width: CGFloat = 320
 
     @ObservedObject var model: EditorModel
     @State private var speedOrigin: [Clip]?
+    @State private var colorTab = "Look"
 
     private var selected: [Clip] {
         model.project.clips.filter { model.selection.contains($0.id) }
@@ -145,6 +147,7 @@ struct InspectorView: View {
 
         if !visual.isEmpty { fadeSection(audio.isEmpty ? "Fade" : "Video fade", visual) }
         if !audio.isEmpty { fadeSection(visual.isEmpty ? "Fade" : "Audio fade", audio) }
+        if !visual.isEmpty { colorSection(visual) }
 
         if clips.count == 1, let c = clips.first {
             if c.kind == .text { textSection(c) }
@@ -208,6 +211,89 @@ struct InspectorView: View {
                          }
                      }))
         }
+    }
+
+    @ViewBuilder private func colorSection(_ clips: [Clip]) -> some View {
+        let ids = Set(clips.map(\.id))
+        let grade = clips[0].grade ?? ColorGrade()
+        let live: (@escaping (inout ColorGrade) -> Void) -> Void = { body in
+            model.live(autoCommit: false) { p in
+                for i in p.clips.indices where ids.contains(p.clips[i].id) {
+                    var g = p.clips[i].grade ?? ColorGrade()
+                    body(&g)
+                    p.clips[i].grade = g.isNeutral ? nil : g
+                }
+            }
+        }
+        let once: (@escaping (inout ColorGrade) -> Void) -> Void = { body in
+            model.mutate { p in
+                for i in p.clips.indices where ids.contains(p.clips[i].id) {
+                    var g = p.clips[i].grade ?? ColorGrade()
+                    body(&g)
+                    p.clips[i].grade = g.isNeutral ? nil : g
+                }
+            }
+        }
+        let done: (Bool) -> Void = { editing in
+            if !editing { model.commitLive() }
+        }
+        InspectorSection("Color", action: grade.isNeutral ? nil : ("Reset", { once { $0 = ColorGrade() } })) {
+            TabStrip(options: ["Look", "Adjust", "Wheels"], selection: $colorTab)
+            switch colorTab {
+            case "Adjust":
+                ParamRow(icon: .symbol("sun.max"), label: "Exposure", value: grade.exposure, range: -2...2,
+                         format: { String(format: "%+.2f", $0) }, onEditing: done,
+                         onChange: { v in live { $0.exposure = (v * 100).rounded() / 100 } })
+                ParamRow(icon: .symbol("circle.lefthalf.filled"), label: "Contrast", value: grade.contrast, range: -50...50,
+                         format: { "\(Int($0.rounded()))" }, onEditing: done,
+                         onChange: { v in live { $0.contrast = v.rounded() } })
+                ParamRow(icon: .symbol("drop"), label: "Saturate", value: grade.saturation, range: -100...100,
+                         format: { "\(Int($0.rounded()))" }, onEditing: done,
+                         onChange: { v in live { $0.saturation = v.rounded() } })
+                ParamRow(icon: .symbol("thermometer.medium"), label: "Temp", value: grade.temperature, range: -50...50,
+                         format: { "\(Int($0.rounded()))" }, onEditing: done,
+                         onChange: { v in live { $0.temperature = v.rounded() } })
+                ParamRow(icon: .symbol("eyedropper"), label: "Tint", value: grade.tint, range: -50...50,
+                         format: { "\(Int($0.rounded()))" }, onEditing: done,
+                         onChange: { v in live { $0.tint = v.rounded() } })
+            case "Wheels":
+                HStack(alignment: .top, spacing: 0) {
+                    ColorWheel(title: "Shadows", point: grade.shadows, onChange: { pt in live { $0.shadows = pt } }, onEnd: { model.commitLive() })
+                    ColorWheel(title: "Midtones", point: grade.midtones, onChange: { pt in live { $0.midtones = pt } }, onEnd: { model.commitLive() })
+                    ColorWheel(title: "Highlights", point: grade.highlights, onChange: { pt in live { $0.highlights = pt } }, onEnd: { model.commitLive() })
+                }
+                .padding(.top, 4)
+            default:
+                MenuField(label: grade.lookLabel) {
+                    Button("None") { once { $0.look = nil } }
+                    Divider()
+                    ForEach(BuiltInLook.all, id: \.name) { item in
+                        Button(item.name) { once { $0.look = item.name } }
+                    }
+                    Divider()
+                    Button("Load .cube…") {
+                        if let path = chooseCube() { once { $0.look = path } }
+                    }
+                }
+                ParamRow(icon: .symbol("circle.dotted"), label: "Intensity", value: grade.lookIntensity * 100, range: 0...100,
+                         format: { "\(Int($0.rounded()))%" }, onEditing: done,
+                         onChange: { v in live { $0.lookIntensity = v.rounded() / 100 } })
+                    .disabled(grade.look == nil)
+                    .opacity(grade.look == nil ? 0.4 : 1)
+            }
+        }
+    }
+
+    private func chooseCube() -> String? {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "cube") ?? .data]
+        panel.prompt = "Load"
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        guard GradeBaker.cubeFile(url.path) != nil else {
+            model.importError = "“\(url.lastPathComponent)” isn't a 3D .cube LUT this app can read."
+            return nil
+        }
+        return url.path
     }
 
     @ViewBuilder private func textSection(_ c: Clip) -> some View {
@@ -633,5 +719,105 @@ private struct FrameSizeFields: View {
         // Encoders need even dimensions.
         let cw = min(8192, max(16, nw / 2 * 2)), ch = min(8192, max(16, nh / 2 * 2))
         if cw != width || ch != height { apply(cw, ch) } else { sync() }
+    }
+}
+
+/// Small tab switcher for a section with several panes.
+private struct TabStrip: View {
+    let options: [String]
+    @Binding var selection: String
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(options, id: \.self) { option in
+                TabStripButton(title: option, selected: option == selection) { selection = option }
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.black.opacity(0.3)))
+    }
+}
+
+private struct TabStripButton: View {
+    let title: String
+    let selected: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
+                .foregroundStyle(selected || hovering ? Theme.text : Theme.textDim)
+                .frame(maxWidth: .infinity)
+                .frame(height: 22)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(selected ? Color.white.opacity(0.14) : (hovering ? Color.white.opacity(0.05) : .clear)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+/// A tint wheel: drag the puck toward a colour to push that tonal range toward it. Double-click resets.
+private struct ColorWheel: View {
+    let title: String
+    let point: WheelPoint
+    let onChange: (WheelPoint) -> Void
+    let onEnd: () -> Void
+    @State private var hovering = false
+    @State private var dragging = false
+
+    private static let size: CGFloat = 78
+
+    var body: some View {
+        let s = Self.size
+        let active = point.x != 0 || point.y != 0
+        VStack(spacing: 7) {
+            ZStack {
+                Circle().fill(Theme.field)
+                // Hue ring: red at 0°, green at 120°, blue at 240°, matching the direction the puck tints.
+                Circle()
+                    .strokeBorder(AngularGradient(colors: [.red, .yellow, .green, .cyan, .blue, Color(red: 1, green: 0, blue: 1), .red], center: .center), lineWidth: 3)
+                    .opacity(hovering || dragging ? 0.95 : 0.6)
+                Rectangle().fill(Color.white.opacity(0.1)).frame(width: 1, height: s - 14)
+                Rectangle().fill(Color.white.opacity(0.1)).frame(width: s - 14, height: 1)
+                Circle()
+                    .fill(active ? Theme.accent : Color.white)
+                    .overlay(Circle().strokeBorder(Color.black.opacity(0.5), lineWidth: 1))
+                    .frame(width: dragging ? 13 : 11, height: dragging ? 13 : 11)
+                    .offset(x: CGFloat(point.x) * (s / 2 - 8), y: CGFloat(point.y) * (s / 2 - 8))
+            }
+            .frame(width: s, height: s)
+            .contentShape(Circle())
+            .onHover { hovering = $0 }
+            .gesture(
+                DragGesture(minimumDistance: 2)
+                    .onChanged { v in
+                        dragging = true
+                        var x = Double((v.location.x - s / 2) / (s / 2 - 8))
+                        var y = Double((v.location.y - s / 2) / (s / 2 - 8))
+                        let m = (x * x + y * y).squareRoot()
+                        if m > 1 { x /= m; y /= m }
+                        // A small dead zone makes it easy to return to exactly neutral.
+                        if m < 0.06 { x = 0; y = 0 }
+                        onChange(WheelPoint(x: (x * 100).rounded() / 100, y: (y * 100).rounded() / 100))
+                    }
+                    .onEnded { _ in
+                        dragging = false
+                        onEnd()
+                    }
+            )
+            .simultaneousGesture(TapGesture(count: 2).onEnded {
+                onChange(WheelPoint())
+                onEnd()
+            })
+            Text(title)
+                .font(.system(size: 10.5))
+                .foregroundStyle(active ? Theme.text : Theme.textDim)
+        }
+        .frame(maxWidth: .infinity)
+        .help("Drag to tint \(title.lowercased()). Double-click to reset.")
     }
 }
