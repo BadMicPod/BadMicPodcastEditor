@@ -7,7 +7,6 @@ struct InspectorView: View {
 
     @ObservedObject var model: EditorModel
     @State private var speedOrigin: [Clip]?
-    @State private var colorTab = "Look"
 
     private var selected: [Clip] {
         model.project.clips.filter { model.selection.contains($0.id) }
@@ -114,9 +113,10 @@ struct InspectorView: View {
         let audio = clips.filter { $0.kind == .audio }
         let sourced = clips.filter { $0.kind.usesSource }
         let offSpeed = sourced.first.map { abs($0.speed - 1) > 0.001 } ?? false
+        let offGain = audio.first.map { abs($0.gainDB) > 0.001 } ?? false
 
         if sourced.first != nil || audio.first != nil {
-            InspectorSection("Playback", action: offSpeed ? ("Reset speed", { model.setSpeed(1) }) : nil) {
+            InspectorSection("Playback", action: offSpeed ? ("Reset speed", { model.setSpeed(1) }) : nil, marked: offSpeed || offGain) {
                 if let first = sourced.first {
                     ParamRow(icon: .symbol("clock.arrow.circlepath"), label: "Speed",
                              value: first.speed * 100, range: 10...5000, logarithmic: true,
@@ -152,7 +152,7 @@ struct InspectorView: View {
         if clips.count == 1, let c = clips.first {
             if c.kind == .text { textSection(c) }
             if c.kind == .solid {
-                InspectorSection("Color") {
+                InspectorSection("Fill") {
                     ColorField(color: c.color) { color in
                         model.live { p in
                             if let i = p.index(of: c.id) { p.clips[i].color = color }
@@ -179,7 +179,7 @@ struct InspectorView: View {
         let ids = Set(clips.map(\.id))
         let first = clips[0]
         let maxFade = max(0.1, min(first.duration, 10))
-        InspectorSection(title) {
+        InspectorSection(title, collapsedByDefault: true, marked: first.fadeIn > 0 || first.fadeOut > 0) {
             ParamRow(icon: .fadeIn, label: "Fade In",
                      value: first.fadeIn, range: 0...maxFade, format: { String(format: "%.2fs", $0) },
                      onEditing: { if !$0 { model.commitLive() } },
@@ -237,34 +237,38 @@ struct InspectorView: View {
         let done: (Bool) -> Void = { editing in
             if !editing { model.commitLive() }
         }
-        InspectorSection("Color", action: grade.isNeutral ? nil : ("Reset", { once { $0 = ColorGrade() } })) {
-            TabStrip(options: ["Look", "Adjust", "Wheels"], selection: $colorTab)
-            switch colorTab {
-            case "Adjust":
-                ParamRow(icon: .symbol("sun.max"), label: "Exposure", value: grade.exposure, range: -2...2,
-                         format: { String(format: "%+.2f", $0) }, onEditing: done,
-                         onChange: { v in live { $0.exposure = (v * 100).rounded() / 100 } })
-                ParamRow(icon: .symbol("circle.lefthalf.filled"), label: "Contrast", value: grade.contrast, range: -50...50,
-                         format: { "\(Int($0.rounded()))" }, onEditing: done,
-                         onChange: { v in live { $0.contrast = v.rounded() } })
-                ParamRow(icon: .symbol("drop"), label: "Saturate", value: grade.saturation, range: -100...100,
-                         format: { "\(Int($0.rounded()))" }, onEditing: done,
-                         onChange: { v in live { $0.saturation = v.rounded() } })
-                ParamRow(icon: .symbol("thermometer.medium"), label: "Temp", value: grade.temperature, range: -50...50,
-                         format: { "\(Int($0.rounded()))" }, onEditing: done,
-                         onChange: { v in live { $0.temperature = v.rounded() } })
-                ParamRow(icon: .symbol("eyedropper"), label: "Tint", value: grade.tint, range: -50...50,
-                         format: { "\(Int($0.rounded()))" }, onEditing: done,
-                         onChange: { v in live { $0.tint = v.rounded() } })
-            case "Wheels":
-                HStack(alignment: .top, spacing: 0) {
-                    ColorWheel(title: "Shadows", point: grade.shadows, onChange: { pt in live { $0.shadows = pt } }, onEnd: { model.commitLive() })
-                    ColorWheel(title: "Midtones", point: grade.midtones, onChange: { pt in live { $0.midtones = pt } }, onEnd: { model.commitLive() })
-                    ColorWheel(title: "Highlights", point: grade.highlights, onChange: { pt in live { $0.highlights = pt } }, onEnd: { model.commitLive() })
-                }
-                .padding(.top, 4)
-            default:
-                MenuField(label: grade.lookLabel) {
+        InspectorSection("Color", action: grade.isNeutral ? nil : ("Reset", { once { $0 = ColorGrade() } }),
+                         collapsedByDefault: true, marked: !grade.isNeutral) {
+            HStack(alignment: .top, spacing: 0) {
+                ColorWheel(title: "Shadows", point: grade.shadows, onChange: { pt in live { $0.shadows = pt } }, onEnd: { model.commitLive() })
+                ColorWheel(title: "Midtones", point: grade.midtones, onChange: { pt in live { $0.midtones = pt } }, onEnd: { model.commitLive() })
+                ColorWheel(title: "Highlights", point: grade.highlights, onChange: { pt in live { $0.highlights = pt } }, onEnd: { model.commitLive() })
+            }
+            .padding(.vertical, 4)
+            ParamRow(icon: .symbol("sun.max"), label: "Exposure", value: grade.exposure, range: -2...2,
+                     format: { String(format: "%+.2f", $0) }, onEditing: done,
+                     onChange: { v in live { $0.exposure = (v * 100).rounded() / 100 } })
+            ParamRow(icon: .symbol("circle.lefthalf.filled"), label: "Contrast", value: grade.contrast, range: -50...50,
+                     format: { "\(Int($0.rounded()))" }, onEditing: done,
+                     onChange: { v in live { $0.contrast = v.rounded() } })
+            ParamRow(icon: .symbol("drop"), label: "Saturate", value: grade.saturation, range: -100...100,
+                     format: { "\(Int($0.rounded()))" }, onEditing: done,
+                     onChange: { v in live { $0.saturation = v.rounded() } })
+            ParamRow(icon: .symbol("thermometer.medium"), label: "Temp", value: grade.temperature, range: -50...50,
+                     format: { "\(Int($0.rounded()))" }, onEditing: done,
+                     onChange: { v in live { $0.temperature = v.rounded() } })
+            ParamRow(icon: .symbol("eyedropper"), label: "Tint", value: grade.tint, range: -50...50,
+                     format: { "\(Int($0.rounded()))" }, onEditing: done,
+                     onChange: { v in live { $0.tint = v.rounded() } })
+            HStack(spacing: 8) {
+                Image(systemName: "camera.filters").font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Theme.textDim)
+                    .frame(width: 18)
+                Text("Look")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.text)
+                    .frame(width: 52, alignment: .leading)
+                MenuField(label: grade.lookLabel, height: 26) {
                     Button("None") { once { $0.look = nil } }
                     Divider()
                     ForEach(BuiltInLook.all, id: \.name) { item in
@@ -275,11 +279,12 @@ struct InspectorView: View {
                         if let path = chooseCube() { once { $0.look = path } }
                     }
                 }
+            }
+            .frame(height: 28)
+            if grade.look != nil {
                 ParamRow(icon: .symbol("circle.dotted"), label: "Intensity", value: grade.lookIntensity * 100, range: 0...100,
                          format: { "\(Int($0.rounded()))%" }, onEditing: done,
                          onChange: { v in live { $0.lookIntensity = v.rounded() / 100 } })
-                    .disabled(grade.look == nil)
-                    .opacity(grade.look == nil ? 0.4 : 1)
             }
         }
     }
@@ -338,30 +343,53 @@ struct InspectorView: View {
 
 // MARK: - Building blocks
 
+/// A titled group of rows. Click the header to fold it away; the choice is remembered per section.
 private struct InspectorSection<Content: View>: View {
     let title: String
     let action: (String, () -> Void)?
+    /// Shows a dot beside the title while folded, so a changed section isn't hidden silently.
+    let marked: Bool
     @ViewBuilder let content: Content
+    @AppStorage private var collapsed: Bool
+    @State private var hovering = false
 
-    init(_ title: String, action: (String, () -> Void)? = nil, @ViewBuilder content: () -> Content) {
+    init(_ title: String, action: (String, () -> Void)? = nil, collapsedByDefault: Bool = false, marked: Bool = false,
+         @ViewBuilder content: () -> Content) {
         self.title = title
         self.action = action
+        self.marked = marked
         self.content = content()
+        _collapsed = AppStorage(wrappedValue: collapsedByDefault, "inspector.collapsed.\(title)")
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(title.uppercased())
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .kerning(1)
-                    .foregroundStyle(Theme.textFaint)
-                Spacer()
-                if let action {
+            HStack(spacing: 6) {
+                Button { collapsed.toggle() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 7.5, weight: .bold))
+                            .rotationEffect(.degrees(collapsed ? 0 : 90))
+                            .frame(width: 8)
+                        Text(title.uppercased())
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .kerning(1)
+                        if marked && collapsed {
+                            Circle().fill(Theme.accent).frame(width: 5, height: 5)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(hovering ? Theme.textDim : Theme.textFaint)
+                    .frame(height: 16)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering = $0 }
+                if let action, !collapsed {
                     TextLink(title: action.0, action: action.1)
                 }
             }
-            content
+            if !collapsed { content }
         }
     }
 }
@@ -506,6 +534,8 @@ private struct ParamRow: View {
                         }
                 } else {
                     Text(format(value))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                         .contentShape(Rectangle())
                         .onTapGesture {
@@ -517,7 +547,7 @@ private struct ParamRow: View {
             }
             .font(Theme.mono(10.5))
             .foregroundStyle(Theme.text)
-            .padding(.horizontal, 7)
+            .padding(.horizontal, 5)
             .frame(width: 60, height: 26)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
             .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Theme.accent.opacity(editing ? 0.9 : 0)))
@@ -719,44 +749,6 @@ private struct FrameSizeFields: View {
         // Encoders need even dimensions.
         let cw = min(8192, max(16, nw / 2 * 2)), ch = min(8192, max(16, nh / 2 * 2))
         if cw != width || ch != height { apply(cw, ch) } else { sync() }
-    }
-}
-
-/// Small tab switcher for a section with several panes.
-private struct TabStrip: View {
-    let options: [String]
-    @Binding var selection: String
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(options, id: \.self) { option in
-                TabStripButton(title: option, selected: option == selection) { selection = option }
-            }
-        }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.black.opacity(0.3)))
-    }
-}
-
-private struct TabStripButton: View {
-    let title: String
-    let selected: Bool
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
-                .foregroundStyle(selected || hovering ? Theme.text : Theme.textDim)
-                .frame(maxWidth: .infinity)
-                .frame(height: 22)
-                .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(selected ? Color.white.opacity(0.14) : (hovering ? Color.white.opacity(0.05) : .clear)))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
     }
 }
 
