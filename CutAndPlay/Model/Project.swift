@@ -139,6 +139,9 @@ struct Project: Codable, Equatable {
     var audioTracks: [Track] = [Track(kind: .audio), Track(kind: .audio)]
     var clips: [Clip] = []
     var assets: [MediaAsset] = []
+    /// Remembered so repeat exports don't ask again.
+    var exportName: String?
+    var exportDir: String?
 }
 
 extension Project {

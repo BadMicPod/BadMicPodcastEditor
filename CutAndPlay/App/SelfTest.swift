@@ -141,6 +141,65 @@ enum SelfTest {
             log("SPEED GROUP \(pass ? "OK" : "FAIL") fast=\(f) slow=\(sl)")
             ok = ok && pass
         }
+        // Zoom/scroll limits: whatever is asked for, the state must stay inside the bars and be stable.
+        do {
+            let m = EditorModel()
+            m.load(project, url: nil)
+            m.view.viewWidth = 1500
+            m.view.viewHeight = 360
+            m.clampView()
+            var pass = true
+            func check(_ label: String) {
+                let v = m.view
+                let extent = CGFloat(m.extent)
+                let span = v.viewWidth / v.pps
+                let before = (v.pps, v.scrollX, v.scrollY, v.rowHeight)
+                m.clampView()
+                let stable = before == (v.pps, v.scrollX, v.scrollY, v.rowHeight)
+                let good = stable && span <= extent + 0.001 && v.scrollX >= 0 && v.scrollX / v.pps + span <= extent + 0.001
+                    && v.scrollY >= m.minScrollY - 0.001 && v.scrollY <= m.maxScrollY + 0.001 && m.minScrollY <= m.maxScrollY + 0.001 && m.rowWindow > 0 && m.rowWindow <= 1
+                    && TimelineViewState.rowRange.contains(v.rowHeight)
+                if !good { log("VIEW FAIL \(label) pps=\(v.pps) x=\(v.scrollX) y=\(v.scrollY) row=\(v.rowHeight)") }
+                pass = pass && good
+            }
+            check("initial")
+            m.setView(pps: 0.0001); check("zoom out past limit")
+            let fullyOut = m.view.pps
+            m.setView(pps: 0.0001); pass = pass && m.view.pps == fullyOut
+            m.setView(pps: 1e9, scrollX: 1e9); check("zoom in past limit")
+            m.setView(scrollX: -500, scrollY: -500); check("scroll before start")
+            m.setView(scrollY: 1e9, rowHeight: 9999); check("tallest rows, scrolled to end")
+            m.setView(rowHeight: 1); check("shortest rows")
+            // At the smallest rows everything fits, the thumb fills the bar and the tracks sit centred.
+            pass = pass && m.rowWindow == 1 && abs(m.view.scrollY - m.centeredScrollY) < 0.001
+            // With more video than audio tracks, the centre is still the video/audio gap.
+            m.addTrack(.video)
+            m.addTrack(.video)
+            m.addTrack(.video)
+            // A centred thumb always means centred tracks, at any row height.
+            for row in [30.0, 62.0, 110.0] {
+                m.setView(rowHeight: row)
+                m.setView(scrollY: (m.minScrollY + m.maxScrollY) / 2)
+                let gapOnScreen = m.rowsAbove - m.view.scrollY
+                let centred = abs(m.view.scrollY - m.centeredScrollY) < 0.001 && abs(gapOnScreen - m.rowsVisible / 2) < 0.001
+                if !centred { log("VIEW FAIL centre at row \(row)") }
+                pass = pass && centred
+                check("centred at row \(row)")
+            }
+            m.seek(to: 2)
+            for f in [0.5, 3.0, 0.2, 7.0, 0.01, 40.0] {
+                let px = CGFloat(m.playhead) * m.view.pps - m.view.scrollX
+                m.zoom(by: f)
+                let after = CGFloat(m.playhead) * m.view.pps - m.view.scrollX
+                // The playhead holds its place unless a scroll limit is in the way.
+                let pinned = abs(px - after) < 0.5 || m.view.scrollX == 0 || abs(m.view.scrollX - m.maxScrollX) < 0.5 || px < 0 || px > m.view.viewWidth
+                if !pinned { log("VIEW FAIL playhead moved \(px) -> \(after)") }
+                pass = pass && pinned
+                check("zoom x\(f)")
+            }
+            log("VIEW LIMITS \(pass ? "OK" : "FAIL")")
+            ok = ok && pass
+        }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")
     }
 }

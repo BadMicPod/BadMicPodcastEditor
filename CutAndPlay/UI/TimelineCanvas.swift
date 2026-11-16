@@ -108,6 +108,19 @@ final class TimelineCanvas: NSView {
         model.view.objectWillChange.sink { [weak self] _ in self?.needsDisplay = true }.store(in: &bag)
         model.media.onVisualUpdate = { [weak self] in self?.needsDisplay = true }
         model.tickHandlers.append { [weak self] in self?.tick() }
+
+        // The track headers sit beside this view; scrolling over them should scroll the timeline too.
+        NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify]) { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self, let window = self.window, event.window === window else { return event }
+                let frame = self.convert(self.bounds, to: nil)
+                let headers = CGRect(x: frame.minX - TimelineLayout.headerWidth - 1, y: frame.minY,
+                                     width: TimelineLayout.headerWidth + 1, height: frame.height)
+                guard headers.contains(event.locationInWindow) else { return event }
+                if event.type == .magnify { self.magnify(with: event) } else { self.scrollWheel(with: event) }
+                return nil
+            }
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -122,10 +135,14 @@ final class TimelineCanvas: NSView {
         DispatchQueue.main.async {
             if state.viewWidth != newSize.width { state.viewWidth = newSize.width }
             if state.viewHeight != newSize.height { state.viewHeight = newSize.height }
+            if state.needsInitialCentering, newSize.height > 0 {
+                state.needsInitialCentering = false
+                self.model.centerRows()
+            }
+            self.model.clampView()
         }
         playheadView.frame.size = CGSize(width: PlayheadView.width, height: newSize.height)
         playheadView.needsDisplay = true
-        clampScroll()
     }
 
     override func viewDidMoveToWindow() {
@@ -170,30 +187,14 @@ final class TimelineCanvas: NSView {
         return .none
     }
 
-    private var maxScrollY: CGFloat {
-        max(0, layout.contentHeight - (bounds.height - TimelineLayout.ruler))
-    }
-
-    private func clampScroll() {
-        let y = min(max(0, view.scrollY), maxScrollY)
-        if y != view.scrollY { view.scrollY = y }
-    }
-
-    private func setScroll(x: CGFloat, y: CGFloat, limitX: Bool = true) {
-        var nx = max(0, x)
-        if limitX {
-            let limit = max(view.scrollX, CGFloat(model.project.duration) * pps - bounds.width * 0.3)
-            nx = min(nx, max(0, limit))
-        }
-        let ny = min(max(0, y), maxScrollY)
-        if nx != view.scrollX { view.scrollX = nx }
-        if ny != view.scrollY { view.scrollY = ny }
+    private func setScroll(x: CGFloat, y: CGFloat) {
+        model.setView(scrollX: x, scrollY: y)
     }
 
     private func tick() {
         var px = x(model.playhead)
         if model.isPlaying, px > bounds.width - 28 || px < 0 {
-            view.scrollX = max(0, CGFloat(model.playhead) * pps - 48)
+            model.setView(scrollX: CGFloat(model.playhead) * pps - 48)
             px = x(model.playhead)
         }
         let origin = CGPoint(x: ((px - PlayheadView.width / 2) * 2).rounded() / 2, y: 0)
@@ -581,7 +582,7 @@ final class TimelineCanvas: NSView {
             let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    self.setScroll(x: self.view.scrollX + self.autoscrollVelocity, y: self.view.scrollY, limitX: false)
+                    self.setScroll(x: self.view.scrollX + self.autoscrollVelocity, y: self.view.scrollY)
                     self.handleDrag(at: self.lastDragPoint)
                 }
             }
@@ -613,6 +614,8 @@ final class TimelineCanvas: NSView {
                 dy = 0
             }
         }
+        // Lock to the dominant axis so a sideways swipe never nudges the rows (and vice versa).
+        if abs(dx) >= abs(dy) { dy = 0 } else { dx = 0 }
         setScroll(x: view.scrollX - dx, y: view.scrollY - dy)
     }
 

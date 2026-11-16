@@ -19,7 +19,7 @@ struct ContentView: View {
                     PreviewView(model: model)
                     Hairline(vertical: true)
                     InspectorView(model: model)
-                        .frame(width: 252)
+                        .frame(width: InspectorView.width)
                 }
                 Splitter(vertical: false) { y in
                     timelineHeight = min(max(200, geo.size.height - 240), max(170, frame.maxY - y))
@@ -45,6 +45,7 @@ struct ContentView: View {
             ToolbarItem(placement: .primaryAction) {
                 PillButton(title: "Export", prominent: true) { model.showExport = true }
                     .help("Export (⌘E)")
+                    .padding(.trailing, 10)
             }
             .withoutGlass()
         }
@@ -68,6 +69,8 @@ enum KeyCommands {
     static func install(_ model: EditorModel) {
         guard !installed else { return }
         installed = true
+        // Hand the Dock the icon directly rather than relying on its cache of this bundle path.
+        if let icon = NSImage(named: "AppIcon") { NSApp.applicationIconImage = icon }
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             MainActor.assumeIsolated { handle(event, model) ? nil : event }
         }

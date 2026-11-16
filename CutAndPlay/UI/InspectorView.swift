@@ -2,6 +2,8 @@ import SwiftUI
 import AppKit
 
 struct InspectorView: View {
+    static let width: CGFloat = 320
+
     @ObservedObject var model: EditorModel
     @State private var speedOrigin: [Clip]?
 
@@ -12,38 +14,57 @@ struct InspectorView: View {
     var body: some View {
         let clips = selected
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
+            HStack(spacing: 9) {
+                Image(systemName: headerSymbol(clips))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.textDim)
+                    .frame(width: 18)
                 Text(title(clips))
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                 Spacer()
             }
-            .padding(.horizontal, 14)
-            .frame(height: 40)
+            .padding(.horizontal, 16)
+            .frame(height: 44)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 22) {
                     if clips.isEmpty {
                         sequenceSection
                     } else {
                         clipSections(clips)
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 16)
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+                .padding(.bottom, 18)
             }
         }
         .background(Theme.panel)
     }
 
+    private func primary(_ clips: [Clip]) -> Clip? {
+        clips.first { $0.kind != .audio } ?? clips.first
+    }
+
     private func title(_ clips: [Clip]) -> String {
         if clips.isEmpty { return "Sequence" }
         let groups = Set(clips.map { $0.linkID ?? $0.id })
-        if groups.count == 1, let c = clips.first(where: { $0.kind != .audio }) ?? clips.first {
-            return model.project.name(of: c)
-        }
+        if groups.count == 1, let c = primary(clips) { return model.project.name(of: c) }
         return "\(clips.count) clips"
+    }
+
+    private func headerSymbol(_ clips: [Clip]) -> String {
+        guard let c = primary(clips) else { return "rectangle.on.rectangle" }
+        if Set(clips.map { $0.linkID ?? $0.id }).count > 1 { return "square.stack" }
+        switch c.kind {
+        case .video: return "film"
+        case .audio: return "waveform"
+        case .image: return "photo"
+        case .text: return "textformat"
+        case .solid: return "square.fill"
+        }
     }
 
     // MARK: Sequence
@@ -90,40 +111,39 @@ struct InspectorView: View {
         let visual = clips.filter { $0.kind != .audio }
         let audio = clips.filter { $0.kind == .audio }
         let sourced = clips.filter { $0.kind.usesSource }
+        let offSpeed = sourced.first.map { abs($0.speed - 1) > 0.001 } ?? false
 
-        if let first = sourced.first {
-            InspectorSection("Speed") {
-                SliderRow(value: first.speed * 100, range: 10...5000, logarithmic: true,
-                          format: { "\(Int($0.rounded()))%" },
-                          onEditing: { began in
-                              if began {
-                                  speedOrigin = model.project.clips
-                              } else {
-                                  speedOrigin = nil
-                                  model.commitLive()
-                              }
-                          },
-                          onChange: { applySpeed($0 / 100, ids: ids) })
-                if abs(first.speed - 1) > 0.001 {
-                    Chip(label: "Reset to 100%", active: false) { model.setSpeed(1) }
+        if sourced.first != nil || audio.first != nil {
+            InspectorSection("Playback", action: offSpeed ? ("Reset speed", { model.setSpeed(1) }) : nil) {
+                if let first = sourced.first {
+                    ParamRow(icon: .symbol("clock.arrow.circlepath"), label: "Speed",
+                             value: first.speed * 100, range: 10...5000, logarithmic: true,
+                             format: { "\(Int($0.rounded()))%" },
+                             onEditing: { began in
+                                 if began {
+                                     speedOrigin = model.project.clips
+                                 } else {
+                                     speedOrigin = nil
+                                     model.commitLive()
+                                 }
+                             },
+                             onChange: { applySpeed($0 / 100, ids: ids) })
+                }
+                if let first = audio.first {
+                    ParamRow(icon: .symbol("speaker.wave.2"), label: "Volume",
+                             value: first.gainDB, range: -60...12, format: formatDB,
+                             onEditing: { if !$0 { model.commitLive() } },
+                             onChange: { v in
+                                 let audioIDs = Set(audio.map(\.id))
+                                 model.live(autoCommit: false) { p in
+                                     for i in p.clips.indices where audioIDs.contains(p.clips[i].id) { p.clips[i].gainDB = (v * 10).rounded() / 10 }
+                                 }
+                             })
                 }
             }
         }
 
-        if let first = audio.first {
-            InspectorSection("Volume") {
-                SliderRow(value: first.gainDB, range: -60...12, format: formatDB,
-                          onEditing: { if !$0 { model.commitLive() } },
-                          onChange: { v in
-                              let ids = Set(audio.map(\.id))
-                              model.live(autoCommit: false) { p in
-                                  for i in p.clips.indices where ids.contains(p.clips[i].id) { p.clips[i].gainDB = (v * 10).rounded() / 10 }
-                              }
-                          })
-            }
-        }
-
-        if !visual.isEmpty { fadeSection(visual.count < clips.count ? "Video fade" : "Fade", visual) }
+        if !visual.isEmpty { fadeSection(audio.isEmpty ? "Fade" : "Video fade", visual) }
         if !audio.isEmpty { fadeSection(visual.isEmpty ? "Fade" : "Audio fade", audio) }
 
         if clips.count == 1, let c = clips.first {
@@ -157,34 +177,36 @@ struct InspectorView: View {
         let first = clips[0]
         let maxFade = max(0.1, min(first.duration, 10))
         InspectorSection(title) {
-            SliderRow(caption: "In", value: first.fadeIn, range: 0...maxFade, format: { String(format: "%.2fs", $0) },
-                      onEditing: { if !$0 { model.commitLive() } },
-                      onChange: { v in
-                          model.live(autoCommit: false) { p in
-                              for i in p.clips.indices where ids.contains(p.clips[i].id) {
-                                  p.clips[i].fadeIn = min(p.snapFrame(v), p.clips[i].duration - p.clips[i].fadeOut)
-                              }
-                          }
-                      })
-            CurvePicker(selection: first.inCurve, rising: true) { curve in
-                model.mutate { p in
-                    for i in p.clips.indices where ids.contains(p.clips[i].id) { p.clips[i].fadeInCurve = curve }
-                }
-            }
-            SliderRow(caption: "Out", value: first.fadeOut, range: 0...maxFade, format: { String(format: "%.2fs", $0) },
-                      onEditing: { if !$0 { model.commitLive() } },
-                      onChange: { v in
-                          model.live(autoCommit: false) { p in
-                              for i in p.clips.indices where ids.contains(p.clips[i].id) {
-                                  p.clips[i].fadeOut = min(p.snapFrame(v), p.clips[i].duration - p.clips[i].fadeIn)
-                              }
-                          }
-                      })
-            CurvePicker(selection: first.outCurve, rising: false) { curve in
-                model.mutate { p in
-                    for i in p.clips.indices where ids.contains(p.clips[i].id) { p.clips[i].fadeOutCurve = curve }
-                }
-            }
+            ParamRow(icon: .fadeIn, label: "Fade In",
+                     value: first.fadeIn, range: 0...maxFade, format: { String(format: "%.2fs", $0) },
+                     onEditing: { if !$0 { model.commitLive() } },
+                     onChange: { v in
+                         model.live(autoCommit: false) { p in
+                             for i in p.clips.indices where ids.contains(p.clips[i].id) {
+                                 p.clips[i].fadeIn = min(p.snapFrame(v), p.clips[i].duration - p.clips[i].fadeOut)
+                             }
+                         }
+                     },
+                     trailing: AnyView(CurveMenu(selection: first.inCurve, rising: true, active: first.fadeIn > 0) { curve in
+                         model.mutate { p in
+                             for i in p.clips.indices where ids.contains(p.clips[i].id) { p.clips[i].fadeInCurve = curve }
+                         }
+                     }))
+            ParamRow(icon: .fadeOut, label: "Fade Out",
+                     value: first.fadeOut, range: 0...maxFade, format: { String(format: "%.2fs", $0) },
+                     onEditing: { if !$0 { model.commitLive() } },
+                     onChange: { v in
+                         model.live(autoCommit: false) { p in
+                             for i in p.clips.indices where ids.contains(p.clips[i].id) {
+                                 p.clips[i].fadeOut = min(p.snapFrame(v), p.clips[i].duration - p.clips[i].fadeIn)
+                             }
+                         }
+                     },
+                     trailing: AnyView(CurveMenu(selection: first.outCurve, rising: false, active: first.fadeOut > 0) { curve in
+                         model.mutate { p in
+                             for i in p.clips.indices where ids.contains(p.clips[i].id) { p.clips[i].fadeOutCurve = curve }
+                         }
+                     }))
         }
     }
 
@@ -200,7 +222,7 @@ struct InspectorView: View {
                 .scrollContentBackground(.hidden)
                 .padding(6)
                 .frame(height: 68)
-                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.field))
             MenuField(label: c.text.fontName.isEmpty ? "System" : c.text.fontName) {
                 Button("System") { update { $0.fontName = "" } }
                 Divider()
@@ -212,15 +234,18 @@ struct InspectorView: View {
                 Chip(label: "Bold", active: c.text.bold) { update { $0.bold.toggle() } }
                 ColorField(color: c.text.color) { color in update { $0.color = color } }
             }
-            SliderRow(caption: "Size", value: c.text.size, range: 12...600, logarithmic: true, format: { "\(Int($0.rounded()))" },
-                      onEditing: { if !$0 { model.commitLive() } },
-                      onChange: { v in update { $0.size = v.rounded() } })
-            SliderRow(caption: "X", value: c.text.x * 100, range: 0...100, format: { "\(Int($0.rounded()))%" },
-                      onEditing: { if !$0 { model.commitLive() } },
-                      onChange: { v in update { $0.x = v / 100 } })
-            SliderRow(caption: "Y", value: c.text.y * 100, range: 0...100, format: { "\(Int($0.rounded()))%" },
-                      onEditing: { if !$0 { model.commitLive() } },
-                      onChange: { v in update { $0.y = v / 100 } })
+            ParamRow(icon: .symbol("textformat.size"), label: "Size", value: c.text.size, range: 12...600, logarithmic: true,
+                     format: { "\(Int($0.rounded()))" },
+                     onEditing: { if !$0 { model.commitLive() } },
+                     onChange: { v in update { $0.size = v.rounded() } })
+            ParamRow(icon: .symbol("arrow.left.and.right"), label: "X", value: c.text.x * 100, range: 0...100,
+                     format: { "\(Int($0.rounded()))%" },
+                     onEditing: { if !$0 { model.commitLive() } },
+                     onChange: { v in update { $0.x = v / 100 } })
+            ParamRow(icon: .symbol("arrow.up.and.down"), label: "Y", value: c.text.y * 100, range: 0...100,
+                     format: { "\(Int($0.rounded()))%" },
+                     onEditing: { if !$0 { model.commitLive() } },
+                     onChange: { v in update { $0.y = v / 100 } })
         }
     }
 }
@@ -229,60 +254,159 @@ struct InspectorView: View {
 
 private struct InspectorSection<Content: View>: View {
     let title: String
+    let action: (String, () -> Void)?
     @ViewBuilder let content: Content
 
-    init(_ title: String, @ViewBuilder content: () -> Content) {
+    init(_ title: String, action: (String, () -> Void)? = nil, @ViewBuilder content: () -> Content) {
         self.title = title
+        self.action = action
         self.content = content()
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased())
-                .font(.system(size: 9.5, weight: .semibold))
-                .kerning(0.6)
-                .foregroundStyle(Theme.textFaint)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(title.uppercased())
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .kerning(1)
+                    .foregroundStyle(Theme.textFaint)
+                Spacer()
+                if let action {
+                    TextLink(title: action.0, action: action.1)
+                }
+            }
             content
         }
     }
 }
 
-private struct SliderRow: View {
-    var caption: String?
+private struct TextLink: View {
+    let title: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(hovering ? Theme.accent : Theme.textDim)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+/// Slim slider: accent fill, white knob.
+struct ThinSlider: View {
+    /// Normalised 0...1.
+    let value: Double
+    let onEditing: (Bool) -> Void
+    let onChange: (Double) -> Void
+    @State private var dragging = false
+    @State private var hovering = false
+
+    var body: some View {
+        GeometryReader { geo in
+            let knob: CGFloat = 13
+            let travel = max(1, geo.size.width - knob)
+            let x = CGFloat(min(1, max(0, value))) * travel
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.1)).frame(height: 3)
+                Capsule().fill(Theme.accent).frame(width: x + knob / 2, height: 3)
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: knob, height: knob)
+                    .scaleEffect(dragging || hovering ? 1.12 : 1)
+                    .shadow(color: .black.opacity(0.35), radius: 1.5, y: 0.5)
+                    .offset(x: x)
+            }
+            .frame(height: geo.size.height)
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { v in
+                        if !dragging {
+                            dragging = true
+                            onEditing(true)
+                        }
+                        onChange(Double(min(1, max(0, (v.location.x - knob / 2) / travel))))
+                    }
+                    .onEnded { _ in
+                        dragging = false
+                        onEditing(false)
+                    }
+            )
+        }
+        .frame(height: 20)
+    }
+}
+
+private enum RowIcon {
+    case symbol(String)
+    case fadeIn
+    case fadeOut
+}
+
+private struct RowIconView: View {
+    let icon: RowIcon
+
+    var body: some View {
+        switch icon {
+        case .symbol(let name):
+            Image(systemName: name).font(.system(size: 11, weight: .medium))
+        case .fadeIn:
+            HStack(spacing: 1) {
+                Image(systemName: "arrow.right").font(.system(size: 9, weight: .semibold))
+                Capsule().frame(width: 1.5, height: 10)
+            }
+        case .fadeOut:
+            HStack(spacing: 1) {
+                Capsule().frame(width: 1.5, height: 10)
+                Image(systemName: "arrow.right").font(.system(size: 9, weight: .semibold))
+            }
+        }
+    }
+}
+
+/// One parameter: icon, name, slider, typed value, and an optional trailing control.
+private struct ParamRow: View {
+    let icon: RowIcon
+    let label: String
     let value: Double
     let range: ClosedRange<Double>
     var logarithmic = false
     let format: (Double) -> String
     let onEditing: (Bool) -> Void
     let onChange: (Double) -> Void
+    var trailing: AnyView?
 
     @State private var editing = false
     @State private var text = ""
     @FocusState private var focused: Bool
 
-    private var sliderValue: Binding<Double> {
-        Binding(
-            get: {
-                let v = min(max(value, range.lowerBound), range.upperBound)
-                return logarithmic ? log(v) : v
-            },
-            set: { onChange(logarithmic ? exp($0) : $0) }
-        )
+    private var normalised: Double {
+        let v = min(max(value, range.lowerBound), range.upperBound)
+        if logarithmic { return (log(v) - log(range.lowerBound)) / (log(range.upperBound) - log(range.lowerBound)) }
+        return (v - range.lowerBound) / (range.upperBound - range.lowerBound)
+    }
+
+    private func denormalise(_ n: Double) -> Double {
+        if logarithmic { return exp(log(range.lowerBound) + n * (log(range.upperBound) - log(range.lowerBound))) }
+        return range.lowerBound + n * (range.upperBound - range.lowerBound)
     }
 
     var body: some View {
         HStack(spacing: 8) {
-            if let caption {
-                Text(caption)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.textDim)
-                    .frame(width: 26, alignment: .leading)
-            }
-            Slider(value: sliderValue,
-                   in: logarithmic ? log(range.lowerBound)...log(range.upperBound) : range,
-                   onEditingChanged: onEditing)
-                .controlSize(.mini)
-                .tint(Theme.accent)
+            RowIconView(icon: icon)
+                .foregroundStyle(Theme.textDim)
+                .frame(width: 18)
+            Text(label)
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.text)
+                .frame(width: 52, alignment: .leading)
+            ThinSlider(value: normalised, onEditing: onEditing) { onChange(denormalise($0)) }
             Group {
                 if editing {
                     TextField("", text: $text)
@@ -307,20 +431,85 @@ private struct SliderRow: View {
             }
             .font(Theme.mono(10.5))
             .foregroundStyle(Theme.text)
-            .padding(.horizontal, 6)
-            .frame(width: 62, height: 22)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.field))
+            .padding(.horizontal, 7)
+            .frame(width: 60, height: 26)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Theme.accent.opacity(editing ? 0.9 : 0)))
+            if let trailing { trailing }
         }
+        .frame(height: 28)
     }
 
     private func commit() {
-        let cleaned = text.replacingOccurrences(of: ",", with: ".").filter { "0123456789.-".contains($0) }
+        let cleaned = text.replacingOccurrences(of: ",", with: ".").replacingOccurrences(of: "−", with: "-")
+            .filter { "0123456789.-".contains($0) }
         if let v = Double(cleaned) {
             onEditing(true)
             onChange(min(max(v, range.lowerBound), range.upperBound))
             onEditing(false)
         }
         editing = false
+    }
+}
+
+/// Dropdown showing the current fade shape as a small drawing.
+private struct CurveMenu: View {
+    let selection: FadeCurve
+    let rising: Bool
+    let active: Bool
+    let onPick: (FadeCurve) -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Menu {
+            ForEach(FadeCurve.allCases, id: \.self) { curve in
+                Button {
+                    onPick(curve)
+                } label: {
+                    if curve == selection {
+                        Label(curve.label, systemImage: "checkmark")
+                    } else {
+                        Text(curve.label)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                CurveGlyph(curve: selection, rising: rising, color: active ? Theme.accent : Theme.textDim)
+                    .frame(width: 20, height: 12)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundStyle(Theme.textDim)
+            }
+            .frame(width: 48, height: 26)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hovering ? Theme.hover : Theme.field))
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { hovering = $0 }
+        .help(selection.label)
+    }
+}
+
+private struct CurveGlyph: View {
+    let curve: FadeCurve
+    let rising: Bool
+    let color: Color
+
+    var body: some View {
+        Canvas { ctx, size in
+            var path = Path()
+            for i in 0...20 {
+                let x = Double(i) / 20
+                let y = curve.apply(rising ? x : 1 - x)
+                let pt = CGPoint(x: 1 + CGFloat(x) * (size.width - 2), y: 1 + (1 - CGFloat(y)) * (size.height - 2))
+                if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
+            }
+            ctx.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+        }
     }
 }
 
@@ -335,10 +524,9 @@ private struct Chip: View {
             Text(label)
                 .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(active ? Theme.accent : (hovering ? Theme.text : Theme.textDim))
-                .padding(.horizontal, 7)
-                .frame(height: 22)
-                .frame(maxWidth: .infinity)
-                .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .padding(.horizontal, 10)
+                .frame(height: 26)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(active ? Theme.accent.opacity(0.16) : (hovering ? Theme.hover : Theme.field)))
                 .contentShape(Rectangle())
         }
@@ -349,6 +537,8 @@ private struct Chip: View {
 
 struct MenuField<Content: View>: View {
     let label: String
+    var symbol: String?
+    var height: CGFloat = 28
     @ViewBuilder let content: () -> Content
     @State private var hovering = false
 
@@ -356,15 +546,19 @@ struct MenuField<Content: View>: View {
         Menu {
             content()
         } label: {
-            HStack {
-                Text(label).font(.system(size: 11.5)).foregroundStyle(Theme.text).lineLimit(1)
-                Spacer()
-                Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(Theme.textDim)
+            HStack(spacing: 8) {
+                if let symbol {
+                    Image(systemName: symbol).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.accent)
+                }
+                Text(label).font(.system(size: 12)).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down").font(.system(size: 8.5, weight: .bold)).foregroundStyle(Theme.textDim)
             }
-            .padding(.horizontal, 9)
-            .frame(height: 26)
+            .padding(.horizontal, 11)
+            .frame(height: height)
             .frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hovering ? Theme.hover : Theme.field))
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovering ? Theme.hover : Theme.field))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.05)))
             .contentShape(Rectangle())
         }
         .menuStyle(.button)
@@ -423,10 +617,10 @@ private struct FrameSizeFields: View {
                 sync()
                 focus = nil
             }
-            .frame(height: 26)
+            .frame(height: 28)
             .frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
-            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Theme.accent.opacity(focus == tag ? 0.9 : 0)))
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.field))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.accent.opacity(focus == tag ? 0.9 : 0)))
     }
 
     private func sync() {
@@ -439,55 +633,5 @@ private struct FrameSizeFields: View {
         // Encoders need even dimensions.
         let cw = min(8192, max(16, nw / 2 * 2)), ch = min(8192, max(16, nh / 2 * 2))
         if cw != width || ch != height { apply(cw, ch) } else { sync() }
-    }
-}
-
-/// Four small curve thumbnails for choosing a fade shape.
-private struct CurvePicker: View {
-    let selection: FadeCurve
-    let rising: Bool
-    let onPick: (FadeCurve) -> Void
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Color.clear.frame(width: 29, height: 1)
-            ForEach(FadeCurve.allCases, id: \.self) { curve in
-                CurveChip(curve: curve, rising: rising, active: curve == selection) { onPick(curve) }
-            }
-        }
-    }
-}
-
-private struct CurveChip: View {
-    let curve: FadeCurve
-    let rising: Bool
-    let active: Bool
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Canvas { ctx, size in
-                let inset: CGFloat = 5
-                let w = size.width - inset * 2, h = size.height - inset * 2
-                var path = Path()
-                for i in 0...20 {
-                    let x = Double(i) / 20
-                    let y = curve.apply(rising ? x : 1 - x)
-                    let pt = CGPoint(x: inset + CGFloat(x) * w, y: inset + (1 - CGFloat(y)) * h)
-                    if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
-                }
-                ctx.stroke(path, with: .color(active ? Theme.accent : (hovering ? Theme.text : Theme.textDim)),
-                           style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 24)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(active ? Theme.accent.opacity(0.16) : (hovering ? Theme.hover : Theme.field)))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help(curve.label)
     }
 }

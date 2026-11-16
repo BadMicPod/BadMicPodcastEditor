@@ -143,157 +143,166 @@ private struct RangeThumb: View {
     }
 }
 
-/// Horizontal bar under the timeline: position and length of the thumb are the visible time range.
+/// What a bar drag started from. Captured once on mouse-down; every later position is computed
+/// from this, never from the previous frame, so a drag can't drift, flip handles or snap.
+private final class BarDrag {
+    var part = 1
+    var pps: CGFloat = 0
+    var scrollX: CGFloat = 0
+    var scrollY: CGFloat = 0
+    var rowHeight: CGFloat = 0
+    var length: CGFloat = 0
+    var content: CGFloat = 0
+    var center: CGFloat = 0
+}
+
+private func barPart(at p: CGFloat, thumb: CGFloat, length: CGFloat) -> Int? {
+    guard p >= thumb - 2, p <= thumb + length + 2 else { return nil }
+    let grip = min(RangeBarStyle.handle + 3, length / 3)
+    if p < thumb + grip { return 0 }
+    if p > thumb + length - grip { return 2 }
+    return 1
+}
+
+/// Horizontal bar under the timeline. The bar is the whole scrollable timeline and the thumb is what's
+/// on screen. Drag the thumb to scroll; drag either grip to zoom both sides, centred on the playhead.
 struct ZoomScrollBar: View {
     @ObservedObject var model: EditorModel
     @ObservedObject var view: TimelineViewState
-    @State private var origin: (total: Double, start: Double, end: Double, part: Int)?
+    @State private var drag: BarDrag?
     @State private var hot: Int?
-
-    private var visibleStart: Double { Double(view.scrollX / view.pps) }
-    private var visibleEnd: Double { Double((view.scrollX + view.viewWidth) / view.pps) }
-    private var total: Double {
-        origin?.total ?? max(model.project.duration * 1.15, visibleEnd, 1)
-    }
 
     var body: some View {
         GeometryReader { geo in
-            let w = geo.size.width
-            let t = total
-            let x0 = CGFloat(visibleStart / t) * w
-            let len = max(RangeBarStyle.handle * 2 + 6, CGFloat((visibleEnd - visibleStart) / t) * w)
-            let x = min(x0, w - len)
+            let w = max(1, geo.size.width)
+            let extent = CGFloat(model.extent)
+            let minLen = RangeBarStyle.handle * 2 + 6
+            let len = max(minLen, min(1, view.viewWidth / view.pps / extent) * w)
+            let x = min(max(0, view.scrollX / view.pps / extent * w), w - len)
             ZStack(alignment: .topLeading) {
                 Theme.panel
-                RangeThumb(vertical: false, hot: hot, active: origin != nil)
+                RangeThumb(vertical: false, hot: hot, active: drag != nil)
                     .frame(width: len, height: RangeBarStyle.handle)
                     .offset(x: x, y: (geo.size.height - RangeBarStyle.handle) / 2)
             }
             .contentShape(Rectangle())
             .onContinuousHover { phase in
-                if case .active(let p) = phase { hot = part(at: p.x, thumbX: x, length: len) } else if origin == nil { hot = nil }
+                guard drag == nil else { return }
+                if case .active(let p) = phase { hot = barPart(at: p.x, thumb: x, length: len) } else { hot = nil }
             }
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { v in
-                        if origin == nil {
-                            var part = part(at: v.startLocation.x, thumbX: x, length: len)
-                            if part == nil {
-                                // Click on the track: jump the thumb there, then drag it.
-                                let span = visibleEnd - visibleStart
-                                let start = max(0, min(t - span, Double(v.startLocation.x / w) * t - span / 2))
-                                view.scrollX = CGFloat(start) * view.pps
-                                part = 1
+                        let d: BarDrag
+                        if let existing = drag {
+                            d = existing
+                        } else {
+                            d = BarDrag()
+                            if let part = barPart(at: v.startLocation.x, thumb: x, length: len) {
+                                d.part = part
+                            } else {
+                                // Click on the empty bar: centre the thumb there, then keep dragging it.
+                                let start = (v.startLocation.x - len / 2) / w * extent
+                                model.setView(scrollX: start * view.pps)
+                                d.part = 1
                             }
-                            origin = (t, visibleStart, visibleEnd, part ?? 1)
-                            hot = part
+                            d.pps = view.pps
+                            d.scrollX = view.scrollX
+                            drag = d
+                            hot = d.part
                         }
-                        guard let o = origin else { return }
-                        let dt = Double(v.translation.width / w) * o.total
-                        let minSpan = Double(view.viewWidth / TimelineViewState.maxPPS)
-                        let maxSpan = Double(view.viewWidth / TimelineViewState.minPPS)
-                        switch o.part {
-                        case 0:
-                            let start = max(0, min(o.start + dt, o.end - minSpan))
-                            apply(start: start, span: min(maxSpan, o.end - start))
-                        case 2:
-                            let end = max(o.start + minSpan, min(o.end + dt, o.total))
-                            apply(start: o.start, span: min(maxSpan, end - o.start))
-                        default:
-                            let span = o.end - o.start
-                            view.scrollX = CGFloat(max(0, min(o.start + dt, o.total - span))) * view.pps
+                        let dx = v.translation.width
+                        if d.part == 1 {
+                            model.setView(scrollX: d.scrollX + dx / w * extent * d.pps)
+                        } else {
+                            // Either grip grows or shrinks the visible span from both ends.
+                            let span0 = view.viewWidth / d.pps
+                            let grow = (d.part == 2 ? dx : -dx) / w * extent * 2
+                            let span = max(view.viewWidth / TimelineViewState.maxPPS, min(extent, span0 + grow))
+                            model.setZoom(view.viewWidth / span)
                         }
                     }
                     .onEnded { _ in
-                        origin = nil
+                        drag = nil
                         hot = nil
                     }
             )
         }
         .overlay(Hairline(), alignment: .top)
     }
-
-    private func part(at px: CGFloat, thumbX: CGFloat, length: CGFloat) -> Int? {
-        guard px >= thumbX - 2, px <= thumbX + length + 2 else { return nil }
-        if px < thumbX + RangeBarStyle.handle + 2 { return 0 }
-        if px > thumbX + length - RangeBarStyle.handle - 2 { return 2 }
-        return 1
-    }
-
-    private func apply(start: Double, span: Double) {
-        let pps = view.viewWidth / CGFloat(span)
-        view.pps = pps
-        view.scrollX = CGFloat(start) * pps
-    }
 }
 
-/// Vertical bar beside the timeline. The thumb's length is the row zoom: full length at the smallest
-/// rows, shortest at the largest. Drag a grip to scale rows, drag the middle to scroll tracks.
+/// Vertical bar beside the timeline. The thumb's length is the row zoom (full bar at the smallest
+/// rows) and its position is the scroll. Drag it to scroll; drag either grip to scale rows from both
+/// ends, keeping whatever is in the middle of the timeline in the middle.
 struct RowScaleBar: View {
     @ObservedObject var model: EditorModel
     @ObservedObject var view: TimelineViewState
-    @State private var origin: (scrollY: CGFloat, length: CGFloat, y: CGFloat, part: Int)?
+    @State private var drag: BarDrag?
     @State private var hot: Int?
-
-    private var trackCount: CGFloat { CGFloat(model.project.videoTracks.count + model.project.audioTracks.count) }
-    private var visible: CGFloat { max(40, view.viewHeight - TimelineLayout.ruler) }
-    private var maxScroll: CGFloat {
-        max(0, TimelineLayout.fixedHeight + trackCount * (view.rowHeight + TimelineLayout.gap) - visible)
-    }
 
     var body: some View {
         GeometryReader { geo in
             let top = TimelineLayout.ruler
             let h = max(1, geo.size.height - top)
-            let minRow = TimelineViewState.rowRange.lowerBound
-            let len = h * minRow / view.rowHeight
-            let y = maxScroll > 0 ? min(1, view.scrollY / maxScroll) * (h - len) : 0
+            let minLen = RangeBarStyle.handle * 2 + 6
+            let world = model.rowsWorld
+            let len = max(minLen, model.rowWindow * h)
+            let y = min(max(0, (view.scrollY - model.minScrollY) / world * h), h - len)
             ZStack(alignment: .topLeading) {
                 Theme.panel
-                RangeThumb(vertical: true, hot: hot, active: origin != nil)
+                RangeThumb(vertical: true, hot: hot, active: drag != nil)
                     .frame(width: RangeBarStyle.handle, height: len)
                     .offset(x: (geo.size.width - RangeBarStyle.handle) / 2, y: top + y)
             }
             .contentShape(Rectangle())
             .onContinuousHover { phase in
-                if case .active(let p) = phase { hot = part(at: p.y - top, thumbY: y, length: len) } else if origin == nil { hot = nil }
+                guard drag == nil else { return }
+                if case .active(let p) = phase { hot = barPart(at: p.y - top, thumb: y, length: len) } else { hot = nil }
             }
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { v in
-                        if origin == nil {
-                            let part = part(at: v.startLocation.y - top, thumbY: y, length: len) ?? 1
-                            origin = (view.scrollY, len, y, part)
-                            hot = part
+                        let d: BarDrag
+                        if let existing = drag {
+                            d = existing
+                        } else {
+                            d = BarDrag()
+                            if let part = barPart(at: v.startLocation.y - top, thumb: y, length: len) {
+                                d.part = part
+                            } else {
+                                model.setView(scrollY: model.minScrollY + (v.startLocation.y - top - len / 2) / h * world)
+                                d.part = 1
+                            }
+                            d.scrollY = view.scrollY
+                            d.rowHeight = view.rowHeight
+                            d.length = len
+                            d.content = world
+                            // What's at the middle of the view, measured from the video/audio gap.
+                            d.center = view.scrollY + model.rowsVisible / 2 - model.rowsAbove
+                            drag = d
+                            hot = d.part
                         }
-                        guard let o = origin else { return }
                         let dy = v.translation.height
-                        if o.part == 1 {
-                            let travel = h - o.length
-                            guard travel > 0, maxScroll > 0 else { return }
-                            view.scrollY = max(0, min(1, (o.y + dy) / travel)) * maxScroll
-                            return
+                        if d.part == 1 {
+                            model.setView(scrollY: d.scrollY + dy / h * d.content)
+                        } else {
+                            // A shorter thumb means taller rows. Both ends move together.
+                            let grow = (d.part == 2 ? dy : -dy) * 2
+                            let newLen = max(minLen, min(h, d.length + grow))
+                            model.setView(rowHeight: d.rowHeight * d.length / newLen)
+                            // Keep the same part of the timeline centred while the rows scale.
+                            let scaled = d.center * view.rowHeight / d.rowHeight
+                            model.setView(scrollY: scaled + model.rowsAbove - model.rowsVisible / 2)
                         }
-                        // A shorter thumb means taller rows; the thumb can't grow past the bar or shrink past max zoom.
-                        let minLen = h * minRow / TimelineViewState.rowRange.upperBound
-                        let newLen = max(minLen, min(h, o.part == 0 ? o.length - dy : o.length + dy))
-                        view.rowHeight = (minRow * h / newLen).rounded()
-                        view.scrollY = min(view.scrollY, maxScroll)
                     }
                     .onEnded { _ in
-                        origin = nil
+                        drag = nil
                         hot = nil
                     }
             )
         }
         .overlay(Hairline(vertical: true), alignment: .leading)
-    }
-
-    private func part(at py: CGFloat, thumbY: CGFloat, length: CGFloat) -> Int? {
-        guard py >= thumbY - 2, py <= thumbY + length + 2 else { return nil }
-        if py < thumbY + RangeBarStyle.handle + 2 { return 0 }
-        if py > thumbY + length - RangeBarStyle.handle - 2 { return 2 }
-        return 1
     }
 }
 

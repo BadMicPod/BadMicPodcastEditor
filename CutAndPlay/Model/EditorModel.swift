@@ -23,6 +23,8 @@ final class TimelineViewState: ObservableObject {
     @Published var rowHeight: CGFloat = 62
     @Published var viewWidth: CGFloat = 900
     @Published var viewHeight: CGFloat = 300
+    /// Set until the timeline has reported its real size and the tracks have been centred in it.
+    var needsInitialCentering = true
 
     static let rowRange: ClosedRange<CGFloat> = 30...110
 }
@@ -88,11 +90,14 @@ final class EditorModel: ObservableObject {
             let args = CommandLine.arguments
             if let i = args.firstIndex(of: "--open"), args.count > i + 1 {
                 self.open(url: URL(fileURLWithPath: args[i + 1]))
-                if args.contains("--show-export") { self.showExport = true }
                 if let j = args.firstIndex(of: "--seek"), args.count > j + 1, let t = Double(args[j + 1]) {
                     try? await Task.sleep(nanoseconds: 1_500_000_000)
                     self.seek(to: t)
                 }
+                if args.contains("--select-first"), let first = self.project.clips.first {
+                    self.selection = self.project.linked([first.id])
+                }
+                if args.contains("--show-export") { self.showExport = true }
             }
         }
     }
@@ -177,6 +182,13 @@ final class EditorModel: ObservableObject {
         let valid = selection.intersection(Set(project.clips.map(\.id)))
         if valid != selection { selection = valid }
         isDirty = true
+        // Adding or removing a video track moves the video/audio gap; keep it where it was on screen.
+        let above = rowsAbove
+        if lastRowsAbove > 0, above != lastRowsAbove {
+            setView(scrollY: view.scrollY + above - lastRowsAbove)
+        } else {
+            clampView()
+        }
         setNeedsRebuild()
     }
 
@@ -254,14 +266,75 @@ final class EditorModel: ObservableObject {
 
     // MARK: Zoom
 
+    // Every change to zoom or scroll goes through `setView`, so the canvas, the scroll bars and the
+    // wheel all agree on one set of limits and nothing can fight over the position.
+
+    /// Seconds of timeline that can be scrolled to: the content plus working room after it.
+    var extent: Double { max(30, project.duration * 1.3 + 10) }
+
+    /// Fully zoomed out shows exactly `extent`.
+    var minPPS: CGFloat { max(TimelineViewState.minPPS, view.viewWidth / CGFloat(extent)) }
+    var maxScrollX: CGFloat { max(0, CGFloat(extent) * view.pps - view.viewWidth) }
+
+    var rowsContent: CGFloat {
+        TimelineLayout.fixedHeight + CGFloat(project.videoTracks.count + project.audioTracks.count) * (view.rowHeight + TimelineLayout.gap)
+    }
+    var rowsVisible: CGFloat { max(40, view.viewHeight - TimelineLayout.ruler) }
+
+    /// Distance from the top of the tracks to the middle of the gap between video and audio.
+    /// That gap is the vertical "home" of the timeline: the centre of the scroll bar.
+    var rowsAbove: CGFloat {
+        TimelineLayout.zone + CGFloat(project.videoTracks.count) * (view.rowHeight + TimelineLayout.gap) + TimelineLayout.divider / 2
+    }
+
+    /// The vertical bar is a window onto a taller "world" whose middle is the video/audio gap, so a
+    /// centred thumb always puts that gap in the middle of the view, however many tracks are on
+    /// either side. The world is at least big enough to reach both ends of the tracks, and grows as
+    /// rows get taller so the thumb's length shows the zoom.
+    var rowsWorld: CGFloat {
+        let zoomed = rowsVisible * view.rowHeight / TimelineViewState.rowRange.lowerBound
+        return max(rowsVisible, zoomed, 2 * rowsAbove, 2 * (rowsContent - rowsAbove))
+    }
+
+    /// Fraction of the vertical bar the thumb covers.
+    var rowWindow: CGFloat { rowsVisible / rowsWorld }
+
+    /// `scrollY` is how far the top of the tracks is above the top of the view; it goes negative
+    /// when the tracks sit lower than the top.
+    var minScrollY: CGFloat { rowsAbove - rowsWorld / 2 }
+    var maxScrollY: CGFloat { rowsAbove + rowsWorld / 2 - rowsVisible }
+    var centeredScrollY: CGFloat { rowsAbove - rowsVisible / 2 }
+
+    func centerRows() {
+        setView(scrollY: centeredScrollY)
+    }
+
+    func setView(pps: CGFloat? = nil, scrollX: CGFloat? = nil, scrollY: CGFloat? = nil, rowHeight: CGFloat? = nil) {
+        if let rowHeight {
+            let r = min(TimelineViewState.rowRange.upperBound, max(TimelineViewState.rowRange.lowerBound, rowHeight.rounded()))
+            if r != view.rowHeight { view.rowHeight = r }
+        }
+        let p = min(TimelineViewState.maxPPS, max(minPPS, pps ?? view.pps))
+        if p != view.pps { view.pps = p }
+        let x = min(max(0, scrollX ?? view.scrollX), maxScrollX)
+        if x != view.scrollX { view.scrollX = x }
+        let y = min(max(minScrollY, scrollY ?? view.scrollY), maxScrollY)
+        if y != view.scrollY { view.scrollY = y }
+        lastRowsAbove = rowsAbove
+    }
+
+    func clampView() { setView() }
+
+    private var lastRowsAbove: CGFloat = 0
+
+    /// Zooms around the playhead: it keeps its place on screen, or is brought to the centre if it was off screen.
     func setZoom(_ newPPS: CGFloat) {
         let old = view.pps
-        let pps = min(TimelineViewState.maxPPS, max(TimelineViewState.minPPS, newPPS))
+        let pps = min(TimelineViewState.maxPPS, max(minPPS, newPPS))
         guard abs(pps - old) > 1e-9 else { return }
         let px = CGFloat(playhead) * old - view.scrollX
         let anchor = (px >= 0 && px <= view.viewWidth) ? px : view.viewWidth / 2
-        view.pps = pps
-        view.scrollX = max(0, CGFloat(playhead) * pps - anchor)
+        setView(pps: pps, scrollX: CGFloat(playhead) * pps - anchor)
     }
 
     func zoom(by factor: CGFloat) {
@@ -270,8 +343,7 @@ final class EditorModel: ObservableObject {
 
     func zoomToFit() {
         let d = max(project.duration, 1)
-        view.pps = min(TimelineViewState.maxPPS, max(TimelineViewState.minPPS, (view.viewWidth - 80) / CGFloat(d)))
-        view.scrollX = 0
+        setView(pps: (view.viewWidth - 80) / CGFloat(d), scrollX: 0)
     }
 
     // MARK: Import
@@ -338,6 +410,30 @@ final class EditorModel: ObservableObject {
             p.height = asset.height
             p.fps = fps
         }
+    }
+
+    /// Remembers where exports go. Not an undoable edit.
+    func setExportTarget(name: String, directory: String) {
+        guard project.exportName != name || project.exportDir != directory else { return }
+        project.exportName = name
+        project.exportDir = directory
+        isDirty = true
+    }
+
+    /// Renders the frame under the playhead, for previews.
+    func snapshot() async -> NSImage? {
+        let p = project
+        let scale = min(1, 640 / CGFloat(max(p.width, p.height)))
+        let size = CGSize(width: max(2, (CGFloat(p.width) * scale / 2).rounded() * 2),
+                          height: max(2, (CGFloat(p.height) * scale / 2).rounded() * 2))
+        guard let built = CompositionBuilder.build(project: p, media: media, renderSize: size, includeAudio: false) else { return nil }
+        let generator = AVAssetImageGenerator(asset: built.composition)
+        generator.videoComposition = built.videoComposition
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        let t = min(max(0, playhead), max(0, built.duration - 1 / p.fps))
+        guard let cg = try? await generator.image(at: CompositionBuilder.time(t)).image else { return nil }
+        return NSImage(cgImage: cg, size: .zero)
     }
 
     func removeAsset(_ id: UUID) {
@@ -537,8 +633,8 @@ final class EditorModel: ObservableObject {
         project = p
         fileURL = url
         isDirty = false
-        view.scrollX = 0
-        view.scrollY = 0
+        setView(scrollX: 0)
+        centerRows()
         setNeedsRebuild()
         Task {
             await media.restore(p.assets)
