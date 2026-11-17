@@ -213,7 +213,7 @@ private struct AddButton: View {
     var body: some View {
         Group {
             if symbol == "solid" {
-                SolidIcon().frame(width: 17, height: 13)
+                SolidIcon(lineWidth: 1.2).frame(width: 14, height: 10.5)
             } else {
                 Image(systemName: symbol).font(.system(size: 12, weight: .medium))
             }

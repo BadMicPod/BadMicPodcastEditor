@@ -122,8 +122,8 @@ struct SolidIcon: View {
     var body: some View {
         Canvas { ctx, size in
             let outer = CGRect(x: lineWidth / 2, y: lineWidth / 2, width: size.width - lineWidth, height: size.height - lineWidth)
-            ctx.stroke(Path(roundedRect: outer, cornerRadius: 2.5), with: .foreground, lineWidth: lineWidth)
-            let inner = outer.insetBy(dx: lineWidth + 1.4, dy: lineWidth + 1.4)
+            ctx.stroke(Path(roundedRect: outer, cornerRadius: 2.2), with: .foreground, lineWidth: lineWidth)
+            let inner = outer.insetBy(dx: lineWidth + 1.1, dy: lineWidth + 1.1)
             ctx.fill(Path(roundedRect: inner, cornerRadius: 1), with: .foreground)
         }
     }
