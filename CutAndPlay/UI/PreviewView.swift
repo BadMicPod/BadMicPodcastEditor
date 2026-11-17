@@ -59,6 +59,7 @@ struct PreviewSurfaceView: NSViewRepresentable {
 struct PreviewView: View {
     @ObservedObject var model: EditorModel
     @ObservedObject var clock: Clock
+    @ObservedObject var source: SourcePreviewState
     @State private var moveStart: (x: Double, y: Double)?
     /// Viewer magnification; nil fits the frame to the space available.
     @State private var zoom: Double?
@@ -66,6 +67,7 @@ struct PreviewView: View {
     init(model: EditorModel) {
         self.model = model
         self.clock = model.clock
+        self.source = model.sourcePreview
     }
 
     /// The one visual clip in the selection, which dragging in the viewer moves.
@@ -130,6 +132,10 @@ struct PreviewView: View {
                     if model.project.clips.isEmpty {
                         EmptyViewerPrompt(hasMedia: !model.project.assets.isEmpty) { model.showImportPanel() }
                             .frame(width: w, height: h)
+                    }
+                    // A library item being hover-scrubbed shows here, labelled so it isn't mistaken for the edit.
+                    if let s = source.current {
+                        SourceFrame(current: s).frame(width: w, height: h)
                     }
                 }
                 .frame(width: w, height: h, alignment: .topLeading)
@@ -239,6 +245,37 @@ struct TransportBar: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 68)
+    }
+}
+
+/// A library item's frame filling the viewer, with its name and source time in the corner.
+private struct SourceFrame: View {
+    let current: SourcePreviewState.Current
+
+    var body: some View {
+        let a = current.asset
+        let fps = a.fps > 1 ? a.fps : 30
+        ZStack(alignment: .topLeading) {
+            Color.black
+            if let img = current.image {
+                Image(decorative: img, scale: 1)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            HStack(spacing: 6) {
+                Text(a.name).font(.system(size: 11.5, weight: .semibold))
+                Text(Timecode.string(current.time, fps: fps)).font(Theme.mono(11.5, .regular)).foregroundStyle(Theme.textDim)
+            }
+            .foregroundStyle(Theme.text)
+            .padding(.horizontal, 8)
+            .frame(height: 24)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.black.opacity(0.65)))
+            .padding(10)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(Color.white.opacity(0.35), lineWidth: 1))
+        .allowsHitTesting(false)
     }
 }
 

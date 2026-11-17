@@ -109,6 +109,8 @@ private struct SearchField: View {
 /// A library item's picture. Moving the mouse across a video's thumbnail scrubs through it.
 private struct MediaThumb: View {
     @ObservedObject var media: MediaStore
+    /// Where to show the hovered frame full size; nil keeps scrubbing to the thumbnail.
+    var preview: SourcePreviewState?
     let asset: MediaAsset
     let offline: Bool
     var compact = false
@@ -153,9 +155,13 @@ private struct MediaThumb: View {
                     media.scrubFrame(asset: asset.id, time: max(0, t)) { img in
                         if scrub != nil { frame = img }
                     }
+                    // The main viewer follows the mouse exactly, not in steps.
+                    let exact = min(asset.duration - 0.02, Double(x / max(1, g.size.width)) * asset.duration)
+                    preview?.show(asset, at: max(0, exact), media: media)
                 case .ended:
                     scrub = nil
                     frame = nil
+                    preview?.clear()
                 }
             }
         }
@@ -249,7 +255,7 @@ private struct AssetRow: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            MediaThumb(media: media, asset: asset, offline: offline, compact: true)
+            MediaThumb(media: media, preview: model.sourcePreview, asset: asset, offline: offline, compact: true)
                 .frame(width: 64, height: 36)
                 .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {

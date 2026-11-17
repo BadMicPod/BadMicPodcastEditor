@@ -22,6 +22,16 @@ final class MediaRuntime {
         return gen
     }()
 
+    /// Full-size frames for showing a library item in the main viewer while hover-scrubbing it.
+    lazy var viewerGenerator: AVAssetImageGenerator = {
+        let gen = AVAssetImageGenerator(asset: asset)
+        gen.appliesPreferredTrackTransform = true
+        gen.maximumSize = CGSize(width: 1920, height: 1920)
+        gen.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 30)
+        gen.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 30)
+        return gen
+    }()
+
     init(asset: AVURLAsset) { self.asset = asset }
 }
 
@@ -272,6 +282,17 @@ final class MediaStore: ObservableObject {
                 self.scrubFrames[key] = cg
                 completion(cg)
             }
+        }
+    }
+
+    /// A full-size frame for the main viewer. Any earlier request still in flight is dropped.
+    func viewerFrame(asset id: UUID, time: Double, completion: @escaping (CGImage) -> Void) {
+        guard let rt = runtimes[id], rt.videoTrack != nil else { return }
+        let gen = rt.viewerGenerator
+        gen.cancelAllCGImageGeneration()
+        gen.generateCGImageAsynchronously(for: CMTime(seconds: time, preferredTimescale: 600)) { cg, _, _ in
+            guard let cg else { return }
+            Task { @MainActor in completion(cg) }
         }
     }
 

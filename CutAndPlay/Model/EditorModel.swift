@@ -84,6 +84,7 @@ final class EditorModel: ObservableObject {
     let clock = Clock()
     let media = MediaStore()
     let meters = MeterState()
+    let sourcePreview = SourcePreviewState()
     let engine = PlaybackEngine()
     let exports = ExportQueue()
 
