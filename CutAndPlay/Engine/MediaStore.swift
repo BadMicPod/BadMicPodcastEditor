@@ -11,6 +11,11 @@ final class MediaRuntime {
     var videoRange = CMTimeRange.zero
     var audioRange = CMTimeRange.zero
     var orientation = CGImagePropertyOrientation.up
+    var naturalSize = CGSize.zero
+    /// The file's sound played backwards, once it's been made.
+    var reversedAudio: (asset: AVURLAsset, track: AVAssetTrack, range: CMTimeRange)?
+    /// Frames for playing the picture backwards.
+    lazy var reverseFrames: ReverseFrames? = videoTrack.map { ReverseFrames(asset: asset, track: $0, naturalSize: naturalSize) }
     var generator: AVAssetImageGenerator?
     /// Frames for hover-scrubbing a library tile: closer to the asked-for time than the filmstrip's.
     lazy var scrubGenerator: AVAssetImageGenerator = {
@@ -58,6 +63,10 @@ final class MediaStore: ObservableObject {
     private var pendingThumbs = Set<ThumbKey>()
     private var stills: [UUID: CGImage] = [:]
     private var waveformJobs = Set<UUID>()
+    private var reversedWaveforms: [UUID: Waveform] = [:]
+    private var reverseJobs: [UUID: Task<Void, Never>] = [:]
+    /// Called when a file's reversed sound is ready, so the timeline can be rebuilt with it.
+    var onReverseReady: (() -> Void)?
 
     /// Called (coalesced) when thumbnails or waveforms arrive so the timeline can redraw.
     var onVisualUpdate: (() -> Void)?
@@ -141,6 +150,7 @@ final class MediaStore: ObservableObject {
         runtimes[id] = nil
         posters[id] = nil
         waveforms[id] = nil
+        reversedWaveforms[id] = nil
         stills[id] = nil
         thumbs = thumbs.filter { $0.key.asset != id }
     }
@@ -172,6 +182,7 @@ final class MediaStore: ObservableObject {
                       decodable, size.width > 0, range.duration.seconds > 0 else { continue }
                 rt.videoTrack = t
                 rt.videoRange = range
+                rt.naturalSize = size
                 let rect = CGRect(origin: .zero, size: size).applying(tf)
                 info.width = Int(abs(rect.width).rounded())
                 info.height = Int(abs(rect.height).rounded())
@@ -296,7 +307,65 @@ final class MediaStore: ObservableObject {
         }
     }
 
+    // MARK: Reversed sound
+
+    /// A file's reversed sound, if it's ready. If it isn't, it starts being made (`onReverseReady`
+    /// says when it's done).
+    func reversedAudio(_ id: UUID) -> (asset: AVURLAsset, track: AVAssetTrack, range: CMTimeRange)? {
+        if let r = runtimes[id]?.reversedAudio { return r }
+        _ = prepareReversedAudio(id)
+        return nil
+    }
+
+    @discardableResult
+    func prepareReversedAudio(_ id: UUID) -> Task<Void, Never>? {
+        guard let rt = runtimes[id], rt.reversedAudio == nil, let track = rt.audioTrack else { return nil }
+        if let job = reverseJobs[id] { return job }
+        let asset = rt.asset
+        let out = ReverseAudio.cacheURL(for: asset.url)
+        let job = Task { [weak self] in
+            let ready: Bool = await Task.detached(priority: .userInitiated) {
+                if FileManager.default.fileExists(atPath: out.path) { return true }
+                do { try ReverseAudio.render(asset: asset, track: track, to: out); return true } catch { return false }
+            }.value
+            let file = AVURLAsset(url: out, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+            var loaded: (AVAssetTrack, CMTimeRange)?
+            if ready, let t = try? await file.loadTracks(withMediaType: .audio).first, let r = try? await t.load(.timeRange) { loaded = (t, r) }
+            guard let self else { return }
+            self.reverseJobs[id] = nil
+            if let (t, r) = loaded, let rt = self.runtimes[id] {
+                rt.reversedAudio = (file, t, r)
+                self.onReverseReady?()
+            }
+        }
+        reverseJobs[id] = job
+        return job
+    }
+
+    /// Waits until every reversed clip's sound is ready (before exporting).
+    func prepareReversedAudio(for project: Project) async {
+        let ids = Set(project.clips.filter { $0.kind == .audio && $0.playsBackwards }.compactMap(\.assetID))
+        for id in ids { await prepareReversedAudio(id)?.value }
+    }
+
+    func needsReversedAudio(_ project: Project) -> Bool {
+        project.clips.contains { c in
+            guard c.kind == .audio, c.playsBackwards, let id = c.assetID, let rt = runtimes[id] else { return false }
+            return rt.audioTrack != nil && rt.reversedAudio == nil
+        }
+    }
+
     // MARK: Waveforms
+
+    /// The waveform the way a clip plays it: mirrored for a reversed clip.
+    func waveform(_ c: Clip) -> Waveform? {
+        guard let id = c.assetID, let wf = waveforms[id] else { return nil }
+        guard c.playsBackwards else { return wf }
+        if let r = reversedWaveforms[id] { return r }
+        let r = Waveform(peaksPerSecond: wf.peaksPerSecond, peaks: wf.peaks.reversed(), left: wf.left.reversed(), right: wf.right.reversed())
+        reversedWaveforms[id] = r
+        return r
+    }
 
     private func makeWaveform(_ id: UUID, _ rt: MediaRuntime) {
         guard let track = rt.audioTrack, !waveformJobs.contains(id) else { return }
@@ -306,7 +375,7 @@ final class MediaStore: ObservableObject {
             let wf = WaveformReader.read(asset: asset, track: track)
             await MainActor.run { [weak self] in
                 self?.waveformJobs.remove(id)
-                if let wf { self?.waveforms[id] = wf }
+                if let wf { self?.waveforms[id] = wf; self?.reversedWaveforms[id] = nil }
                 self?.notifyVisual()
             }
         }

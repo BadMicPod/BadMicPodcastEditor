@@ -96,6 +96,18 @@ enum CompositionBuilder {
                 for (index, clip) in clips.enumerated() {
                     let plan = project.transitionPlan(clip)
                     switch clip.kind {
+                    case .video where clip.playsBackwards:
+                        // Read backwards from the file as it plays; no composition track needed.
+                        guard let id = clip.assetID, let rt = media.runtimes[id], let frames = rt.reverseFrames,
+                              let length = project.asset(id)?.duration else { continue }
+                        var shown = clip
+                        shown.start -= plan.leadIn
+                        shown.sourceStart -= plan.leadIn * clip.speed
+                        hash(shown, into: &hasher)
+                        let limit = Int(max(canvas.width, canvas.height).rounded())
+                        layers.append(RenderLayer(clip: clip, source: .reversed(frames, rt.orientation, limit: limit, start: shown.start,
+                                                                                sourceStart: shown.sourceStart, speed: clip.speed, length: length),
+                                                  cube: GradeBaker.cube(for: clip.grade), plan: plan))
                     case .video:
                         guard let id = clip.assetID, let rt = media.runtimes[id], let src = rt.videoTrack else { continue }
                         let lane = index % 2
@@ -151,7 +163,18 @@ enum CompositionBuilder {
                 let duckLow = dbToLinear(track.duckDB)
                 for clip in clips {
                     guard clip.speed <= 32, clip.speed >= 1.0 / 32,
-                          let id = clip.assetID, let rt = media.runtimes[id], let src = rt.audioTrack else { continue }
+                          let id = clip.assetID, let rt = media.runtimes[id], var src = rt.audioTrack else { continue }
+                    var clip = clip
+                    var sourceRange = rt.audioRange
+                    if clip.playsBackwards {
+                        // The reversed sound runs from the end of the file's sound; line it up with the
+                        // file's length, which a reversed clip's source time is measured from.
+                        guard let r = media.reversedAudio(id), let length = project.asset(id)?.duration else { hasher.combine(-1); continue }
+                        clip.sourceStart += r.range.duration.seconds - length
+                        src = r.track
+                        sourceRange = r.range
+                        hasher.combine(-2)
+                    }
                     if compTrack == nil {
                         compTrack = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
                         if let ct = compTrack {
@@ -161,7 +184,7 @@ enum CompositionBuilder {
                             mixParams.append(p)
                         }
                     }
-                    guard let ct = compTrack, let p = params, insert(clip, source: src, range: rt.audioRange, into: ct, cursor: &cursor) else { continue }
+                    guard let ct = compTrack, let p = params, insert(clip, source: src, range: sourceRange, into: ct, cursor: &cursor) else { continue }
                     hash(clip, into: &hasher)
 
                     let gain = Float(trackGain * dbToLinear(clip.gainDB))
@@ -236,6 +259,7 @@ enum CompositionBuilder {
         hasher.combine(clip.duration)
         hasher.combine(clip.sourceStart)
         hasher.combine(clip.speed)
+        hasher.combine(clip.reversed)
     }
 
     /// Places one clip's media on a composition track, applying speed by scaling the inserted range.

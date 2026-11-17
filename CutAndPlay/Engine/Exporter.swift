@@ -97,6 +97,18 @@ final class Exporter: ObservableObject {
     func start(project: Project, media: MediaStore, settings: ExportSettings, url: URL) {
         guard state != .running else { return }
         progress = 0
+        if media.needsReversedAudio(project) {
+            // Reversed clips' sound is still being made: wait for it first.
+            state = .running
+            measuringCancelled = false
+            Task {
+                await media.prepareReversedAudio(for: project)
+                guard !measuringCancelled else { state = .idle; return }
+                state = .idle
+                start(project: project, media: media, settings: settings, url: url)
+            }
+            return
+        }
         let wantsAudio = settings.format == .wav || settings.includeAudio
         if let target = settings.loudness, wantsAudio,
            let mix = CompositionBuilder.build(project: project, media: media, renderSize: CGSize(width: 16, height: 16),

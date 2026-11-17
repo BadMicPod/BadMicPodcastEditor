@@ -16,6 +16,38 @@ enum SelfTest {
             }
             return
         }
+        // `--reverse-bench <file>...`: how long reversing each whole file takes.
+        if let i = args.firstIndex(of: "--reverse-bench") {
+            let files = args[(i + 1)...].map { URL(fileURLWithPath: $0) }
+            Task { @MainActor in
+                let media = MediaStore()
+                for f in files {
+                    guard let a = await media.importFile(f) else { log("RBENCH can't open \(f.lastPathComponent)"); continue }
+                    // Sound: made once per file (the cached copy is removed first, to time it fresh).
+                    if a.hasAudio || a.kind == .audio {
+                        try? FileManager.default.removeItem(at: ReverseAudio.cacheURL(for: a.url))
+                        let t0 = Date()
+                        await media.prepareReversedAudio(a.id)?.value
+                        log(String(format: "RBENCH %@ %.1fs long: sound reversed in %.2fs (ready=%@)", f.lastPathComponent, a.duration,
+                                   Date().timeIntervalSince(t0), media.runtimes[a.id]?.reversedAudio != nil ? "yes" : "no"))
+                    }
+                    // Picture: frames played backwards in order, as fast as they come.
+                    if let frames = media.runtimes[a.id]?.reverseFrames {
+                        for limit in [1920, 3840] {
+                            let fps = max(24, a.fps)
+                            let n = Int(min(a.duration, 6) * fps)
+                            let t0 = Date()
+                            var got = 0
+                            for i in 0..<n where frames.frame(before: a.duration - Double(i) / fps, limit: limit) != nil { got += 1 }
+                            let dt = Date().timeIntervalSince(t0)
+                            log(String(format: "RBENCH %@ backwards at %d px: %d/%d frames, %.0f fps (needs %.0f)", f.lastPathComponent, limit, got, n, Double(n) / dt, a.fps))
+                        }
+                    }
+                }
+                exit(0)
+            }
+            return
+        }
         guard let i = args.firstIndex(of: "--selftest"), args.count > i + 2 else { return }
         let mediaDir = URL(fileURLWithPath: args[i + 1])
         let outDir = URL(fileURLWithPath: args[i + 2])
@@ -545,37 +577,47 @@ enum SelfTest {
             log("FREEZE \(shape && held ? "OK" : "FAIL") shape=\(shape) held=\(held) d=\(diff(f1, f2)) vs \(diff(f1, moving))")
             ok = ok && shape && held
         }
-        // Reverse: the reversed file's first frame is the source's last frame of the range, and its
-        // last frame the first; length matches.
-        if let video = project.assets.first(where: { $0.kind == .video && $0.duration >= 6 }) {
-            let out = outDir.appendingPathComponent("reversed.mov")
-            do {
-                try await Reverser.render(source: video.url, start: 1, duration: 3, to: out) { _ in }
-                let rev = AVURLAsset(url: out), src = AVURLAsset(url: video.url)
-                let length = (try? await rev.load(.duration).seconds) ?? 0
-                func frame(_ a: AVAsset, _ t: Double) async -> [UInt8] {
-                    let g = AVAssetImageGenerator(asset: a)
-                    g.requestedTimeToleranceBefore = .zero; g.requestedTimeToleranceAfter = .zero
-                    g.maximumSize = CGSize(width: 160, height: 90)
-                    guard let cg = try? await g.image(at: CMTime(seconds: t, preferredTimescale: 600)).image,
-                          let d = cg.dataProvider?.data as Data? else { return [] }
-                    return Array(d)
-                }
-                func diff(_ a: [UInt8], _ b: [UInt8]) -> Double {
-                    guard !a.isEmpty, a.count == b.count else { return 999 }
-                    var s = 0; for i in 0..<a.count { s += abs(Int(a[i]) - Int(b[i])) }; return Double(s) / Double(a.count)
-                }
-                let startMatch = diff(await frame(rev, 0.02), await frame(src, 3.97))
-                let endMatch = diff(await frame(rev, 2.95), await frame(src, 1.02))
-                let wrongWay = diff(await frame(rev, 0.02), await frame(src, 1.02))
-                let audio = ((try? await rev.loadTracks(withMediaType: .audio))?.count ?? 0) == ((try? await src.loadTracks(withMediaType: .audio))?.count ?? 0)
-                let good = abs(length - 3) < 0.1 && startMatch < 6 && endMatch < 6 && wrongWay > startMatch && audio
-                log("REVERSE \(good ? "OK" : "FAIL") length=\(length) start=\(startMatch) end=\(endMatch) forwards=\(wrongWay) audio=\(audio)")
-                ok = ok && good
-            } catch {
-                log("REVERSE FAIL \(error)")
-                ok = false
+        // Reverse: a reversed clip's first frame is the last of its stretch of the file and its last
+        // frame the first, its length is unchanged, and its sound comes along.
+        if let video = project.assets.first(where: { $0.kind == .video && $0.duration >= 6 && $0.hasAudio }),
+           let v1 = project.videoTracks.first, let a1 = project.audioTracks.first {
+            var p = project
+            p.clips = []
+            let link = UUID()
+            var v = Clip(trackID: v1.id, kind: .video, assetID: video.id, start: 0, duration: 3, sourceStart: 1)
+            var a = Clip(trackID: a1.id, kind: .audio, assetID: video.id, start: 0, duration: 3, sourceStart: 1)
+            v.linkID = link; a.linkID = link
+            for c in [v, a] {
+                var r = c
+                r.sourceStart = video.duration - (c.sourceStart + c.duration)
+                r.reversed = true
+                p.clips.append(r)
             }
+            let out = outDir.appendingPathComponent("reversed.mp4")
+            var settings = ExportSettings()
+            settings.height = 360
+            _ = await export(p, media, settings, to: out)
+            let rev = AVURLAsset(url: out), src = AVURLAsset(url: video.url)
+            let length = (try? await rev.load(.duration).seconds) ?? 0
+            func frame(_ a: AVAsset, _ t: Double) async -> [UInt8] {
+                let g = AVAssetImageGenerator(asset: a)
+                g.requestedTimeToleranceBefore = .zero; g.requestedTimeToleranceAfter = .zero
+                g.maximumSize = CGSize(width: 160, height: 90)
+                guard let cg = try? await g.image(at: CMTime(seconds: t, preferredTimescale: 600)).image,
+                      let d = cg.dataProvider?.data as Data? else { return [] }
+                return Array(d)
+            }
+            func diff(_ a: [UInt8], _ b: [UInt8]) -> Double {
+                guard !a.isEmpty, a.count == b.count else { return 999 }
+                var s = 0; for i in 0..<a.count { s += abs(Int(a[i]) - Int(b[i])) }; return Double(s) / Double(a.count)
+            }
+            let startMatch = diff(await frame(rev, 0.02), await frame(src, 3.97))
+            let endMatch = diff(await frame(rev, 2.95), await frame(src, 1.02))
+            let wrongWay = diff(await frame(rev, 0.02), await frame(src, 1.02))
+            let audio = ((try? await rev.loadTracks(withMediaType: .audio))?.count ?? 0) == 1
+            let good = abs(length - 3) < 0.1 && startMatch < 8 && endMatch < 8 && wrongWay > startMatch && audio
+            log("REVERSE \(good ? "OK" : "FAIL") length=\(length) start=\(startMatch) end=\(endMatch) forwards=\(wrongWay) audio=\(audio)")
+            ok = ok && good
         }
         // Export shapes: a vertical 9:16 export is 1080 × 1920, and moving the crop changes what's kept.
         do {

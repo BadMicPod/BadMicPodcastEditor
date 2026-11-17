@@ -110,8 +110,14 @@ struct Clip: Identifiable, Codable, Hashable {
     var freeze: Bool?
     /// Set on a reversed clip: where its footage came from, so reversing again restores it.
     var reversedFrom: ReverseSource?
+    /// Plays its source backwards. Source time `s` is time `length - s` in the file, so trims and
+    /// splits work as on any clip.
+    var reversed: Bool?
 
     var isFreeze: Bool { freeze == true }
+    var playsBackwards: Bool { reversed == true }
+    /// Reversed either way: playing backwards, or (in older projects) using a reversed copy of a file.
+    var isReversed: Bool { playsBackwards || reversedFrom != nil }
     /// Plays through its source over time (so speed and source limits apply); a freeze frame doesn't.
     var playsSource: Bool { kind.usesSource && !isFreeze }
 

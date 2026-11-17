@@ -565,12 +565,26 @@ final class TimelineCanvas: NSView {
             moveTrackDelta = previousDelta
         }
 
+        // Linked partners on the other kind of track move the same number of tracks, so a clip
+        // taken from V1 to V2 has its sound go from A1 to A2 (and back).
+        let movedLinks = Set(originals.filter { $0.kind.trackKind == kind }.compactMap(\.linkID))
+        let otherKind: TrackKind = kind == .video ? .audio : .video
+        let otherTracks = project.tracks(otherKind)
+
         var out: [UUID: Clip] = [:]
         for var c in originals {
             c.start = max(0, c.start + dt)
             if c.kind.trackKind == kind, let i = project.trackIndex(c.trackID, kind: kind) {
                 let ni = i + moveTrackDelta
                 c.trackID = ni >= tracks.count ? (kind == .video ? TrackToken.newVideo : TrackToken.newAudio) : tracks[max(0, ni)].id
+            } else if c.kind.trackKind == otherKind, let link = c.linkID, movedLinks.contains(link),
+                      let i = project.trackIndex(c.trackID, kind: otherKind) {
+                let ni = max(0, i + moveTrackDelta)
+                if ni >= otherTracks.count {
+                    c.trackID = otherKind == .video ? TrackToken.newVideo : TrackToken.newAudio
+                } else if !otherTracks[ni].locked {
+                    c.trackID = otherTracks[ni].id
+                }
             }
             out[c.id] = c
         }
@@ -772,7 +786,7 @@ final class TimelineCanvas: NSView {
             menu.addItem(ActionItem("Detach Audio", enabled: model.selectionIsLinked) { model.detachAudio() })
             if h.clip.kind.usesSource {
                 menu.addItem(ActionItem("Freeze Frame at Playhead", enabled: h.clip.kind == .video && !h.clip.isFreeze && t >= h.clip.start && t < h.clip.end) { model.freezeFrame() })
-                menu.addItem(ActionItem(h.clip.reversedFrom == nil ? "Reverse" : "Play Forwards", enabled: !h.clip.isFreeze) { model.reverseSelection() })
+                menu.addItem(ActionItem(!h.clip.isReversed ? "Reverse" : "Play Forwards", enabled: !h.clip.isFreeze) { model.reverseSelection() })
             }
             if h.clip.playsSource {
                 let speed = NSMenuItem(title: "Speed", action: nil, keyEquivalent: "")
@@ -1232,7 +1246,7 @@ final class TimelineCanvas: NSView {
             }
             var label = model.project.name(of: c)
             if c.isFreeze { label += "   Freeze" } else if abs(c.speed - 1) > 0.001 { label += "   \(Int((c.speed * 100).rounded()))%" }
-            if c.reversedFrom != nil { label += "   Reversed" }
+            if c.isReversed { label += "   Reversed" }
             if c.kind == .audio, abs(c.gainDB) > 0.05 { label += "   " + formatDB(c.gainDB) }
             var lx = max(r.minX, 0) + 8
             if r.width > 36 { lx = max(lx, fadeHandleX(c, r, fadeIn: true) + 10) }
@@ -1354,7 +1368,8 @@ final class TimelineCanvas: NSView {
         while k <= kEnd, drawn < 240 {
             let ts = Double(k) * step
             let tx = r.minX + CGFloat((ts - c.sourceStart) / c.speed) * pps
-            let sample = c.isFreeze ? c.sourceStart : min(max(0, ts), max(0, asset.duration - 0.05))
+            let shown = c.playsBackwards ? asset.duration - ts : ts
+            let sample = c.isFreeze ? c.sourceStart : min(max(0, shown), max(0, asset.duration - 0.05))
             if let img = model.media.thumbnail(asset: asset.id, time: sample) {
                 // Frames sit side by side with a 1pt dark gap, like a contact sheet.
                 drawImage(img, fill: CGRect(x: tx, y: r.minY, width: max(1, w - 1), height: r.height), ctx: ctx)
@@ -1366,7 +1381,7 @@ final class TimelineCanvas: NSView {
     }
 
     private func drawWaveform(_ c: Clip, in r: CGRect, visible: CGRect, ctx: CGContext) {
-        guard let id = c.assetID, let wf = model.media.waveforms[id], visible.width > 0, !wf.peaks.isEmpty else { return }
+        guard let wf = model.media.waveform(c), visible.width > 0, !wf.peaks.isEmpty else { return }
         let top = r.minY + 16, bottom = r.maxY - 3
         guard bottom - top > 6 else { return }
         let mid = (top + bottom) / 2, half = (bottom - top) / 2

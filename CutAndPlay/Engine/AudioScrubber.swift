@@ -82,7 +82,7 @@ final class AudioScrubber: @unchecked Sendable {
         var h = Hasher()
         h.combine(project.audioTracks)
         for c in project.clips where c.kind == .audio { h.combine(c) }
-        for a in project.assets where a.kind != .image { h.combine(a.id); h.combine(media.runtimes[a.id] != nil) }
+        for a in project.assets where a.kind != .image { h.combine(a.id); h.combine(media.runtimes[a.id] != nil); h.combine(media.runtimes[a.id]?.reversedAudio != nil) }
         let print = h.finalize()
         guard print != fingerprint else { return }
         fingerprint = print

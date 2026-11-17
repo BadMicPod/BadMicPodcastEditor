@@ -5,7 +5,7 @@ import AVFoundation
 enum AudioLevels {
     /// A clip's typical level in dB, from the peaks over its source range, ignoring near-silence.
     static func envelopeDB(_ c: Clip, media: MediaStore) -> Double? {
-        guard let id = c.assetID, let wf = media.waveforms[id], !wf.peaks.isEmpty else { return nil }
+        guard let wf = media.waveform(c), !wf.peaks.isEmpty else { return nil }
         let lo = max(0, Int(c.sourceStart * wf.peaksPerSecond))
         let hi = min(wf.peaks.count, Int((c.sourceStart + c.duration * c.speed) * wf.peaksPerSecond))
         guard hi > lo else { return nil }
@@ -24,7 +24,7 @@ enum AudioLevels {
         var spans: [(Double, Double)] = []
         let step = 0.05
         for c in project.clips where c.trackID == trackID && c.kind == .audio {
-            guard let id = c.assetID, let wf = media.waveforms[id], !wf.peaks.isEmpty else { continue }
+            guard let wf = media.waveform(c), !wf.peaks.isEmpty else { continue }
             var open: Double?
             var t = c.start
             while t < c.end {
