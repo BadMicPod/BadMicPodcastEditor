@@ -47,7 +47,7 @@ struct InspectorView: View {
                 .padding(.bottom, 18)
             }
         }
-        .background(Theme.panel)
+        .background(Theme.panel).panelTopLight()
     }
 
     private func primary(_ clips: [Clip]) -> Clip? {

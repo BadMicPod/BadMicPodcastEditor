@@ -58,7 +58,7 @@ struct LibraryView: View {
                 .padding(.bottom, 12)
             }
         }
-        .background(Theme.panel)
+        .background(Theme.panel).panelTopLight()
         .overlay(
             RoundedRectangle(cornerRadius: 0)
                 .strokeBorder(Theme.accent.opacity(dropTargeted ? 0.9 : 0), lineWidth: 2)

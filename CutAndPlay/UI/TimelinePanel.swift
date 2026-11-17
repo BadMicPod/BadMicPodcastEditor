@@ -56,7 +56,7 @@ struct TimelineToolbar: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 44)
-        .background(Theme.panel)
+        .background(Theme.panel).panelTopLight()
     }
 }
 

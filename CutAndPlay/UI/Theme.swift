@@ -226,6 +226,13 @@ struct SolidIcon: View {
     }
 }
 
+extension View {
+    /// A faint 1pt highlight along a panel's top edge, like light catching the lip of a housing.
+    func panelTopLight() -> some View {
+        overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.045)).frame(height: 1).allowsHitTesting(false) }
+    }
+}
+
 struct Hairline: View {
     var vertical = false
     var body: some View {

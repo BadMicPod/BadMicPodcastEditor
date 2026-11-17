@@ -117,6 +117,14 @@ struct PreviewView: View {
                     PreviewSurfaceView(model: model)
                         .frame(width: w, height: h)
                         .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                        .overlay(
+                            // A soft shadow inside the edge, as if the picture sits in a recessed well.
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                .stroke(Color.black.opacity(0.75), lineWidth: 10)
+                                .blur(radius: 7)
+                                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                                .allowsHitTesting(false)
+                        )
                         .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(Color.white.opacity(0.06)))
                 }
                 .frame(width: w, height: h, alignment: .topLeading)
@@ -294,9 +302,12 @@ private struct PlayButton: View {
                 .offset(x: playing ? 0 : 1.5)
                 .frame(width: 46, height: 46)
                 .background(Circle().fill(hovering ? Color.white : Theme.text))
-                // A dark ring sets it off from the bar, like a physical key.
+                // Keyed like a physical button: a light top edge, a little shade underneath.
+                .overlay(Circle().strokeBorder(LinearGradient(colors: [.white, .black.opacity(0.18)], startPoint: .top, endPoint: .bottom), lineWidth: 1))
+                .shadow(color: .black.opacity(0.55), radius: 3, y: 2)
+                // A dark ring sets it off from the bar.
                 .padding(5)
-                .background(Circle().fill(Color(hex: 0x161616)))
+                .background(Circle().fill(Color(hex: 0x161616)).overlay(Circle().strokeBorder(Color.white.opacity(0.05))))
                 .scaleEffect(hovering ? 1.05 : 1)
                 .animation(.easeOut(duration: 0.12), value: hovering)
                 .contentShape(Circle())
