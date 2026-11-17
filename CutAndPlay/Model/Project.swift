@@ -371,11 +371,30 @@ extension Project {
 
     /// First track of a kind (bottom-up for video, top-down for audio) that is empty across a range.
     func freeTrack(_ kind: TrackKind, start: Double, duration: Double) -> UUID? {
-        for t in tracks(kind) {
+        for t in tracks(kind) where !t.locked {
             let busy = clips.contains { $0.trackID == t.id && $0.start < start + duration - 1e-6 && $0.end > start + 1e-6 }
             if !busy { return t.id }
         }
         return nil
+    }
+
+    /// The earliest place at or after `time` where a clip of this length fits on an open video track
+    /// without covering anything, preferring lower tracks when two are equally early.
+    func firstFreeVideoSpot(from time: Double, duration: Double) -> (track: UUID, start: Double)? {
+        var best: (track: UUID, start: Double)?
+        for t in videoTracks where !t.locked {
+            let here = clips.filter { $0.trackID == t.id }.sorted { $0.start < $1.start }
+            var candidates = [time] + here.map(\.end).filter { $0 > time }
+            candidates.sort()
+            for start in candidates {
+                let busy = here.contains { $0.start < start + duration - 1e-6 && $0.end > start + 1e-6 }
+                if !busy {
+                    if best == nil || start < best!.start - 1e-9 { best = (t.id, start) }
+                    break
+                }
+            }
+        }
+        return best
     }
 
     // MARK: Mutations

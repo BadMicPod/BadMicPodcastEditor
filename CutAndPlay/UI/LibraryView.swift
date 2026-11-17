@@ -25,7 +25,9 @@ struct LibraryView: View {
                     ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 14, height: 14)
                 }
                 Spacer()
-                IconButton(symbol: "plus", size: 26, help: "Import Media (⌘I)") { model.showImportPanel() }
+                AddButton(model: model, symbol: "textformat", payload: .text, help: "Text: click to add at the playhead, or drag to the timeline")
+                AddButton(model: model, symbol: "square.fill", payload: .solid, help: "Solid: click to add at the playhead, or drag to the timeline")
+                IconButton(symbol: "square.and.arrow.down", size: 26, help: "Import Media (⌘I)") { model.showImportPanel() }
             }
             .padding(.leading, 14)
             .padding(.trailing, 8)
@@ -33,10 +35,6 @@ struct LibraryView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 10) {
-                        GeneratorTile(symbol: "textformat", title: "Text", tint: Color(nsColor: Theme.NS.textClip), model: model, payload: .text)
-                        GeneratorTile(symbol: "square.fill", title: "Solid", tint: Color(nsColor: Theme.NS.solid), model: model, payload: .solid)
-                    }
                     if model.project.assets.isEmpty {
                         EmptyLibrary(targeted: dropTargeted) { model.showImportPanel() }
                     } else {
@@ -203,37 +201,28 @@ private struct EmptyLibrary: View {
     }
 }
 
-private struct GeneratorTile: View {
-    let symbol: String
-    let title: String
-    let tint: Color
+/// Header button for text or a solid: click to add one at the playhead, or drag it to the timeline.
+private struct AddButton: View {
     let model: EditorModel
+    let symbol: String
     let payload: DragPayload
+    let help: String
     @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(tint)
-            Text(title)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(Theme.text)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 32)
-        .frame(maxWidth: .infinity)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovering ? Theme.hover : Theme.field))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(hovering ? 0.18 : 0)))
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .onTapGesture(count: 2) { model.addAtPlayhead(payload) }
-        .onDrag {
-            model.dragPayload = payload
-            return NSItemProvider(object: ("cutandplay:" + (payload == .text ? "text" : "solid")) as NSString)
-        }
-        .help("Drag to the timeline")
+        Image(systemName: symbol)
+            .font(.system(size: symbol == "square.fill" ? 10.5 : 12, weight: .medium))
+            .foregroundStyle(hovering ? Theme.text : Theme.textDim)
+            .frame(width: 26, height: 26)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hovering ? Theme.hover : .clear))
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .onTapGesture { model.addAtPlayhead(payload) }
+            .onDrag {
+                model.dragPayload = payload
+                return NSItemProvider(object: ("cutandplay:" + (payload == .text ? "text" : "solid")) as NSString)
+            }
+            .help(help)
     }
 }
 

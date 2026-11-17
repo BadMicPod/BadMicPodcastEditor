@@ -674,6 +674,16 @@ final class EditorModel: ObservableObject {
 
     func addAtPlayhead(_ payload: DragPayload) {
         let dur = payloadDuration(payload)
+        // Text and solids never cover anything: the first open video track at the playhead, or else
+        // the first gap after it.
+        if payload == .text || payload == .solid {
+            if let spot = project.firstFreeVideoSpot(from: playhead, duration: dur) {
+                insert(makeClips(payload, at: spot.start, videoTrack: spot.track, audioTrack: project.audioTracks.first?.id ?? TrackToken.newAudio))
+            } else {
+                insert(makeClips(payload, at: playhead, videoTrack: TrackToken.newVideo, audioTrack: TrackToken.newAudio))
+            }
+            return
+        }
         let start = playhead
         let v = project.freeTrack(.video, start: start, duration: dur) ?? TrackToken.newVideo
         let a = project.freeTrack(.audio, start: start, duration: dur) ?? TrackToken.newAudio

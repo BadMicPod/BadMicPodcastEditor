@@ -380,6 +380,18 @@ enum SelfTest {
             log("LOUDNESS \(good ? "OK" : "FAIL") lufs=\(measured.map { String(format: "%.2f", $0.lufs) } ?? "-") peak=\(measured.map { String(format: "%.2f", $0.peakDB) } ?? "-")")
             ok = ok && good
         }
+        // Text and solids land in the first open spot: a free track at the playhead, else the next gap.
+        do {
+            var p = Project()
+            let v1 = p.videoTracks[0].id, v2 = p.videoTracks[1].id
+            p.clips = [Clip(trackID: v1, kind: .solid, start: 0, duration: 10)]
+            let up = p.firstFreeVideoSpot(from: 2, duration: 5)
+            p.clips.append(Clip(trackID: v2, kind: .solid, start: 1, duration: 3))
+            let right = p.firstFreeVideoSpot(from: 2, duration: 5)
+            let good = up.map { $0.track == v2 && $0.start == 2 } == true && right.map { $0.track == v2 && $0.start == 4 } == true
+            log("PLACEMENT \(good ? "OK" : "FAIL")")
+            ok = ok && good
+        }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")
     }
 }
