@@ -68,6 +68,7 @@ struct CutAndPlayApp: App {
             CommandMenu("Clip") {
                 Button("Split at Playhead") { model.splitAtPlayhead() }.keyboardShortcut("k")
                 Button("Add Dissolve") { model.addTransitionAtPlayhead() }.keyboardShortcut("d")
+                Button("Even Out Audio Levels") { model.evenOutLevels() }
                 Button("Detach Audio") { model.detachAudio() }.keyboardShortcut("l", modifiers: [.command, .shift])
                 Divider()
                 Button("Delete") { model.deleteSelection() }

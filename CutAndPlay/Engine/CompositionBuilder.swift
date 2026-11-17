@@ -127,6 +127,12 @@ enum CompositionBuilder {
                 var params: AVMutableAudioMixInputParameters?
                 var cursor = CMTime.zero
                 let trackGain = dbToLinear(track.gainDB)
+                // Ducking under another track: the level follows that track's sound.
+                let duckSpans: [(start: Double, end: Double)]? = track.duckUnder.flatMap { voice in
+                    guard let v = project.audioTracks.first(where: { $0.id == voice }), project.isAudible(v) else { return nil }
+                    return AudioLevels.activity(on: voice, project: project, media: media)
+                }
+                let duckLow = dbToLinear(track.duckDB)
                 for clip in clips {
                     guard clip.speed <= 32, clip.speed >= 1.0 / 32,
                           let id = clip.assetID, let rt = media.runtimes[id], let src = rt.audioTrack else { continue }
@@ -143,6 +149,20 @@ enum CompositionBuilder {
                     hash(clip, into: &hasher)
 
                     let gain = Float(trackGain * dbToLinear(clip.gainDB))
+                    if let spans = duckSpans, !spans.isEmpty {
+                        // Fades and ducking together, as short linear pieces every 50ms.
+                        let step = 0.05
+                        var t0 = clip.start
+                        func level(_ t: Double) -> Float {
+                            gain * Float(clip.fadeGain(at: t) * AudioLevels.duckGain(at: t, spans: spans, low: duckLow))
+                        }
+                        while t0 < clip.end - 1e-6 {
+                            let t1 = min(clip.end, t0 + step)
+                            p.setVolumeRamp(fromStartVolume: level(t0), toEndVolume: level(t1), timeRange: CMTimeRange(start: time(t0), end: time(t1)))
+                            t0 = t1
+                        }
+                        continue
+                    }
                     let start = time(clip.start), end = time(clip.end)
                     let fi = min(time(clip.fadeIn), end - start)
                     let fo = min(time(clip.fadeOut), end - start - fi)

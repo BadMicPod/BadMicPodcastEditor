@@ -724,6 +724,35 @@ final class EditorModel: ObservableObject {
         selection = Set(project.clips.map(\.id))
     }
 
+    /// Sets every selected audio clip (or every audio clip, with none selected) to the same typical
+    /// level, so quiet and loud recordings sit together. Clips without a waveform yet are left alone.
+    func evenOutLevels() {
+        let target = -20.0
+        let chosen = project.clips.filter { selection.contains($0.id) && $0.kind == .audio }
+        let clips = (chosen.isEmpty ? project.clips.filter { $0.kind == .audio } : chosen).filter { !project.isLocked($0.trackID) }
+        var gains: [UUID: Double] = [:]
+        for c in clips {
+            guard let level = AudioLevels.envelopeDB(c, media: media) else { continue }
+            gains[c.id] = ((target - level) * 10).rounded() / 10
+        }
+        guard !gains.isEmpty else { return }
+        mutate { p in
+            for i in p.clips.indices {
+                if let g = gains[p.clips[i].id] { p.clips[i].gainDB = g.clamped(to: -24...12) }
+            }
+        }
+    }
+
+    /// Turns one audio track down while another has sound (music under a voice); nil stops it.
+    func duck(_ track: UUID, under voice: UUID?, amount: Double? = nil) {
+        mutate { p in
+            p.updateTrack(track) { t in
+                t.duckUnder = voice
+                if let amount { t.duckDB = amount }
+            }
+        }
+    }
+
     /// Sets (or with nil removes) the transition into a clip from the one before it.
     func setTransition(into id: UUID, _ transition: Transition?) {
         mutate { p in

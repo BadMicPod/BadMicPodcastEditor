@@ -755,6 +755,9 @@ final class TimelineCanvas: NSView {
                 if project.previous(touching: h.clip) != nil { menu.addItem(transitionMenu("Transition In", into: h.clip)) }
                 if let next = project.next(touching: h.clip) { menu.addItem(transitionMenu("Transition Out", into: next)) }
             }
+            if h.clip.kind == .audio {
+                menu.addItem(ActionItem("Even Out Levels") { model.evenOutLevels() })
+            }
             if h.clip.fadeIn > 0 || h.clip.fadeOut > 0 {
                 menu.addItem(ActionItem("Remove Fades") {
                     let ids = model.selection

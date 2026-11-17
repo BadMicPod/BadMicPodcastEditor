@@ -13,6 +13,8 @@ struct ExportSettings: Equatable {
     var codec = Codec.h264
     var quality = Quality.high
     var includeAudio = true
+    /// Target integrated loudness in LUFS; nil leaves levels as they are.
+    var loudness: Double?
 
     func renderSize(for project: Project) -> CGSize {
         let h = Double(height ?? project.height)
@@ -48,10 +50,43 @@ final class Exporter: ObservableObject {
 
     func cancel() {
         job?.cancelled = true
+        measuringCancelled = true
     }
+
+    private var measuringCancelled = false
 
     func start(project: Project, media: MediaStore, settings: ExportSettings, url: URL) {
         guard state != .running else { return }
+        progress = 0
+        let wantsAudio = settings.format == .wav || settings.includeAudio
+        if let target = settings.loudness, wantsAudio,
+           let mix = CompositionBuilder.build(project: project, media: media, renderSize: CGSize(width: 16, height: 16),
+                                              includeVideo: false, includeAudio: true), mix.hasAudio {
+            // Measure the mix first, then export with every track turned by the same amount, kept
+            // 1 dB under full scale so the result can't clip.
+            state = .running
+            measuringCancelled = false
+            Task.detached(priority: .userInitiated) {
+                let result = LoudnessMeter.measure(mix)
+                await MainActor.run {
+                    guard !self.measuringCancelled else {
+                        self.state = .idle
+                        return
+                    }
+                    var adjusted = project
+                    if let result {
+                        let gain = min(target - result.lufs, -1 - result.peakDB)
+                        for i in adjusted.audioTracks.indices { adjusted.audioTracks[i].gainDB += gain }
+                    }
+                    self.begin(project: adjusted, media: media, settings: settings, url: url)
+                }
+            }
+            return
+        }
+        begin(project: project, media: media, settings: settings, url: url)
+    }
+
+    private func begin(project: Project, media: MediaStore, settings: ExportSettings, url: URL) {
         progress = 0
         let wav = settings.format == .wav
         let size = settings.renderSize(for: project)

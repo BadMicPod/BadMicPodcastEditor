@@ -350,6 +350,36 @@ enum SelfTest {
             log("TRANSITIONS \(good ? "OK" : "FAIL") head=\(headOK) plan=\(planOK) dip=\(dipOK) conceal=\(concealOK)")
             ok = ok && good
         }
+        // Ducking: A2 (the tone) turned down while A1 has sound; checked by comparing files.
+        do {
+            var ducked = project
+            ducked.audioTracks[1].duckUnder = ducked.audioTracks[0].id
+            ducked.audioTracks[1].duckDB = -18
+            var settings = ExportSettings()
+            settings.format = .wav
+            _ = await export(ducked, media, settings, to: outDir.appendingPathComponent("ducked.wav"))
+            let spans = AudioLevels.activity(on: project.audioTracks[0].id, project: project, media: media)
+            log("DUCK spans=\(spans.map { String(format: "%.2f-%.2f", $0.start, $0.end) })")
+        }
+        // Loudness: a WAV exported at -14 LUFS, measured again from the file.
+        do {
+            var settings = ExportSettings()
+            settings.format = .wav
+            settings.loudness = -14
+            let url = outDir.appendingPathComponent("loud_14.wav")
+            _ = await export(project, media, settings, to: url)
+            let check = AVURLAsset(url: url)
+            let comp = AVMutableComposition()
+            if let src = try? await check.loadTracks(withMediaType: .audio).first, let range = try? await src.load(.timeRange),
+               let t = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                try? t.insertTimeRange(range, of: src, at: .zero)
+            }
+            let measured = LoudnessMeter.measure(BuiltTimeline(composition: comp, videoComposition: AVMutableVideoComposition(),
+                                                               audioMix: nil, duration: 0, signature: 0, hasAudio: true))
+            let good = measured.map { abs($0.lufs + 14) < 0.6 || $0.peakDB > -1.3 } ?? false
+            log("LOUDNESS \(good ? "OK" : "FAIL") lufs=\(measured.map { String(format: "%.2f", $0.lufs) } ?? "-") peak=\(measured.map { String(format: "%.2f", $0.peakDB) } ?? "-")")
+            ok = ok && good
+        }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")
     }
 }

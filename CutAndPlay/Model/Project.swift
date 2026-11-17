@@ -21,6 +21,9 @@ struct Track: Identifiable, Codable, Hashable {
     var solo = false
     /// A locked track's clips can't be selected, moved, trimmed or cut.
     var locked = false
+    /// Audio only: this track is turned down while the named track has sound, such as music under a voice.
+    var duckUnder: UUID?
+    var duckDB: Double = -12
 
     init(kind: TrackKind) { self.kind = kind }
 
@@ -33,6 +36,8 @@ struct Track: Identifiable, Codable, Hashable {
         gainDB = try c.decodeIfPresent(Double.self, forKey: .gainDB) ?? 0
         solo = try c.decodeIfPresent(Bool.self, forKey: .solo) ?? false
         locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
+        duckUnder = try c.decodeIfPresent(UUID.self, forKey: .duckUnder)
+        duckDB = try c.decodeIfPresent(Double.self, forKey: .duckDB) ?? -12
     }
 }
 

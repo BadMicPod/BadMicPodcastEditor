@@ -65,6 +65,15 @@ struct ExportSheet: View {
         .onDisappear { player.stop() }
     }
 
+    static let loudnessTargets: [(String, Double?)] = [
+        ("As mixed", nil), ("−14 LUFS · web, YouTube", -14), ("−16 LUFS · podcasts", -16), ("−23 LUFS · broadcast", -23),
+    ]
+
+    static func loudnessLabel(_ v: Double?) -> String {
+        guard let v else { return "As mixed" }
+        return "\(Int(v)) LUFS".replacingOccurrences(of: "-", with: "−")
+    }
+
     static let previewWidth: CGFloat = 288
     static let fieldHeight: CGFloat = 28
 
@@ -100,6 +109,16 @@ struct ExportSheet: View {
                     Button("MP4 Video") { settings.format = .mp4 }
                     Button("WAV Audio") { settings.format = .wav }
                 }
+            }
+            row("Loudness") {
+                let on = !isVideo || settings.includeAudio
+                SheetMenu(label: Self.loudnessLabel(settings.loudness), height: h) {
+                    ForEach(Self.loudnessTargets, id: \.0) { item in
+                        Button(item.0) { settings.loudness = item.1 }
+                    }
+                }
+                .disabled(!on)
+                .opacity(on ? 1 : 0.4)
             }
             if isVideo {
                 row("Resolution") {

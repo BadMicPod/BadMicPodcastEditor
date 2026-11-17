@@ -463,10 +463,18 @@ struct TrackHeader: View {
     var body: some View {
         let off = track.locked || (track.kind == .video ? track.hidden : !model.project.isAudible(track))
         HStack(spacing: 3) {
-            Text(label)
-                .font(Theme.mono(11, .semibold))
-                .foregroundStyle(off ? Theme.textFaint : Theme.text)
-                .frame(width: 24, alignment: .leading)
+            HStack(spacing: 1) {
+                Text(label)
+                    .font(Theme.mono(11, .semibold))
+                    .foregroundStyle(off ? Theme.textFaint : Theme.text)
+                if track.duckUnder != nil {
+                    Image(systemName: "arrow.down")
+                        .font(.system(size: 7, weight: .heavy))
+                        .foregroundStyle(Theme.accent)
+                        .help("Ducks under another track")
+                }
+            }
+            .frame(width: 24, alignment: .leading)
             if track.kind == .audio {
                 LetterToggle(letter: "M", on: track.muted, color: Theme.accent, help: "Mute") { update { $0.muted.toggle() } }
                 LetterToggle(letter: "S", on: track.solo, color: Color(nsColor: Theme.NS.snap), help: "Solo") { update { $0.solo.toggle() } }
@@ -497,6 +505,23 @@ struct TrackHeader: View {
         .background(Theme.panel)
         .overlay(Hairline(), alignment: .bottom)
         .contextMenu {
+            if track.kind == .audio {
+                let others = model.project.audioTracks.enumerated().filter { $0.element.id != track.id }
+                Menu("Duck Under") {
+                    Toggle("None", isOn: Binding(get: { track.duckUnder == nil }, set: { _ in model.duck(track.id, under: nil) }))
+                    Divider()
+                    ForEach(others, id: \.element.id) { item in
+                        Toggle("A\(item.offset + 1)", isOn: Binding(get: { track.duckUnder == item.element.id },
+                                                                   set: { _ in model.duck(track.id, under: item.element.id) }))
+                    }
+                    Divider()
+                    ForEach([-6.0, -12, -18, -24], id: \.self) { db in
+                        Toggle("Down \(Int(-db)) dB", isOn: Binding(get: { abs(track.duckDB - db) < 0.01 },
+                                                                    set: { _ in model.duck(track.id, under: track.duckUnder, amount: db) }))
+                    }
+                }
+                Divider()
+            }
             Button("Add Video Track") { model.addTrack(.video) }
             Button("Add Audio Track") { model.addTrack(.audio) }
             if canDelete {
