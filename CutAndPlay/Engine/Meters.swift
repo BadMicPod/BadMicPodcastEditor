@@ -28,26 +28,19 @@ final class MeterState: ObservableObject {
     /// How far the level may drop per display frame.
     private var release = 0.9
     /// How long a peak holds before it starts to fall, and how fast it falls after.
-    private let peakHold = 1.2
+    private let peakHold = 0.5
     private var peakFall = 0.45
     private var holdUntil: [String: Double] = [:]
 
-    func resetClip(_ track: UUID?) {
-        if let track {
-            tracks[track]?.clipped = false
-        } else {
-            master.clipped = false
-            masterLeft.clipped = false
-            masterRight.clipped = false
-        }
-    }
 
     /// `quickRelease` lets readings fall fast, for short bursts like scrubbing; levels also fall fast
     /// whenever nothing is playing.
     func update(project: Project, media: MediaStore, time t: Double, playing: Bool, quickRelease: Bool = false) {
         let now = CACurrentMediaTime()
-        release = playing && !quickRelease ? 0.9 : 3
-        peakFall = playing && !quickRelease ? 0.45 : 1.5
+        // Fast: a reading follows the sound almost at once and falls away in a few frames.
+        release = 4
+        peakFall = 2
+        stopped = !playing
         var next: [UUID: MeterReading] = [:]
         var power = 0.0, powerL = 0.0, powerR = 0.0
         for track in project.audioTracks {
@@ -94,7 +87,11 @@ final class MeterState: ObservableObject {
         if out.differs(from: master) { master = out }
     }
 
+    /// Nothing is playing: every meter drops straight to empty, peaks and clip lights included.
+    private var stopped = false
+
     private func advance(_ old: MeterReading, reading: Double, key: String, now: Double) -> MeterReading {
+        if stopped { return MeterReading() }
         var r = old
         r.level = max(reading, max(Self.floor, old.level - release))
         if reading >= old.peak {
@@ -103,7 +100,8 @@ final class MeterState: ObservableObject {
         } else if now > holdUntil[key] ?? 0 {
             r.peak = max(Self.floor, old.peak - peakFall)
         }
-        if reading >= -0.1 { r.clipped = true }
+        // Lit only while the signal is actually at full scale.
+        r.clipped = reading >= -0.1
         return r
     }
 

@@ -575,8 +575,8 @@ struct LetterToggle: View {
 }
 
 /// A vertical segmented level meter. Lit segments are light grey, yellow from -12 dB and red from
-/// -3 dB; one segment holds the recent peak; the top segment lights red once the signal reaches 0 dB
-/// and stays lit until the meter is clicked. Pass no track for the output.
+/// -3 dB; one segment briefly holds the recent peak; the top segment is red while the signal is at
+/// full scale. Everything empties the moment playback stops. Pass no track for the output.
 struct LevelMeter: View {
     enum Side { case both, left, right }
     @ObservedObject var meters: MeterState
@@ -612,9 +612,7 @@ struct LevelMeter: View {
             }
             .frame(maxHeight: .infinity, alignment: .bottom)
         }
-        .contentShape(Rectangle())
-        .onTapGesture { meters.resetClip(track) }
-        .help(r.clipped ? "Clipped — click to clear" : "Level")
+        .help(r.clipped ? "Clipping" : "Level")
     }
 }
 

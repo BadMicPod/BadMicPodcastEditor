@@ -404,6 +404,18 @@ enum SelfTest {
             log("AUDIO SCRUB \(good ? "OK" : "FAIL") ready=\(scrubber.ready) after=\(waited * 50)ms peak=\(mid) end=\(late)")
             ok = ok && good
         }
+        // Meters: lit while playing, and empty the moment playback stops (no lingering levels or red).
+        do {
+            let meters = MeterState()
+            var loud = project
+            loud.audioTracks[1].gainDB = 30
+            for _ in 0..<5 { meters.update(project: loud, media: media, time: 2.0, playing: true) }
+            let lit = meters.master.level > -20 && meters.master.clipped
+            meters.update(project: loud, media: media, time: 2.0, playing: false)
+            let empty = meters.master.level == MeterState.floor && !meters.master.clipped && meters.tracks.values.allSatisfy { $0.level == MeterState.floor && $0.peak == MeterState.floor }
+            log("METERS \(lit && empty ? "OK" : "FAIL") lit=\(lit) emptyOnStop=\(empty)")
+            ok = ok && lit && empty
+        }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")
     }
 }
