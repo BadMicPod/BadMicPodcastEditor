@@ -92,7 +92,7 @@ struct ExportSheet: View {
                         .padding(.leading, -4)
                     Spacer(minLength: 0)
                 }
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(SheetStyle.text)
                 .padding(.horizontal, 11)
                 .frame(height: h)
@@ -145,7 +145,7 @@ struct ExportSheet: View {
                     HStack(spacing: 10) {
                         AccentSwitch(isOn: $settings.includeAudio)
                         Text("Include audio")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.system(size: 11.5, weight: .medium))
                             .foregroundStyle(SheetStyle.text)
                         Spacer()
                     }
@@ -158,7 +158,7 @@ struct ExportSheet: View {
     private func row<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
         HStack(spacing: 0) {
             Text(title)
-                .font(.system(size: 12))
+                .font(.system(size: 11.5))
                 .foregroundStyle(SheetStyle.label)
                 .frame(width: 84, alignment: .leading)
             content()
@@ -286,7 +286,7 @@ struct ExportSheet: View {
         HStack(spacing: 10) {
             if let failure {
                 Text(failure)
-                    .font(.system(size: 12))
+                    .font(.system(size: 11.5))
                     .foregroundStyle(Color(hex: 0xFF7A6B))
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -314,7 +314,7 @@ private struct FolderButton: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Text((folder.path as NSString).abbreviatingWithTildeInPath)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(SheetStyle.text)
                     .lineLimit(1)
                     .truncationMode(.head)
@@ -521,7 +521,7 @@ struct PillButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 11.5, weight: .semibold))
                 .foregroundStyle(prominent ? Color(hex: 0x0A0A0A) : Theme.text)
                 .padding(.horizontal, large ? 18 : 15)
                 .frame(height: 28)
@@ -567,7 +567,7 @@ private struct SheetMenu<Content: View>: View {
                 if let symbol {
                     Image(systemName: symbol).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.accent)
                 }
-                Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(SheetStyle.text).lineLimit(1)
+                Text(label).font(.system(size: 11.5, weight: .medium)).foregroundStyle(SheetStyle.text).lineLimit(1)
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.down").font(.system(size: 8.5, weight: .bold)).foregroundStyle(SheetStyle.text.opacity(0.85))
             }

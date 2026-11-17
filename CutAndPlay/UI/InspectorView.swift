@@ -272,7 +272,7 @@ struct InspectorView: View {
             if actual < t.duration - 0.01 {
                 Text(actual > 0 ? String(format: "Shortened to %.2fs: no more media beyond the cut.", actual)
                                 : "Needs media beyond the cut to blend; try Dip to Black.")
-                    .font(.system(size: 10.5))
+                    .font(.system(size: 10))
                     .foregroundStyle(Theme.textFaint)
                     .padding(.leading, 26)
             }
@@ -413,7 +413,7 @@ struct InspectorView: View {
         }
         InspectorSection("Text") {
             TextEditor(text: Binding(get: { c.text.string }, set: { s in update { $0.string = s } }))
-                .font(.system(size: 12))
+                .font(.system(size: 11.5))
                 .scrollContentBackground(.hidden)
                 .padding(6)
                 .frame(height: 68)
@@ -520,7 +520,7 @@ private struct TextLink: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 10.5, weight: .medium))
+                .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(hovering ? Theme.accent : Theme.textDim)
                 .contentShape(Rectangle())
         }
@@ -662,10 +662,10 @@ private struct ParamRow: View {
                     if !focused { text = format(v) }
                 }
                 .onAppear { text = format(value) }
-            .font(Theme.mono(10.5))
+            .font(Theme.mono(11.5))
             .foregroundStyle(Theme.text)
-            .padding(.horizontal, 5)
-            .frame(width: 60, height: 26)
+            .padding(.horizontal, 6)
+            .frame(width: 68, height: 26)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
             .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Theme.text.opacity(focused ? 0.85 : 0)))
             // The whole box is the click target, not just the digits.
@@ -793,7 +793,7 @@ private struct Chip: View {
     var body: some View {
         Button(action: action) {
             Text(label)
-                .font(.system(size: 10.5, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(active ? Theme.accent : (hovering ? Theme.text : Theme.textDim))
                 .padding(.horizontal, 10)
                 .frame(height: 26)
@@ -821,7 +821,7 @@ struct MenuField<Content: View>: View {
                 if let symbol {
                     Image(systemName: symbol).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.accent)
                 }
-                Text(label).font(.system(size: 12)).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                Text(label).font(.system(size: 11.5)).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.down").font(.system(size: 8.5, weight: .bold)).foregroundStyle(Theme.textDim)
             }
@@ -851,7 +851,7 @@ private struct FontPicker: View {
         Button { open = true } label: {
             HStack(spacing: 8) {
                 Text(selection.isEmpty ? "System" : selection)
-                    .font(.system(size: 12))
+                    .font(.system(size: 11.5))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                 Spacer(minLength: 4)
@@ -896,7 +896,7 @@ private struct FontList: View {
                 Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textFaint)
                 TextField("Search fonts", text: $query)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12.5))
+                    .font(.system(size: 11.5))
                     .focused($focused)
                     .onSubmit { if let first = matches.first { onPick(first) } }
             }
@@ -974,7 +974,7 @@ private struct FrameSizeFields: View {
     var body: some View {
         HStack(spacing: 6) {
             field($w, tag: 0)
-            Text("×").font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+            Text("×").font(.system(size: 11.5)).foregroundStyle(Theme.textFaint)
             field($h, tag: 1)
         }
         .onAppear(perform: sync)
@@ -989,7 +989,7 @@ private struct FrameSizeFields: View {
         TextField("", text: text)
             .textFieldStyle(.plain)
             .multilineTextAlignment(.center)
-            .font(Theme.mono(11))
+            .font(Theme.mono(11.5))
             .foregroundStyle(Theme.text)
             .focused($focus, equals: tag)
             .onSubmit {
@@ -1076,7 +1076,7 @@ private struct ColorWheel: View {
                 onEnd()
             })
             Text(title)
-                .font(.system(size: 10.5))
+                .font(.system(size: 11.5))
                 .foregroundStyle(active ? Theme.text : Theme.textDim)
         }
         .frame(maxWidth: .infinity)

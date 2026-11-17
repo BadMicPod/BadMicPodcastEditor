@@ -66,7 +66,7 @@ struct ContentView: View {
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 6) {
                     Text(model.title)
-                        .font(.system(size: 12.5, weight: .medium))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Theme.textDim)
                     if model.isDirty {
                         Circle().fill(Theme.textFaint).frame(width: 5, height: 5)

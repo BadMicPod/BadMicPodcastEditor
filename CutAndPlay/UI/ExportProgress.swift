@@ -27,7 +27,7 @@ struct ExportProgressPill: View {
                 }
                 .frame(width: 72, height: 4)
                 Text(status(current))
-                    .font(Theme.mono(10.5))
+                    .font(Theme.mono(10))
                     .foregroundStyle(Theme.text)
             } else if queue.items.contains(where: { if case .failed = $0.status { return true }; return false }) {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color(hex: 0xFF7A6B))
@@ -37,7 +37,7 @@ struct ExportProgressPill: View {
                 Text("Exported").font(.system(size: 11.5, weight: .medium)).foregroundStyle(Theme.text)
             }
             if queue.waiting > 0 {
-                Text("+\(queue.waiting)").font(Theme.mono(10.5)).foregroundStyle(Theme.textDim)
+                Text("+\(queue.waiting)").font(Theme.mono(10)).foregroundStyle(Theme.textDim)
             }
         }
         .padding(.horizontal, 11)
@@ -64,9 +64,9 @@ private struct ExportList: View {
                     icon(item.status)
                         .frame(width: 16)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(item.name).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.text)
+                        Text(item.name).font(.system(size: 11.5, weight: .medium)).foregroundStyle(Theme.text)
                             .lineLimit(1).truncationMode(.middle)
-                        Text(detail(item)).font(.system(size: 10.5)).foregroundStyle(Theme.textFaint).lineLimit(2)
+                        Text(detail(item)).font(.system(size: 10)).foregroundStyle(Theme.textFaint).lineLimit(2)
                     }
                     Spacer(minLength: 8)
                     switch item.status {

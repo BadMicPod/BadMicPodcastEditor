@@ -30,9 +30,9 @@ struct LibraryView: View {
                 AddButton(model: model, symbol: "solid", payload: .solid, help: "Solid: click to add at the playhead, or drag to the timeline")
                 IconButton(symbol: "square.and.arrow.down", size: 26, help: "Import Media (⌘I)") { model.showImportPanel() }
             }
-            .padding(.leading, 14)
-            .padding(.trailing, 8)
-            .frame(height: 40)
+            .padding(.leading, 16)
+            .padding(.trailing, 12)
+            .frame(height: 44)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
@@ -47,7 +47,7 @@ struct LibraryView: View {
                         }
                         if shown.isEmpty {
                             Text("No media matches “\(search)”")
-                                .font(.system(size: 11))
+                                .font(.system(size: 11.5))
                                 .foregroundStyle(Theme.textFaint)
                                 .frame(maxWidth: .infinity)
                                 .padding(.top, 8)
@@ -281,7 +281,7 @@ private struct AssetRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(detail)
-                    .font(Theme.mono(9.5))
+                    .font(Theme.mono(10))
                     .foregroundStyle(Theme.textFaint)
                     .lineLimit(1)
             }

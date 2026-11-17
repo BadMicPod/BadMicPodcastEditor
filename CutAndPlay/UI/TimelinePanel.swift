@@ -55,7 +55,7 @@ struct TimelineToolbar: View {
                 .padding(.leading, 4)
         }
         .padding(.horizontal, 12)
-        .frame(height: 42)
+        .frame(height: 44)
         .background(Theme.panel)
     }
 }
@@ -94,7 +94,7 @@ struct ToggleChip: View {
     var body: some View {
         Button(action: action) {
             // On is white text on a lighter key; off is dim and flat.
-            Text(title).font(.system(size: 11, weight: .medium))
+            Text(title).font(.system(size: 11.5, weight: .medium))
             .foregroundStyle(on ? Theme.text : (hovering ? Theme.text.opacity(0.75) : Theme.textFaint))
             .padding(.horizontal, 10)
             .frame(height: 24)
@@ -118,7 +118,7 @@ struct TextAction: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(hovering ? Theme.text : Theme.textDim)
                 .padding(.horizontal, 9)
                 .frame(height: 24)
@@ -423,7 +423,7 @@ struct AddTrackButton: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: "plus").font(.system(size: 9, weight: .bold))
-                Text(label).font(.system(size: 10.5, weight: .medium))
+                Text(label).font(.system(size: 10, weight: .medium))
                 Spacer()
             }
             .foregroundStyle(hovering ? Theme.text : Theme.textFaint)
@@ -453,7 +453,7 @@ struct TrackHeader: View {
         HStack(spacing: 3) {
             HStack(spacing: 1) {
                 Text(label)
-                    .font(Theme.mono(11, .semibold))
+                    .font(Theme.mono(11.5, .semibold))
                     .foregroundStyle(off ? Theme.textFaint : Theme.text)
                 if track.duckUnder != nil {
                     Image(systemName: "arrow.down")
@@ -554,7 +554,7 @@ struct LetterToggle: View {
     var body: some View {
         Button(action: action) {
             Text(letter)
-                .font(.system(size: 10.5, weight: .bold))
+                .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(on ? Color.black.opacity(0.85) : (hovering ? Theme.text : Theme.textDim))
                 .frame(width: 20, height: 20)
                 .background(RoundedRectangle(cornerRadius: 5, style: .continuous)

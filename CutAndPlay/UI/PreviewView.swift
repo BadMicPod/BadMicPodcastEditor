@@ -102,8 +102,8 @@ struct PreviewView: View {
                     .scrollIndicators(.visible)
                 }
             }
-            .padding(.horizontal, 18)
-            .padding(.top, 14)
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
             .padding(.bottom, 8)
 
             TransportBar(model: model, clock: model.clock, meters: model.meters, zoom: $zoom)
@@ -176,7 +176,7 @@ struct TransportBar: View {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     TimecodeField(time: Double(clock.frame) / fps, fps: fps) { model.seek(to: $0) }
                     Text("/ " + Timecode.string(model.project.duration, fps: fps))
-                        .font(Theme.mono(11, .regular))
+                        .font(Theme.mono(11.5, .regular))
                         .foregroundStyle(Theme.textFaint)
                 }
                 Spacer()
@@ -196,7 +196,7 @@ struct TransportBar: View {
                 } label: {
                     HStack(spacing: 4) {
                         Text(Self.zooms.first { $0.1 == zoom }?.0 ?? "Fit")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.system(size: 11.5, weight: .medium))
                         Image(systemName: "chevron.down").font(.system(size: 7.5, weight: .bold))
                     }
                     .foregroundStyle(Theme.textDim)
@@ -224,7 +224,7 @@ struct TransportBar: View {
                 IconButton(symbol: "forward.end.fill", size: 32, help: "Next Edit (↓)") { model.jumpToEdit(forward: true) }
             }
         }
-        .padding(.horizontal, 18)
+        .padding(.horizontal, 16)
         .frame(height: 68)
     }
 }
