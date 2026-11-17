@@ -36,24 +36,27 @@ struct TimelineToolbar: View {
     @ObservedObject var model: EditorModel
 
     var body: some View {
-        HStack(spacing: 8) {
-            // Tools: one segmented control.
-            HStack(spacing: 2) {
-                ToolKey(symbol: "cursorarrow", on: model.tool == .move, help: "Move (V)") { model.tool = .move }
-                ToolKey(symbol: "scissors", on: model.tool == .cut, help: "Cut (C)") { model.tool = .cut }
+        // Three zones: tools on the left, editing modes centred on the bar, one-off actions on the right.
+        ZStack {
+            HStack(spacing: 8) {
+                HStack(spacing: 2) {
+                    ToolKey(symbol: "cursorarrow", on: model.tool == .move, help: "Move (V)") { model.tool = .move }
+                    ToolKey(symbol: "scissors", on: model.tool == .cut, help: "Cut (C)") { model.tool = .cut }
+                }
+                .padding(3)
+                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.bg))
+                Spacer()
+                TextAction(title: "Split", help: "Split at Playhead (⌘K)") { model.splitAtPlayhead() }
+                TextAction(title: "Delete", help: "Delete (⌫)") { model.deleteSelection() }
+                    .disabled(model.selection.isEmpty)
+                IconButton(symbol: "arrow.left.and.right", help: "Zoom to Fit (⇧Z)") { model.zoomToFit() }
+                    .padding(.leading, 4)
             }
-            .padding(3)
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.bg))
-            .padding(.trailing, 4)
-            ToggleChip(title: "Snap", on: model.snapping, help: "Snapping (S)") { model.snapping.toggle() }
-            ToggleChip(title: "Sticky", on: model.sticky, help: "Sticky Edges (R): clips touching a clip that changes length move with it") { model.sticky.toggle() }
-            ToggleChip(title: "Skim", on: model.skimming, help: "Skimming (K): hover the timeline to preview frames") { model.skimming.toggle() }
-            Spacer()
-            TextAction(title: "Split", help: "Split at Playhead (⌘K)") { model.splitAtPlayhead() }
-            TextAction(title: "Delete", help: "Delete (⌫)") { model.deleteSelection() }
-                .disabled(model.selection.isEmpty)
-            IconButton(symbol: "arrow.left.and.right", help: "Zoom to Fit (⇧Z)") { model.zoomToFit() }
-                .padding(.leading, 4)
+            HStack(spacing: 8) {
+                ToggleChip(title: "Snap", on: model.snapping, help: "Snapping (S)") { model.snapping.toggle() }
+                ToggleChip(title: "Sticky", on: model.sticky, help: "Sticky Edges (R): clips touching a clip that changes length move with it") { model.sticky.toggle() }
+                ToggleChip(title: "Skim", on: model.skimming, help: "Skimming (K): hover the timeline to preview frames") { model.skimming.toggle() }
+            }
         }
         .padding(.horizontal, 12)
         .frame(height: 42)

@@ -31,6 +31,8 @@ struct ContentView: View {
                 TimelinePanel(model: model)
                     .frame(height: min(timelineHeight, max(170, geo.size.height - 240)))
             }
+            // A hairline under the title bar.
+            .overlay(alignment: .top) { Hairline() }
             }
         }
         .background(Theme.bg)
