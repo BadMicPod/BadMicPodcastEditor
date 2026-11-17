@@ -15,6 +15,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppDelegate.shared = self
     }
 
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // macOS adds Services to the app menu, and Writing Tools, AutoFill, Start Dictation and Emoji &
+        // Symbols to the Edit menu. None of them help with editing video, so they come out once the menus
+        // exist, and again whenever they're put back (SwiftUI rebuilds menus as commands change).
+        DispatchQueue.main.async { MenuCleanup.removeExtras() }
+        NotificationCenter.default.addObserver(forName: NSMenu.didAddItemNotification, object: nil, queue: .main) { note in
+            MainActor.assumeIsolated {
+                guard let menu = note.object as? NSMenu, menu.supermenu === NSApp.mainMenu else { return }
+                MenuCleanup.removeExtras(in: menu)
+            }
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated { model?.autosaveNow() }
     }
@@ -31,6 +44,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let urls = pending
         pending = []
         model.handleOpen(urls)
+    }
+}
+
+/// Takes macOS's extra menu items back out, found by what they do rather than their titles so it holds in
+/// any language, then tidies the separators they leave behind.
+@MainActor
+enum MenuCleanup {
+    static func removeExtras() {
+        for top in NSApp.mainMenu?.items ?? [] {
+            if let menu = top.submenu { removeExtras(in: menu) }
+        }
+    }
+
+    static func removeExtras(in menu: NSMenu) {
+        menu.items.filter(isExtra).forEach(menu.removeItem)
+        // No separator at either end of a menu, or two in a row.
+        while menu.items.last?.isSeparatorItem == true { menu.removeItem(at: menu.items.count - 1) }
+        while menu.items.first?.isSeparatorItem == true { menu.removeItem(at: 0) }
+        for i in stride(from: menu.items.count - 1, to: 0, by: -1) where menu.items[i].isSeparatorItem && menu.items[i - 1].isSeparatorItem {
+            menu.removeItem(at: i)
+        }
+    }
+
+    private static func isExtra(_ item: NSMenuItem) -> Bool {
+        let actions: Set<String> = ["startDictation:", "orderFrontCharacterPalette:"]
+        let identifiers: Set<String> = ["__NSTextViewContextSubmenuIdentifierWritingTools", "_NSMenuItemAutoFillIdentifier",
+                                        "_NSMenuItemLegacyWritingToolsSeparatorIdentifier"]
+        if let services = NSApp.servicesMenu, item.submenu === services { return true }
+        return item.identifier.map { identifiers.contains($0.rawValue) } == true
+            || item.action.map { actions.contains(NSStringFromSelector($0)) } == true
     }
 }
 
