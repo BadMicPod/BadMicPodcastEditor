@@ -537,12 +537,6 @@ private struct ParamRow: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                         .frame(maxWidth: .infinity, alignment: .trailing)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            text = String(format: "%g", (value * 100).rounded() / 100)
-                            editing = true
-                            focused = true
-                        }
                 }
             }
             .font(Theme.mono(10.5))
@@ -551,6 +545,15 @@ private struct ParamRow: View {
             .frame(width: 60, height: 26)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
             .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Theme.accent.opacity(editing ? 0.9 : 0)))
+            // The whole box is the click target, not just the digits.
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if !editing {
+                    text = String(format: "%g", (value * 100).rounded() / 100)
+                    editing = true
+                }
+                focused = true
+            }
             if let trailing { trailing }
         }
         .frame(height: 28)
@@ -737,6 +740,9 @@ private struct FrameSizeFields: View {
             .frame(maxWidth: .infinity)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.field))
             .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.accent.opacity(focus == tag ? 0.9 : 0)))
+            // The whole box is the click target, not just the line of text.
+            .contentShape(Rectangle())
+            .onTapGesture { focus = tag }
     }
 
     private func sync() {
