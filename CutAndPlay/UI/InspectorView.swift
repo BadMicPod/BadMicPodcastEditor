@@ -492,7 +492,7 @@ private struct InspectorSection<Content: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Button {
-                    withAnimation(.easeOut(duration: 0.16)) { collapsed.toggle() }
+                    withAnimation(.easeOut(duration: 0.08)) { collapsed.toggle() }
                     UserDefaults.standard.set(collapsed, forKey: key)
                 } label: {
                     HStack(spacing: 6) {
