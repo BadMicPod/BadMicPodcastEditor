@@ -70,8 +70,7 @@ struct ToolKey: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 12, weight: .medium))
+            Glyph(symbol: symbol, size: 12)
                 .foregroundStyle(on || hovering ? Theme.text : Theme.textDim)
                 .frame(width: 30, height: 24)
                 .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(on ? Theme.raised : .clear))
@@ -531,8 +530,7 @@ struct MiniKey: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 9.5, weight: .semibold))
+            Glyph(symbol: symbol, size: 9.5, weight: .semibold)
                 .foregroundStyle(on ? Color.black.opacity(0.85) : (hovering ? Theme.text : Theme.textDim))
                 .frame(width: 20, height: 20)
                 .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(on ? Theme.text : (hovering ? Theme.hover : Theme.field)))

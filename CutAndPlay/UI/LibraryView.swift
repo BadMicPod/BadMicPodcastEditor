@@ -28,7 +28,7 @@ struct LibraryView: View {
                 Spacer()
                 AddButton(model: model, symbol: "textformat", payload: .text, help: "Text: click to add at the playhead, or drag to the timeline")
                 AddButton(model: model, symbol: "solid", payload: .solid, help: "Solid: click to add at the playhead, or drag to the timeline")
-                IconButton(symbol: "square.and.arrow.down", size: 26, help: "Import Media (⌘I)", nudge: -1.5) { model.showImportPanel() }
+                IconButton(symbol: "square.and.arrow.down", size: 26, help: "Import Media (⌘I)") { model.showImportPanel() }
             }
             .padding(.leading, 14)
             .padding(.trailing, 8)
@@ -211,13 +211,7 @@ private struct AddButton: View {
     @State private var hovering = false
 
     var body: some View {
-        Group {
-            if symbol == "solid" {
-                SolidIcon(lineWidth: 1.2).frame(width: 14, height: 10.5)
-            } else {
-                Image(systemName: symbol).font(.system(size: 12, weight: .medium))
-            }
-        }
+        Glyph(symbol: symbol, size: 12)
             .foregroundStyle(hovering ? Theme.text : Theme.textDim)
             .frame(width: 26, height: 26)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hovering ? Theme.hover : .clear))
