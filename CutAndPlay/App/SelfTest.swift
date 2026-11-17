@@ -317,6 +317,16 @@ enum SelfTest {
             log("TRACKS \(decoded && solo && lock ? "OK" : "FAIL") decode=\(decoded) solo=\(solo) lock=\(lock)")
             ok = ok && decoded && solo && lock
         }
+        // Typed timecodes.
+        do {
+            let cases: [(String, Double?)] = [("1000", 10), ("1:02:03", 62.1), ("00:00:02:15", 2.5), ("12", 0.4), ("abc", nil)]
+            let good = cases.allSatisfy { c in
+                let v = Timecode.parse(c.0, fps: 30)
+                return c.1 == nil ? v == nil : v.map { abs($0 - c.1!) < 1e-9 } ?? false
+            }
+            log("TIMECODE \(good ? "OK" : "FAIL")")
+            ok = ok && good
+        }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")
     }
 }

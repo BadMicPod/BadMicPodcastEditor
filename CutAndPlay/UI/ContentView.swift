@@ -10,6 +10,9 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { geo in
             let frame = geo.frame(in: .global)
+            if model.viewerOnly {
+                PreviewView(model: model)
+            } else {
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
                     LibraryView(model: model, media: model.media)
@@ -27,6 +30,7 @@ struct ContentView: View {
                 }
                 TimelinePanel(model: model)
                     .frame(height: min(timelineHeight, max(170, geo.size.height - 240)))
+            }
             }
         }
         .background(Theme.bg)
@@ -121,6 +125,7 @@ enum KeyCommands {
         case 115: model.seek(to: 0)
         case 119: model.seek(to: model.project.duration)
         case 53:
+            if model.viewerOnly { model.toggleViewerFullScreen(); return true }
             model.selection = []
             model.tool = .move
         default:
@@ -128,6 +133,8 @@ enum KeyCommands {
             case "v": model.tool = .move
             case "c": model.tool = .cut
             case "s": model.snapping.toggle()
+            case "l": model.loop.toggle()
+            case "f": model.toggleViewerFullScreen()
             case "r": model.sticky.toggle()
             case "z" where shift, "\\": model.zoomToFit()
             case "=", "+": model.zoom(by: 1.4)

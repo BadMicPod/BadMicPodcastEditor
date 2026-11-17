@@ -56,6 +56,8 @@ struct PreviewView: View {
     @ObservedObject var clock: Clock
     @State private var moveStart: (x: Double, y: Double)?
     @State private var scaleStart: (scale: Double, distance: CGFloat)?
+    /// Viewer magnification; nil fits the frame to the space available.
+    @State private var zoom: Double?
 
     init(model: EditorModel) {
         self.model = model
@@ -94,8 +96,31 @@ struct PreviewView: View {
         VStack(spacing: 0) {
             GeometryReader { geo in
                 let aspect = model.project.aspect
-                let w = min(geo.size.width, geo.size.height * aspect)
+                let fit = min(geo.size.width, geo.size.height * aspect)
+                // 100% is one frame pixel per screen pixel.
+                let scale = NSScreen.main?.backingScaleFactor ?? 2
+                let w = zoom.map { CGFloat(Double(model.project.width) * $0) / scale } ?? fit
                 let h = w / aspect
+                let viewer = picture(w: w, h: h)
+                if w <= geo.size.width + 0.5 && h <= geo.size.height + 0.5 {
+                    viewer.position(x: geo.size.width / 2, y: geo.size.height / 2)
+                } else {
+                    ScrollView([.horizontal, .vertical]) {
+                        viewer.frame(minWidth: geo.size.width, minHeight: geo.size.height)
+                    }
+                    .scrollIndicators(.visible)
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 14)
+            .padding(.bottom, 8)
+
+            TransportBar(model: model, clock: model.clock, meters: model.meters, zoom: $zoom)
+        }
+        .background(model.viewerOnly ? Color.black : Theme.bg)
+    }
+
+    @ViewBuilder private func picture(w: CGFloat, h: CGFloat) -> some View {
                 let clip = target
                 let now = Double(clock.frame) / model.project.fps + 1e-6
                 let playheadOver = clip.map { now >= $0.start && now < $0.end } ?? false
@@ -163,15 +188,6 @@ struct PreviewView: View {
                             model.commitLive()
                         }
                 )
-                .position(x: geo.size.width / 2, y: geo.size.height / 2)
-            }
-            .padding(.horizontal, 18)
-            .padding(.top, 14)
-            .padding(.bottom, 8)
-
-            TransportBar(model: model, clock: model.clock)
-        }
-        .background(Theme.bg)
     }
 }
 
@@ -214,18 +230,50 @@ private struct TransformBox: View {
 struct TransportBar: View {
     @ObservedObject var model: EditorModel
     @ObservedObject var clock: Clock
+    let meters: MeterState
+    @Binding var zoom: Double?
+
+    private static let zooms: [(String, Double?)] = [("Fit", nil), ("25%", 0.25), ("50%", 0.5), ("100%", 1), ("200%", 2)]
 
     var body: some View {
         let fps = model.project.fps
         ZStack {
-            HStack {
-                Text(Timecode.string(Double(clock.frame) / fps, fps: fps))
-                    .font(Theme.mono(13, .semibold))
-                    .foregroundStyle(Theme.text)
-                Spacer()
-                Text(Timecode.string(model.project.duration, fps: fps))
+            HStack(spacing: 8) {
+                TimecodeField(time: Double(clock.frame) / fps, fps: fps) { model.seek(to: $0) }
+                Text("/ " + Timecode.string(model.project.duration, fps: fps))
                     .font(Theme.mono(11))
                     .foregroundStyle(Theme.textFaint)
+                Spacer()
+                IconButton(symbol: "repeat", active: model.loop, size: 28, help: "Loop Playback (L)") { model.loop.toggle() }
+                LevelMeter(meters: meters)
+                    .frame(width: 5, height: 22)
+                    .padding(.horizontal, 6)
+                    .help("Output level")
+                Menu {
+                    ForEach(Self.zooms, id: \.0) { item in
+                        Button(item.0) { zoom = item.1 }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(Self.zooms.first { $0.1 == zoom }?.0 ?? "Fit")
+                            .font(.system(size: 11, weight: .medium))
+                        Image(systemName: "chevron.down").font(.system(size: 7.5, weight: .bold))
+                    }
+                    .foregroundStyle(Theme.textDim)
+                    .padding(.horizontal, 8)
+                    .frame(height: 24)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.field))
+                    .contentShape(Rectangle())
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Viewer zoom")
+                IconButton(symbol: model.viewerOnly ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                           size: 28, help: model.viewerOnly ? "Exit Full Screen (F or Esc)" : "Full Screen Viewer (F)") {
+                    model.toggleViewerFullScreen()
+                }
             }
             HStack(spacing: 2) {
                 IconButton(symbol: "backward.end.fill", size: 30, help: "Previous Edit (↑)") { model.jumpToEdit(forward: false) }
@@ -238,6 +286,56 @@ struct TransportBar: View {
         }
         .padding(.horizontal, 18)
         .frame(height: 48)
+    }
+}
+
+/// The current time. Click it to type a time to jump to: Return or clicking away goes there, Esc cancels.
+private struct TimecodeField: View {
+    let time: Double
+    let fps: Double
+    let onJump: (Double) -> Void
+    @State private var editing = false
+    @State private var text = ""
+    @State private var hovering = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Group {
+            if editing {
+                TextField("", text: $text)
+                    .textFieldStyle(.plain)
+                    .focused($focused)
+                    .onSubmit(commit)
+                    .onExitCommand { editing = false }
+                    .onChange(of: focused) { _, isFocused in
+                        if !isFocused, editing { commit() }
+                    }
+            } else {
+                Text(Timecode.string(time, fps: fps))
+            }
+        }
+        .font(Theme.mono(13, .semibold))
+        .foregroundStyle(Theme.text)
+        .frame(width: 112, alignment: .leading)
+        .padding(.horizontal, 7)
+        .frame(height: 26)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(editing || hovering ? Theme.field : .clear))
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.accent.opacity(editing ? 0.9 : 0)))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture {
+            guard !editing else { return }
+            text = Timecode.string(time, fps: fps)
+            editing = true
+            focused = true
+        }
+        .padding(.leading, -7)
+        .help("Click to type a time")
+    }
+
+    private func commit() {
+        if let t = Timecode.parse(text, fps: fps) { onJump(t) }
+        editing = false
     }
 }
 

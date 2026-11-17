@@ -60,6 +60,12 @@ final class EditorModel: ObservableObject {
     @Published private(set) var fileURL: URL?
     @Published private(set) var isDirty = false
     @Published var showExport = false
+    /// Playback starts over from the beginning when it reaches the end.
+    @Published var loop = UserDefaults.standard.bool(forKey: "loopPlayback") {
+        didSet { UserDefaults.standard.set(loop, forKey: "loopPlayback") }
+    }
+    /// Only the viewer is shown, full screen.
+    @Published private(set) var viewerOnly = false
     @Published private(set) var importCount = 0
     @Published var importError: String?
 
@@ -85,8 +91,19 @@ final class EditorModel: ObservableObject {
     init() {
         engine.onEnded = { [weak self] in
             guard let self else { return }
+            if self.loop, self.project.duration > 0 {
+                self.playhead = 0
+                self.engine.seek(to: 0)
+                self.engine.play()
+                return
+            }
             self.isPlaying = false
             self.playhead = self.project.duration
+        }
+        NotificationCenter.default.addObserver(forName: NSWindow.didExitFullScreenNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                if self?.viewerOnly == true { self?.viewerOnly = false }
+            }
         }
         media.onStillLoaded = { [weak self] in self?.setNeedsRebuild() }
         Task {
@@ -220,10 +237,35 @@ final class EditorModel: ObservableObject {
     // MARK: Transport
 
     func tick() {
-        if isPlaying { playhead = min(engine.currentTime, max(engine.duration, 0)) }
+        if isPlaying {
+            playhead = min(engine.currentTime, max(engine.duration, 0))
+            // Within a frame of the end, or stopped by the player: start over when looping.
+            let end = project.duration
+            if loop, end > 0, playhead >= end - 1 / project.fps || !engine.isPlaying {
+                playhead = 0
+                engine.seek(to: 0)
+                engine.play()
+            }
+        }
         clock.update(time: playhead, fps: project.fps)
         meters.update(project: project, media: media, time: playhead, playing: isPlaying)
         for handler in tickHandlers { handler() }
+    }
+
+    /// Shows just the viewer, full screen, or goes back to the editor.
+    func toggleViewerFullScreen() {
+        viewerOnly.toggle()
+        if let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }),
+           window.styleMask.contains(.fullScreen) != viewerOnly {
+            window.toggleFullScreen(nil)
+        }
+        // The viewer is rebuilt in its new place; give it a frame to show while paused.
+        if !isPlaying {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                guard let self else { return }
+                self.engine.seek(to: self.playhead)
+            }
+        }
     }
 
     func togglePlay() {

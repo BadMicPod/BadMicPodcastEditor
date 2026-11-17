@@ -564,6 +564,33 @@ enum Timecode {
         return String(format: "%02d:%02d:%02d:%02d", h, m, s, frames)
     }
 
+    /// Reads a typed timecode. "1:02:03" counts from the right (frames, seconds, minutes, hours);
+    /// plain digits are read in pairs from the right, so "1000" is 10 seconds.
+    static func parse(_ s: String, fps: Double) -> Double? {
+        let f = max(1, Int(fps.rounded()))
+        let text = s.trimmingCharacters(in: .whitespaces)
+        var parts: [Int] = []
+        if text.contains(where: { ":;.".contains($0) }) {
+            let comps = text.split(whereSeparator: { ":;.".contains($0) }).map(String.init)
+            guard !comps.isEmpty, comps.count <= 4 else { return nil }
+            for c in comps {
+                guard let v = Int(c), v >= 0 else { return nil }
+                parts.append(v)
+            }
+        } else {
+            guard !text.isEmpty, text.allSatisfy(\.isNumber), text.count <= 8 else { return nil }
+            var digits = Array(text)
+            while !digits.isEmpty {
+                let pair = digits.suffix(2)
+                parts.insert(Int(String(pair)) ?? 0, at: 0)
+                digits.removeLast(pair.count)
+            }
+        }
+        let r = Array(parts.reversed()) + [0, 0, 0, 0]
+        let frames = ((r[3] * 60 + r[2]) * 60 + r[1]) * f + r[0]
+        return Double(frames) / fps
+    }
+
     static func short(_ t: Double) -> String {
         let secs = Int(max(0, t).rounded())
         let s = secs % 60, m = (secs / 60) % 60, h = secs / 3600
