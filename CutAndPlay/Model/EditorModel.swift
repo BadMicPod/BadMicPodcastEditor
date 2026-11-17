@@ -85,7 +85,7 @@ final class EditorModel: ObservableObject {
     let media = MediaStore()
     let meters = MeterState()
     let engine = PlaybackEngine()
-    let exporter = Exporter()
+    let exports = ExportQueue()
 
     private(set) var playhead: Double = 0
     var tickHandlers: [() -> Void] = []
@@ -137,6 +137,17 @@ final class EditorModel: ObservableObject {
                 }
                 if args.contains("--show-export") { self.showExport = true }
                 if args.contains("--play") { self.play() }
+                // `--queue-exports <dir>`: queues a 4K HEVC and a WAV export, for checking the queue.
+                if let k = args.firstIndex(of: "--queue-exports"), args.count > k + 1 {
+                    let dir = URL(fileURLWithPath: args[k + 1])
+                    var video = ExportSettings()
+                    video.height = 2160
+                    video.codec = .hevc
+                    var audio = ExportSettings()
+                    audio.format = .wav
+                    self.exports.add(project: self.project, media: self.media, settings: video, url: dir.appendingPathComponent("queued_4k.mp4"))
+                    self.exports.add(project: self.project, media: self.media, settings: audio, url: dir.appendingPathComponent("queued.wav"))
+                }
                 if args.contains("--viewer-fullscreen") {
                     try? await Task.sleep(nanoseconds: 300_000_000)
                     self.toggleViewerFullScreen()

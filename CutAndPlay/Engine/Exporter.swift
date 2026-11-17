@@ -1,3 +1,4 @@
+import Combine
 import AVFoundation
 import AppKit
 
@@ -87,6 +88,109 @@ final class Exporter: ObservableObject {
         } catch {
             state = .failed(error.localizedDescription)
         }
+    }
+}
+
+/// Exports run one after another in the background while editing carries on. Each one renders the
+/// timeline as it was when it was added.
+@MainActor
+final class ExportQueue: ObservableObject {
+    enum Status: Equatable { case waiting, running, done, failed(String), cancelled }
+
+    struct Item: Identifiable {
+        let id = UUID()
+        let url: URL
+        let project: Project
+        let settings: ExportSettings
+        var status = Status.waiting
+        var name: String { url.lastPathComponent }
+    }
+
+    @Published private(set) var items: [Item] = []
+    @Published private(set) var progress = 0.0
+    private var startedAt = Date()
+    private let exporter = Exporter()
+    private weak var media: MediaStore?
+    private var bag: [Any] = []
+    private var clearTimer: Timer?
+
+    init() {
+        bag.append(exporter.$progress.sink { [weak self] p in self?.progress = p })
+        bag.append(exporter.$state.sink { [weak self] state in
+            // Published before the value changes; read it on the next turn.
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.exporterChanged(state) } }
+        })
+    }
+
+    var current: Item? { items.first { $0.status == .running } }
+    var waiting: Int { items.filter { $0.status == .waiting }.count }
+    var isBusy: Bool { items.contains { $0.status == .running || $0.status == .waiting } }
+
+    /// Seconds left on the current export, once there's enough progress to guess.
+    var timeLeft: Double? {
+        guard current != nil, progress > 0.03 else { return nil }
+        let elapsed = Date().timeIntervalSince(startedAt)
+        return elapsed / progress * (1 - progress)
+    }
+
+    func add(project: Project, media: MediaStore, settings: ExportSettings, url: URL) {
+        self.media = media
+        clearTimer?.invalidate()
+        items.append(Item(url: url, project: project, settings: settings))
+        startNext()
+    }
+
+    func cancel(_ id: UUID) {
+        guard let i = items.firstIndex(where: { $0.id == id }) else { return }
+        if items[i].status == .running {
+            exporter.cancel()
+        } else if items[i].status == .waiting {
+            items[i].status = .cancelled
+        }
+    }
+
+    func clearFinished() {
+        items.removeAll { $0.status != .running && $0.status != .waiting }
+    }
+
+    private func startNext() {
+        guard current == nil, let media, let i = items.firstIndex(where: { $0.status == .waiting }) else {
+            if !isBusy, !items.isEmpty { scheduleClear() }
+            return
+        }
+        items[i].status = .running
+        progress = 0
+        startedAt = Date()
+        let item = items[i]
+        exporter.reset()
+        exporter.start(project: item.project, media: media, settings: item.settings, url: item.url)
+    }
+
+    private func exporterChanged(_ state: Exporter.State) {
+        guard let i = items.firstIndex(where: { $0.status == .running }) else { return }
+        switch exporter.state {
+        case .running: return
+        case .done: items[i].status = .done
+        case .failed(let message): items[i].status = .failed(message)
+        case .idle: items[i].status = .cancelled
+        }
+        startNext()
+    }
+
+    /// Finished exports stay in the toolbar a little while, then tidy themselves away.
+    private func scheduleClear() {
+        clearTimer?.invalidate()
+        clearTimer = Timer.scheduledTimer(withTimeInterval: 12, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.isBusy, !self.holdOpen else { return }
+                self.clearFinished()
+            }
+        }
+    }
+
+    /// Set while the list is open, so finished items don't vanish from under the mouse.
+    var holdOpen = false {
+        didSet { if !holdOpen, !isBusy { scheduleClear() } }
     }
 }
 

@@ -70,6 +70,10 @@ struct ContentView: View {
             }
             .withoutGlass()
             ToolbarItem(placement: .primaryAction) {
+                ExportProgressPill(queue: model.exports)
+            }
+            .withoutGlass()
+            ToolbarItem(placement: .primaryAction) {
                 PillButton(title: "Export", prominent: true) { model.showExport = true }
                     .help("Export (⌘E)")
                     .padding(.trailing, 10)
@@ -77,7 +81,7 @@ struct ContentView: View {
             .withoutGlass()
         }
         .sheet(isPresented: $model.showExport) {
-            ExportSheet(model: model, exporter: model.exporter)
+            ExportSheet(model: model)
         }
         .alert("Import", isPresented: Binding(get: { model.importError != nil }, set: { if !$0 { model.importError = nil } })) {
             Button("OK", role: .cancel) {}

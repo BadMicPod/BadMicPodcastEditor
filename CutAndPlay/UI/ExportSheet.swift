@@ -16,7 +16,7 @@ enum SheetStyle {
 
 struct ExportSheet: View {
     @ObservedObject var model: EditorModel
-    @ObservedObject var exporter: Exporter
+    @State private var failure: String?
     @State private var settings = ExportSettings()
     @State private var name = ""
     @State private var folder = URL(fileURLWithPath: NSHomeDirectory())
@@ -63,9 +63,6 @@ struct ExportSheet: View {
         .onAppear(perform: setUp)
         .onExitCommand(perform: escape)
         .onDisappear { player.stop() }
-        .onChange(of: exporter.state) { _, state in
-            if state == .running { player.pause() }
-        }
     }
 
     static let previewWidth: CGFloat = 288
@@ -208,7 +205,6 @@ struct ExportSheet: View {
     // MARK: Actions
 
     private func setUp() {
-        exporter.reset()
         name = model.project.exportName ?? model.title
         if let dir = model.project.exportDir, FileManager.default.fileExists(atPath: dir) {
             folder = URL(fileURLWithPath: dir)
@@ -232,7 +228,7 @@ struct ExportSheet: View {
     }
 
     private func escape() {
-        if exporter.state == .running { exporter.cancel() } else { model.showExport = false }
+        model.showExport = false
     }
 
     private func start() {
@@ -250,58 +246,30 @@ struct ExportSheet: View {
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
-        model.setExportTarget(name: clean, directory: folder.path)
         model.commitLive()
-        exporter.start(project: model.project, media: model.media, settings: settings, url: url)
+        let p = model.project
+        if settings.format == .wav && !p.clips.contains(where: { $0.kind == .audio }) {
+            failure = "There's no audio on the timeline."
+            return
+        }
+        model.setExportTarget(name: clean, directory: folder.path)
+        // It runs in the background; the toolbar shows how it's going.
+        model.exports.add(project: model.project, media: model.media, settings: settings, url: url)
+        model.showExport = false
     }
 
     // MARK: Footer
 
-    @ViewBuilder private var footer: some View {
-        switch exporter.state {
-        case .running:
-            HStack(spacing: 14) {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Color.white.opacity(0.08))
-                        Capsule().fill(Theme.accent).frame(width: max(6, geo.size.width * exporter.progress))
-                    }
-                }
-                .frame(height: 6)
-                Text("\(Int(exporter.progress * 100))%")
-                    .font(Theme.mono(11.5))
-                    .foregroundStyle(Theme.text)
-                    .frame(width: 40, alignment: .trailing)
-                PillButton(title: "Cancel", prominent: false, large: true, shortcut: .cancelAction) { exporter.cancel() }
-            }
-        case .done(let url):
-            HStack(spacing: 10) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 16))
-                    .foregroundStyle(Color(hex: 0x3DDC97))
-                Text(url.lastPathComponent)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer()
-                PillButton(title: "Show in Finder", prominent: false, large: true) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-                PillButton(title: "Done", prominent: true, large: true, shortcut: .defaultAction) { model.showExport = false }
-            }
-        case .failed(let message):
-            HStack(spacing: 10) {
-                Text(message)
+    private var footer: some View {
+        HStack(spacing: 10) {
+            if let failure {
+                Text(failure)
                     .font(.system(size: 12))
                     .foregroundStyle(Color(hex: 0xFF7A6B))
                     .fixedSize(horizontal: false, vertical: true)
-                Spacer()
-                buttons
             }
-        case .idle:
-            HStack {
-                Spacer()
-                buttons
-            }
+            Spacer()
+            buttons
         }
     }
 
