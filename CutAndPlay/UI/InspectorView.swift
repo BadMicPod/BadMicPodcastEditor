@@ -351,13 +351,7 @@ struct InspectorView: View {
                 .padding(6)
                 .frame(height: 68)
                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.field))
-            MenuField(label: c.text.fontName.isEmpty ? "System" : c.text.fontName) {
-                Button("System") { update { $0.fontName = "" } }
-                Divider()
-                ForEach(NSFontManager.shared.availableFontFamilies, id: \.self) { family in
-                    Button(family) { update { $0.fontName = family } }
-                }
-            }
+            FontPicker(selection: c.text.fontName) { family in update { $0.fontName = family } }
             HStack(spacing: 8) {
                 Chip(label: "Bold", active: c.text.bold) { update { $0.bold.toggle() } }
                 ColorField(color: c.text.color) { color in update { $0.color = color } }
@@ -761,6 +755,118 @@ struct MenuField<Content: View>: View {
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
+        .onHover { hovering = $0 }
+    }
+}
+
+/// Font family chooser: a field showing the current font that opens a searchable list, each name
+/// drawn in its own face. Type to filter; Return picks the first match.
+private struct FontPicker: View {
+    let selection: String
+    let onPick: (String) -> Void
+    @State private var open = false
+    @State private var hovering = false
+
+    var body: some View {
+        Button { open = true } label: {
+            HStack(spacing: 8) {
+                Text(selection.isEmpty ? "System" : selection)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down").font(.system(size: 8.5, weight: .bold)).foregroundStyle(Theme.textDim)
+            }
+            .padding(.horizontal, 11)
+            .frame(height: 28)
+            .frame(maxWidth: .infinity)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovering ? Theme.hover : Theme.field))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.05)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .popover(isPresented: $open, arrowEdge: .leading) {
+            FontList(selection: selection) { family in
+                onPick(family)
+                open = false
+            }
+        }
+    }
+}
+
+private struct FontList: View {
+    let selection: String
+    let onPick: (String) -> Void
+    @State private var query = ""
+    @FocusState private var focused: Bool
+
+    private static let families = NSFontManager.shared.availableFontFamilies
+
+    private var matches: [String] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        let all = [""] + Self.families
+        guard !q.isEmpty else { return all }
+        return all.filter { ($0.isEmpty ? "System" : $0).localizedCaseInsensitiveContains(q) }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textFaint)
+                TextField("Search fonts", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5))
+                    .focused($focused)
+                    .onSubmit { if let first = matches.first { onPick(first) } }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            Hairline()
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(matches, id: \.self) { family in
+                            FontRow(family: family, selected: family == selection) { onPick(family) }
+                                .id(family)
+                        }
+                        if matches.isEmpty {
+                            Text("No fonts match").font(.system(size: 11.5)).foregroundStyle(Theme.textFaint).padding(12)
+                        }
+                    }
+                    .padding(4)
+                }
+                .onAppear { proxy.scrollTo(selection, anchor: .center) }
+            }
+        }
+        .frame(width: 260, height: 360)
+        .background(Theme.panel)
+        .onAppear { focused = true }
+    }
+}
+
+private struct FontRow: View {
+    let family: String
+    let selected: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(family.isEmpty ? "System" : family)
+                    .font(family.isEmpty ? .system(size: 14) : .custom(family, size: 14))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if selected { Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.accent) }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(hovering ? Theme.hover : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
         .onHover { hovering = $0 }
     }
 }
