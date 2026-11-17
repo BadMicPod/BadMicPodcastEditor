@@ -20,10 +20,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Symbols to the Edit menu. None of them help with editing video, so they come out once the menus
         // exist, and again whenever they're put back (SwiftUI rebuilds menus as commands change).
         DispatchQueue.main.async { MenuCleanup.removeExtras() }
+        if CommandLine.arguments.contains("--dump-menu") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                for top in NSApp.mainMenu?.items ?? [] {
+                    NSLog("MENU %@", top.title)
+                    for i in top.submenu?.items ?? [] {
+                        NSLog("MENU    %@ [%@ %lu] %@", i.title, i.keyEquivalent, i.keyEquivalentModifierMask.rawValue, i.action.map { NSStringFromSelector($0) } ?? "-")
+                    }
+                }
+            }
+        }
         NotificationCenter.default.addObserver(forName: NSMenu.didAddItemNotification, object: nil, queue: .main) { note in
-            MainActor.assumeIsolated {
-                guard let menu = note.object as? NSMenu, menu.supermenu === NSApp.mainMenu else { return }
-                MenuCleanup.removeExtras(in: menu)
+            // Tidied once SwiftUI has finished updating the menu, never in the middle of it.
+            guard let menu = note.object as? NSMenu else { return }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard menu.supermenu === NSApp.mainMenu else { return }
+                    MenuCleanup.removeExtras(in: menu)
+                }
             }
         }
     }
