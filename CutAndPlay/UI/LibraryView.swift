@@ -18,9 +18,10 @@ struct LibraryView: View {
         let inSelection = Set(model.selection.compactMap { model.project.clip($0)?.assetID })
         VStack(spacing: 0) {
             HStack(spacing: 6) {
-                Text("Media")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.text)
+                Text("MEDIA")
+                    .font(Theme.label())
+                    .kerning(1.6)
+                    .foregroundStyle(Theme.textDim)
                 if model.importCount > 0 {
                     ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 14, height: 14)
                 }
@@ -121,7 +122,7 @@ private struct MediaThumb: View {
                 } else {
                     Image(systemName: asset.kind == .audio ? "waveform" : asset.kind == .image ? "photo" : "film")
                         .font(.system(size: compact ? 13 : 20, weight: .regular))
-                        .foregroundStyle(asset.kind == .audio ? Color(nsColor: Theme.NS.audio) : Theme.textFaint)
+                        .foregroundStyle(asset.kind == .audio ? Theme.textDim : Theme.textFaint)
                         .frame(width: g.size.width, height: g.size.height)
                 }
                 if offline {

@@ -29,24 +29,28 @@ extension RGBA {
 /// One palette shared by SwiftUI and the AppKit timeline.
 enum Theme {
     enum NS {
-        static let bg = NSColor(hex: 0x0C0C0E)
-        static let panel = NSColor(hex: 0x131316)
-        static let lane = NSColor(hex: 0x17171B)
-        static let laneAlt = NSColor(hex: 0x141418)
-        static let raised = NSColor(hex: 0x1E1E23)
-        static let stroke = NSColor(white: 1, alpha: 0.07)
-        static let text = NSColor(white: 1, alpha: 0.92)
-        static let textDim = NSColor(white: 1, alpha: 0.55)
-        static let textFaint = NSColor(white: 1, alpha: 0.3)
-        static let accent = NSColor(hex: 0xFF5B3A)
-        static let snap = NSColor(hex: 0xFFD23F)
+        // Neutral blacks and greys, off-white type, and one red-orange for the few things that must stand out.
+        static let bg = NSColor(hex: 0x0A0A0A)
+        static let panel = NSColor(hex: 0x111111)
+        static let lane = NSColor(hex: 0x0D0D0D)
+        static let laneAlt = NSColor(hex: 0x0A0A0A)
+        static let raised = NSColor(hex: 0x1A1A1A)
+        static let stroke = NSColor(white: 1, alpha: 0.085)
+        static let text = NSColor(hex: 0xF2F2F0)
+        static let textDim = NSColor(hex: 0x9A9A96)
+        static let textFaint = NSColor(hex: 0x5C5C59)
+        static let accent = NSColor(hex: 0xFF4A1C)
+        /// Meter yellow.
+        static let snap = NSColor(hex: 0xF2C14E)
 
-        static let video = NSColor(hex: 0x3D6BE0)
-        static let audio = NSColor(hex: 0x1FA88A)
-        static let image = NSColor(hex: 0x8A5BE0)
-        static let textClip = NSColor(hex: 0xD9488B)
-        static let solid = NSColor(hex: 0x6B7280)
-        static let wave = NSColor(hex: 0x7CF2D2)
+        // Clips are neutral; their pictures and waveforms carry the colour.
+        static let video = NSColor(hex: 0x1E1E1E)
+        static let audio = NSColor(hex: 0x151515)
+        static let image = NSColor(hex: 0x1E1E1E)
+        static let textClip = NSColor(hex: 0x1B1B1B)
+        static let solid = NSColor(hex: 0x1B1B1B)
+        static let wave = NSColor(hex: 0xBDBDB9)
+        static let clipStroke = NSColor(hex: 0x2C2C2C)
 
         static func clip(_ kind: ClipKind) -> NSColor {
             switch kind {
@@ -62,12 +66,14 @@ enum Theme {
     static let bg = Color(nsColor: NS.bg)
     static let panel = Color(nsColor: NS.panel)
     static let raised = Color(nsColor: NS.raised)
-    static let field = Color.white.opacity(0.055)
-    static let hover = Color.white.opacity(0.08)
-    static let stroke = Color.white.opacity(0.07)
-    static let text = Color.white.opacity(0.92)
-    static let textDim = Color.white.opacity(0.55)
-    static let textFaint = Color.white.opacity(0.3)
+    static let field = Color(hex: 0x181818)
+    static let hover = Color.white.opacity(0.07)
+    static let stroke = Color.white.opacity(0.085)
+    static let text = Color(nsColor: NS.text)
+    static let textDim = Color(nsColor: NS.textDim)
+    static let textFaint = Color(nsColor: NS.textFaint)
+    /// Small spaced-out section labels.
+    static func label(_ size: CGFloat = 10) -> Font { .system(size: size, weight: .semibold) }
     static let accent = Color(nsColor: NS.accent)
 
     static func mono(_ size: CGFloat, _ weight: Font.Weight = .medium) -> Font {
@@ -93,12 +99,12 @@ struct IconButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: size * 0.46, weight: .medium))
-                .foregroundStyle(active ? Theme.accent : (hovering ? Theme.text : Theme.textDim))
+                .foregroundStyle(active || hovering ? Theme.text : Theme.textDim)
                 .offset(y: nudge)
                 .frame(width: size, height: size)
                 .background(
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(active ? Theme.accent.opacity(0.16) : (hovering ? Theme.hover : .clear))
+                        .fill(active ? Color.white.opacity(0.1) : (hovering ? Theme.hover : .clear))
                 )
                 .contentShape(Rectangle())
         }
@@ -141,7 +147,7 @@ struct Splitter: View {
 
     var body: some View {
         Rectangle()
-            .fill((hovering || dragging) ? Theme.accent.opacity(0.9) : Theme.stroke)
+            .fill((hovering || dragging) ? Color.white.opacity(0.45) : Theme.stroke)
             .frame(width: vertical ? 1 : nil, height: vertical ? nil : 1)
             .overlay(
                 Color.clear

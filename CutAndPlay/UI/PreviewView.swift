@@ -248,9 +248,9 @@ private struct TimecodeField: View {
                 Text(Timecode.string(time, fps: fps))
             }
         }
-        .font(Theme.mono(13, .semibold))
+        .font(Theme.mono(19, .medium))
         .foregroundStyle(Theme.text)
-        .frame(width: 112, alignment: .leading)
+        .frame(width: 150, alignment: .leading)
         .padding(.horizontal, 7)
         .frame(height: 26)
         .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(editing || hovering ? Theme.field : .clear))

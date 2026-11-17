@@ -36,111 +36,103 @@ struct TimelineToolbar: View {
     @ObservedObject var model: EditorModel
 
     var body: some View {
-        HStack(spacing: 4) {
-            IconButton(symbol: "cursorarrow", active: model.tool == .move, help: "Move (V)") { model.tool = .move }
-            IconButton(symbol: "scissors", active: model.tool == .cut, help: "Cut (C)") { model.tool = .cut }
-            divider
-            SnapButton(active: model.snapping) { model.snapping.toggle() }
-            StickyButton(active: model.sticky) { model.sticky.toggle() }
-            IconButton(symbol: "rectangle.and.hand.point.up.left", active: model.skimming,
-                       help: "Skimming (K): hover the timeline to preview frames") { model.skimming.toggle() }
-            divider
-            IconButton(symbol: "square.split.2x1", help: "Split at Playhead (⌘K)") { model.splitAtPlayhead() }
-            IconButton(symbol: "trash", help: "Delete (⌫)") { model.deleteSelection() }
-                .disabled(model.selection.isEmpty)
+        HStack(spacing: 8) {
+            // Tools: one segmented control.
+            HStack(spacing: 2) {
+                ToolKey(symbol: "cursorarrow", on: model.tool == .move, help: "Move (V)") { model.tool = .move }
+                ToolKey(symbol: "scissors", on: model.tool == .cut, help: "Cut (C)") { model.tool = .cut }
+            }
+            .padding(3)
+            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.bg))
+            .padding(.trailing, 4)
+            ToggleChip(title: "Snap", on: model.snapping, help: "Snapping (S)") { model.snapping.toggle() }
+            ToggleChip(title: "Sticky", on: model.sticky, help: "Sticky Edges (R): clips touching a clip that changes length move with it") { model.sticky.toggle() }
+            ToggleChip(title: "Skim", on: model.skimming, help: "Skimming (K): hover the timeline to preview frames") { model.skimming.toggle() }
             Spacer()
+            TextAction(title: "Split", help: "Split at Playhead (⌘K)") { model.splitAtPlayhead() }
+            TextAction(title: "Delete", help: "Delete (⌫)") { model.deleteSelection() }
+                .disabled(model.selection.isEmpty)
             IconButton(symbol: "arrow.left.and.right", help: "Zoom to Fit (⇧Z)") { model.zoomToFit() }
+                .padding(.leading, 4)
         }
-        .padding(.horizontal, 10)
-        .frame(height: 40)
+        .padding(.horizontal, 12)
+        .frame(height: 42)
         .background(Theme.panel)
-    }
-
-    private var divider: some View {
-        Rectangle().fill(Theme.stroke).frame(width: 1, height: 16).padding(.horizontal, 5)
     }
 }
 
-/// Snapping toggle: a horseshoe magnet with separated pole tips.
-struct SnapButton: View {
-    let active: Bool
+/// One key of the tool selector.
+struct ToolKey: View {
+    let symbol: String
+    let on: Bool
+    let help: String
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
-        let color = active ? Theme.accent : (hovering ? Theme.text : Theme.textDim)
         Button(action: action) {
-            MagnetIcon(color: color)
-                .frame(width: 13, height: 14)
-                .frame(width: 28, height: 28)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(active ? Theme.accent.opacity(0.16) : (hovering ? Theme.hover : .clear))
-                )
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(on || hovering ? Theme.text : Theme.textDim)
+                .frame(width: 30, height: 24)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(on ? Theme.raised : .clear))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Color.white.opacity(on ? 0.1 : 0)))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help("Snapping (S)")
+        .help(help)
     }
 }
 
-/// Sticky edges toggle: two clips butted together.
-struct StickyButton: View {
-    let active: Bool
+/// A labelled on/off toggle; a red-orange dot shows it's on.
+struct ToggleChip: View {
+    let title: String
+    let on: Bool
+    let help: String
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
-        let color = active ? Theme.accent : (hovering ? Theme.text : Theme.textDim)
         Button(action: action) {
-            Canvas { ctx, size in
-                let h = size.height * 0.62, y = (size.height - h) / 2
-                let w = (size.width - 1.5) / 2
-                for x in [0, w + 1.5] {
-                    let r = CGRect(x: x, y: y, width: w, height: h)
-                    ctx.fill(Path(roundedRect: r, cornerRadius: 2), with: .color(color))
-                }
+            HStack(spacing: 6) {
+                if on { Circle().fill(Theme.accent).frame(width: 5, height: 5) }
+                Text(title).font(.system(size: 11, weight: .medium))
             }
-            .frame(width: 15, height: 14)
-            .frame(width: 28, height: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(active ? Theme.accent.opacity(0.16) : (hovering ? Theme.hover : .clear))
-            )
+            .foregroundStyle(on || hovering ? Theme.text : Theme.textDim)
+            .padding(.horizontal, 9)
+            .frame(height: 24)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(on ? Theme.raised : (hovering ? Theme.hover : .clear)))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help("Sticky Edges (R): clips touching a clip that changes length move with it")
+        .help(help)
     }
 }
 
-struct MagnetIcon: View {
-    let color: Color
+/// A plain text command button.
+struct TextAction: View {
+    let title: String
+    let help: String
+    let action: () -> Void
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var enabled
 
     var body: some View {
-        Canvas { ctx, size in
-            // Upright horseshoe, poles down: a thick arch with two short pole caps split off by a gap.
-            let lw = size.width * 0.3
-            let inset = lw / 2
-            let r = size.width / 2 - inset
-            let cx = size.width / 2
-            let arcY = inset + r
-            let capTop = size.height - size.height * 0.24
-            var arch = Path()
-            arch.move(to: CGPoint(x: inset, y: capTop - 1.6))
-            arch.addLine(to: CGPoint(x: inset, y: arcY))
-            arch.addArc(center: CGPoint(x: cx, y: arcY), radius: r, startAngle: .degrees(180), endAngle: .degrees(0), clockwise: false)
-            arch.addLine(to: CGPoint(x: size.width - inset, y: capTop - 1.6))
-            ctx.stroke(arch, with: .color(color), style: StrokeStyle(lineWidth: lw, lineCap: .butt, lineJoin: .round))
-            for x in [inset, size.width - inset] {
-                var cap = Path()
-                cap.move(to: CGPoint(x: x, y: capTop))
-                cap.addLine(to: CGPoint(x: x, y: size.height))
-                ctx.stroke(cap, with: .color(color), style: StrokeStyle(lineWidth: lw, lineCap: .butt))
-            }
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(hovering ? Theme.text : Theme.textDim)
+                .padding(.horizontal, 9)
+                .frame(height: 24)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hovering ? Theme.hover : .clear))
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .opacity(enabled ? 1 : 0.4)
+        .onHover { hovering = $0 }
+        .help(help)
     }
 }
 
@@ -476,14 +468,14 @@ struct TrackHeader: View {
             }
             .frame(width: 24, alignment: .leading)
             if track.kind == .audio {
-                LetterToggle(letter: "M", on: track.muted, color: Theme.accent, help: "Mute") { update { $0.muted.toggle() } }
-                LetterToggle(letter: "S", on: track.solo, color: Color(nsColor: Theme.NS.snap), help: "Solo") { update { $0.solo.toggle() } }
+                LetterToggle(letter: "M", on: track.muted, color: Theme.text, help: "Mute") { update { $0.muted.toggle() } }
+                LetterToggle(letter: "S", on: track.solo, color: Theme.text, help: "Solo") { update { $0.solo.toggle() } }
             } else {
-                IconButton(symbol: track.hidden ? "eye.slash" : "eye", active: track.hidden, size: 22, help: "Hide") {
+                MiniKey(symbol: track.hidden ? "eye.slash" : "eye", on: track.hidden, help: track.hidden ? "Show" : "Hide") {
                     update { $0.hidden.toggle() }
                 }
             }
-            IconButton(symbol: track.locked ? "lock.fill" : "lock.open", active: track.locked, size: 22, help: track.locked ? "Unlock" : "Lock") {
+            MiniKey(symbol: "lock", on: track.locked, help: track.locked ? "Unlock" : "Lock") {
                 update { $0.locked.toggle() }
             }
             Spacer(minLength: 0)
@@ -532,6 +524,29 @@ struct TrackHeader: View {
     }
 }
 
+/// A small square key with an icon, for hide and lock: white when on.
+struct MiniKey: View {
+    let symbol: String
+    let on: Bool
+    let help: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(on ? Color.black.opacity(0.85) : (hovering ? Theme.text : Theme.textDim))
+                .frame(width: 20, height: 20)
+                .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(on ? Theme.text : (hovering ? Theme.hover : Theme.field)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(help)
+    }
+}
+
 /// A one-letter toggle, for mute and solo.
 struct LetterToggle: View {
     let letter: String
@@ -557,44 +572,39 @@ struct LetterToggle: View {
     }
 }
 
-/// A vertical level meter: the bar is green, then yellow from -12 dB and red from -3 dB; a tick holds
-/// the recent peak; the cap at the top lights red once the signal reaches 0 dB and stays lit until
-/// the meter is clicked. Pass no track for the output.
+/// A vertical segmented level meter. Lit segments are light grey, yellow from -12 dB and red from
+/// -3 dB; one segment holds the recent peak; the top segment lights red once the signal reaches 0 dB
+/// and stays lit until the meter is clicked. Pass no track for the output.
 struct LevelMeter: View {
     @ObservedObject var meters: MeterState
     var track: UUID?
 
-    private static func position(_ db: Double) -> CGFloat {
-        CGFloat(((db - MeterState.floor) / -MeterState.floor).clamped(to: 0...1))
-    }
+    private static let segment: CGFloat = 2
+    private static let gap: CGFloat = 1
 
     private static func color(_ db: Double) -> Color {
-        db > -3 ? Color(red: 1, green: 0.3, blue: 0.26) : db > -12 ? Color(nsColor: Theme.NS.snap) : Color(nsColor: Theme.NS.audio)
+        db > -3 ? Theme.accent : db > -12 ? Color(nsColor: Theme.NS.snap) : Color(hex: 0xD9D9D6)
     }
 
     var body: some View {
         let r = track.map { meters.tracks[$0] ?? MeterReading() } ?? meters.master
         GeometryReader { g in
-            let cap: CGFloat = 3
-            let h = max(1, g.size.height - cap - 1.5)
-            VStack(spacing: 1.5) {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(r.clipped ? Color(red: 1, green: 0.3, blue: 0.26) : Color.white.opacity(0.1))
-                    .frame(height: cap)
-                ZStack(alignment: .bottom) {
-                    RoundedRectangle(cornerRadius: 1.5).fill(Color.white.opacity(0.07))
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(Self.color(r.level))
-                        .frame(height: h * Self.position(r.level))
-                    if r.peak > MeterState.floor + 0.5 {
-                        Rectangle()
-                            .fill(Self.color(r.peak))
-                            .frame(height: 1.5)
-                            .offset(y: -(h * Self.position(r.peak) - 0.75))
-                    }
+            let count = max(4, Int((g.size.height + Self.gap) / (Self.segment + Self.gap)))
+            // The top segment is the clip light; the rest span the floor to 0 dB.
+            let span = count - 1
+            let lit = Int((Double(span) * ((r.level - MeterState.floor) / -MeterState.floor)).clamped(to: 0...Double(span)))
+            let peak = Int((Double(span) * ((r.peak - MeterState.floor) / -MeterState.floor)).clamped(to: 0...Double(span))) - 1
+            VStack(spacing: Self.gap) {
+                Rectangle()
+                    .fill(r.clipped ? Theme.accent : Color(hex: 0x262626))
+                    .frame(height: Self.segment)
+                ForEach((0..<span).reversed(), id: \.self) { i in
+                    Rectangle()
+                        .fill(i < lit || (i == peak && r.peak > MeterState.floor + 0.5) ? Self.color(MeterState.floor * (1 - Double(i + 1) / Double(span))) : Color(hex: 0x262626))
+                        .frame(height: Self.segment)
                 }
-                .frame(height: h)
             }
+            .frame(maxHeight: .infinity, alignment: .bottom)
         }
         .contentShape(Rectangle())
         .onTapGesture { meters.resetClip(track) }

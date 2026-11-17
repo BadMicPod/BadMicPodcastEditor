@@ -4,12 +4,12 @@ import AVFoundation
 
 /// Colours for the export sheet: a cool, slightly blue dark, a step apart from the editor chrome.
 enum SheetStyle {
-    static let background = Color(hex: 0x1B1D27)
-    static let field = Color(hex: 0x272A36)
-    static let fieldHover = Color(hex: 0x2F3340)
-    static let fieldStroke = Color(hex: 0x3A3E4D)
-    static let label = Color(hex: 0xB4B9C8)
-    static let text = Color(hex: 0xF2F3F7)
+    static let background = Color(hex: 0x141414)
+    static let field = Color(hex: 0x1E1E1E)
+    static let fieldHover = Color(hex: 0x262626)
+    static let fieldStroke = Color(hex: 0x2E2E2E)
+    static let label = Color(hex: 0xA8A8A4)
+    static let text = Color(hex: 0xF2F2F0)
     static let divider = Color.white.opacity(0.08)
     static let radius: CGFloat = 8
 }
@@ -453,16 +453,17 @@ struct PillButton: View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color.white)
+                .foregroundStyle(prominent ? Color(hex: 0x0A0A0A) : Theme.text)
                 .padding(.horizontal, large ? 18 : 15)
                 .frame(height: 28)
                 .background(
+                    // The main action is a white pill; others are quiet grey.
                     Capsule().fill(prominent
-                        ? AnyShapeStyle(Theme.accent)
-                        : AnyShapeStyle(large ? (hovering ? Color(hex: 0x363A48) : Color(hex: 0x2B2E3A)) : Color.white.opacity(hovering ? 0.14 : 0.08)))
+                        ? AnyShapeStyle(Theme.text)
+                        : AnyShapeStyle(large ? (hovering ? Color(hex: 0x2E2E2E) : Color(hex: 0x242424)) : Color.white.opacity(hovering ? 0.14 : 0.08)))
                 )
                 .overlay(Capsule().strokeBorder(Color.white.opacity(prominent ? 0 : 0.05)))
-                .brightness(prominent && hovering ? 0.05 : 0)
+                .brightness(prominent && hovering ? -0.06 : 0)
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -522,7 +523,7 @@ private struct AccentSwitch: View {
     var body: some View {
         ZStack(alignment: isOn ? .trailing : .leading) {
             Capsule()
-                .fill(isOn ? Theme.accent : Color(hex: 0x3A3E4D))
+                .fill(isOn ? Theme.accent : Color(hex: 0x3A3A3A))
             Circle()
                 .fill(Color.white)
                 .shadow(color: .black.opacity(0.3), radius: 1.5, y: 0.5)

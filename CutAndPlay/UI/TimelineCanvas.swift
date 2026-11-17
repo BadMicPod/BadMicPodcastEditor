@@ -1005,7 +1005,7 @@ final class TimelineCanvas: NSView {
         // Snap guide
         if let s = snapLine {
             let sx = x(s)
-            ctx.setFillColor(Theme.NS.snap.cgColor)
+            ctx.setFillColor(Theme.NS.accent.cgColor)
             ctx.fill(CGRect(x: sx - 0.5, y: ruler, width: 1, height: bounds.height - ruler))
         }
 
@@ -1088,7 +1088,7 @@ final class TimelineCanvas: NSView {
         let selected = model.selection.contains(c.id)
         let hovered = hover?.id == c.id
         let zone = hovered ? hover?.zone : nil
-        let radius = min(5, r.width / 2)
+        let radius = min(7, r.width / 2)
         let path = CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius, transform: nil)
         let visible = r.intersection(bounds.insetBy(dx: -2, dy: 0))
         let asset = model.project.asset(c.assetID)
@@ -1101,7 +1101,7 @@ final class TimelineCanvas: NSView {
 
         let fill = offline && !ghosts.contains(where: { $0.id == c.id })
             ? NSColor(hex: 0x5A1F1F)
-            : base.blended(withFraction: c.kind == .audio ? 0.72 : 0.55, of: .black) ?? base
+            : base
         ctx.setFillColor(fill.cgColor)
         ctx.fill(r)
 
@@ -1202,7 +1202,7 @@ final class TimelineCanvas: NSView {
             ctx.setStrokeColor(NSColor(white: 1, alpha: 0.6).cgColor)
             ctx.setLineWidth(1)
         } else {
-            ctx.setStrokeColor((base.blended(withFraction: 0.15, of: .white) ?? base).withAlphaComponent(0.75).cgColor)
+            ctx.setStrokeColor(Theme.NS.clipStroke.cgColor)
             ctx.setLineWidth(1)
         }
         ctx.strokePath()

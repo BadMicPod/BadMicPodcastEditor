@@ -490,8 +490,8 @@ private struct InspectorSection<Content: View>: View {
                             .rotationEffect(.degrees(collapsed ? 0 : 90))
                             .frame(width: 8)
                         Text(title.uppercased())
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .kerning(1)
+                            .font(Theme.label())
+                            .kerning(1.6)
                         if marked && collapsed {
                             Circle().fill(Theme.accent).frame(width: 5, height: 5)
                         }
@@ -544,13 +544,13 @@ struct ThinSlider: View {
             let travel = max(1, geo.size.width - knob)
             let x = CGFloat(min(1, max(0, value))) * travel
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.1)).frame(height: 3)
-                Capsule().fill(Theme.accent).frame(width: x + knob / 2, height: 3)
+                Capsule().fill(Color.white.opacity(0.12)).frame(height: 2)
+                Capsule().fill(Theme.text).frame(width: x + knob / 2, height: 2)
                 Circle()
-                    .fill(Color.white)
+                    .fill(Theme.text)
                     .frame(width: knob, height: knob)
+                    .overlay(Circle().strokeBorder(Theme.panel, lineWidth: 3).padding(-3))
                     .scaleEffect(dragging || hovering ? 1.12 : 1)
-                    .shadow(color: .black.opacity(0.35), radius: 1.5, y: 0.5)
                     .offset(x: x)
             }
             .frame(height: geo.size.height)
