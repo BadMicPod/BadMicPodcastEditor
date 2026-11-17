@@ -392,21 +392,17 @@ enum SelfTest {
             log("PLACEMENT \(good ? "OK" : "FAIL")")
             ok = ok && good
         }
-        // Audio scrubbing: a snippet rendered from the edit's mix has sound in it, and one past the end doesn't.
+        // Audio scrubbing: the edit's mix is rendered into memory, with sound where the edit has it and
+        // silence after the end.
         do {
-            if let built = CompositionBuilder.build(project: project, media: media, renderSize: CGSize(width: 16, height: 16)) {
-                let scrubber = AudioScrubber()
-                func energy(_ t: Double) -> (Int, Float) {
-                    guard let b = scrubber.render(built.composition, mix: built.audioMix, at: t), let ch = b.floatChannelData?[0] else { return (0, 0) }
-                    var peak: Float = 0
-                    for i in 0..<Int(b.frameLength) { peak = max(peak, abs(ch[i])) }
-                    return (Int(b.frameLength), peak)
-                }
-                let mid = energy(1.5), late = energy(project.duration + 1)
-                let good = mid.0 > 3000 && mid.1 > 0.01 && late.1 < 0.0001
-                log("AUDIO SCRUB \(good ? "OK" : "FAIL") frames=\(mid.0) peak=\(mid.1) after=\(late.1)")
-                ok = ok && good
-            }
+            let scrubber = AudioScrubber()
+            scrubber.prepare(project: project, media: media)
+            var waited = 0
+            while !scrubber.ready, waited < 100 { try? await Task.sleep(nanoseconds: 50_000_000); waited += 1 }
+            let mid = scrubber.peak(at: 1.5), late = scrubber.peak(at: project.duration + 1)
+            let good = scrubber.ready && mid > 0.01 && late == 0
+            log("AUDIO SCRUB \(good ? "OK" : "FAIL") ready=\(scrubber.ready) after=\(waited * 50)ms peak=\(mid) end=\(late)")
+            ok = ok && good
         }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")
     }

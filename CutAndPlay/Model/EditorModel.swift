@@ -66,7 +66,12 @@ final class EditorModel: ObservableObject {
     @Published var audioScrub = UserDefaults.standard.bool(forKey: "audioScrub") {
         didSet {
             UserDefaults.standard.set(audioScrub, forKey: "audioScrub")
-            if !audioScrub { scrubber.stop() }
+            if audioScrub {
+                scrubber.warmUp()
+                scrubber.prepare(project: project, media: media)
+            } else {
+                scrubber.shutDown()
+            }
         }
     }
     private let scrubber = AudioScrubber()
@@ -75,8 +80,8 @@ final class EditorModel: ObservableObject {
 
     /// Plays a snippet of the timeline's sound at a time, when audio scrubbing is on.
     func scrubSound(at t: Double) {
-        guard audioScrub, !isPlaying, let item = engine.player.currentItem else { return }
-        scrubber.play(at: t, asset: item.asset, mix: item.audioMix)
+        guard audioScrub, !isPlaying else { return }
+        scrubber.play(at: t)
         lastScrubSound = (t, CACurrentMediaTime())
     }
     /// Sticky edges: clips touching a clip that changes length move with it, closing or opening up
@@ -179,6 +184,7 @@ final class EditorModel: ObservableObject {
                 self.restoreLastSession()
             }
         }
+        if audioScrub { scrubber.warmUp() }
         if !CommandLine.arguments.contains("--selftest") {
             autosaveTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.autosaveIfIdle() }
@@ -358,6 +364,7 @@ final class EditorModel: ObservableObject {
         rebuildPending = false
         lastRebuild = CACurrentMediaTime()
         engine.rebuild(project: project, media: media, at: playhead)
+        if audioScrub { scrubber.prepare(project: project, media: media) }
         if isPlaying && engine.isEmpty { isPlaying = false }
     }
 
@@ -377,7 +384,7 @@ final class EditorModel: ObservableObject {
         clock.update(time: playhead, fps: project.fps)
         // While scrubbing with sound, the meters show what's being heard.
         if !isPlaying, let s = lastScrubSound, CACurrentMediaTime() - s.at < AudioScrubber.snippet + 0.05 {
-            meters.update(project: project, media: media, time: s.time, playing: true)
+            meters.update(project: project, media: media, time: s.time, playing: true, quickRelease: true)
         } else {
             meters.update(project: project, media: media, time: playhead, playing: isPlaying)
         }

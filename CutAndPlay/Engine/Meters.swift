@@ -26,10 +26,10 @@ final class MeterState: ObservableObject {
     @Published private(set) var masterRight = MeterReading()
 
     /// How far the level may drop per display frame.
-    private let release = 0.9
+    private var release = 0.9
     /// How long a peak holds before it starts to fall, and how fast it falls after.
     private let peakHold = 1.2
-    private let peakFall = 0.45
+    private var peakFall = 0.45
     private var holdUntil: [String: Double] = [:]
 
     func resetClip(_ track: UUID?) {
@@ -42,8 +42,12 @@ final class MeterState: ObservableObject {
         }
     }
 
-    func update(project: Project, media: MediaStore, time t: Double, playing: Bool) {
+    /// `quickRelease` lets readings fall fast, for short bursts like scrubbing; levels also fall fast
+    /// whenever nothing is playing.
+    func update(project: Project, media: MediaStore, time t: Double, playing: Bool, quickRelease: Bool = false) {
         let now = CACurrentMediaTime()
+        release = playing && !quickRelease ? 0.9 : 3
+        peakFall = playing && !quickRelease ? 0.45 : 1.5
         var next: [UUID: MeterReading] = [:]
         var power = 0.0, powerL = 0.0, powerR = 0.0
         for track in project.audioTracks {
