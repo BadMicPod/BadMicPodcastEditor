@@ -393,9 +393,6 @@ private struct PlayButton: View {
                 .offset(x: playing ? 0 : 1.5)
                 .frame(width: 46, height: 46)
                 .background(Circle().fill(hovering ? Color.white : Theme.text))
-                // Keyed like a physical button: a light top edge, a little shade underneath.
-                .overlay(Circle().strokeBorder(LinearGradient(colors: [.white, .black.opacity(0.18)], startPoint: .top, endPoint: .bottom), lineWidth: 1))
-                .shadow(color: .black.opacity(0.55), radius: 3, y: 2)
                 // A dark ring sets it off from the bar.
                 .padding(5)
                 .background(Circle().fill(Color(hex: 0x161616)).overlay(Circle().strokeBorder(Color.white.opacity(0.05))))
