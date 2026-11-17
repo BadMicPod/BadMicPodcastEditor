@@ -473,7 +473,9 @@ private struct InspectorSection<Content: View>: View {
     /// Shows a dot beside the title while folded, so a changed section isn't hidden silently.
     let marked: Bool
     @ViewBuilder let content: Content
-    @AppStorage private var collapsed: Bool
+    // Plain state (saved to defaults by hand) so opening and closing can animate.
+    @State private var collapsed: Bool
+    private let key: String
     @State private var hovering = false
 
     init(_ title: String, action: (String, () -> Void)? = nil, collapsedByDefault: Bool = false, marked: Bool = false,
@@ -482,13 +484,17 @@ private struct InspectorSection<Content: View>: View {
         self.action = action
         self.marked = marked
         self.content = content()
-        _collapsed = AppStorage(wrappedValue: collapsedByDefault, "inspector.collapsed.\(title)")
+        key = "inspector.collapsed.\(title)"
+        _collapsed = State(initialValue: UserDefaults.standard.object(forKey: "inspector.collapsed.\(title)") as? Bool ?? collapsedByDefault)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                Button { withAnimation(.easeOut(duration: 0.12)) { collapsed.toggle() } } label: {
+                Button {
+                    withAnimation(.easeOut(duration: 0.16)) { collapsed.toggle() }
+                    UserDefaults.standard.set(collapsed, forKey: key)
+                } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 7.5, weight: .bold))
