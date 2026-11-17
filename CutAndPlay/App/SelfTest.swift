@@ -7,12 +7,75 @@ import AVFoundation
 enum SelfTest {
     nonisolated static func runIfRequested() {
         let args = CommandLine.arguments
+        // `--bench <dir>`: how fast the preview pipeline makes frames from the 4K clips in a folder.
+        if let i = args.firstIndex(of: "--bench"), args.count > i + 1 {
+            let dir = URL(fileURLWithPath: args[i + 1])
+            Task { @MainActor in
+                await bench(dir)
+                exit(0)
+            }
+            return
+        }
         guard let i = args.firstIndex(of: "--selftest"), args.count > i + 2 else { return }
         let mediaDir = URL(fileURLWithPath: args[i + 1])
         let outDir = URL(fileURLWithPath: args[i + 2])
         Task { @MainActor in
             await run(mediaDir: mediaDir, outDir: outDir)
             exit(0)
+        }
+    }
+
+    @MainActor
+    static func bench(_ dir: URL) async {
+        await BaseVideo.load()
+        let media = MediaStore()
+        let files = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []).sorted { $0.lastPathComponent < $1.lastPathComponent }
+        var assets: [MediaAsset] = []
+        for f in files { if let a = await media.importFile(f) { assets.append(a) } }
+        guard let a60 = assets.first(where: { $0.fps > 50 }), let a30 = assets.first(where: { $0.fps < 50 }) else { log("BENCH needs a 4K60 and a 4K30 clip"); return }
+
+        func project(heavy: Bool) -> Project {
+            var p = Project()
+            p.width = 3840; p.height = 2160; p.fps = 60
+            p.assets = assets
+            let v1 = p.videoTracks[0].id, v2 = p.videoTracks[1].id
+            var base = Clip(trackID: v1, kind: .video, assetID: a60.id, start: 0, duration: 10)
+            if heavy {
+                var g = ColorGrade()
+                g.look = "Teal and orange"
+                g.exposure = 0.3
+                g.midtones = WheelPoint(x: 0.4, y: -0.2)
+                base.grade = g
+                var pip = Clip(trackID: v2, kind: .video, assetID: a30.id, start: 0, duration: 10)
+                pip.transform = ClipTransform(scale: 0.45, x: 0.22, y: -0.2)
+                pip.fadeIn = 1
+                let v3 = p.addTrack(.video)
+                var text = Clip(trackID: v3, kind: .text, start: 0, duration: 10)
+                text.text.string = "Benchmark"
+                p.clips = [base, pip, text]
+            } else {
+                p.clips = [base]
+            }
+            return p
+        }
+
+        for (name, heavy) in [("single 4K60 clip", false), ("4K60 graded + 4K30 picture-in-picture + text", true)] {
+            let p = project(heavy: heavy)
+            let size = CompositionBuilder.previewSize(for: p)
+            guard let built = CompositionBuilder.build(project: p, media: media, renderSize: size, includeAudio: false),
+                  let reader = try? AVAssetReader(asset: built.composition) else { continue }
+            let output = AVAssetReaderVideoCompositionOutput(videoTracks: built.composition.tracks(withMediaType: .video),
+                                                             videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+            output.videoComposition = built.videoComposition
+            output.alwaysCopiesSampleData = false
+            reader.add(output)
+            reader.timeRange = CMTimeRange(start: .zero, duration: CMTime(seconds: 10, preferredTimescale: 600))
+            let t0 = CACurrentMediaTime()
+            reader.startReading()
+            var frames = 0
+            while output.copyNextSampleBuffer() != nil { frames += 1 }
+            let secs = CACurrentMediaTime() - t0
+            log(String(format: "BENCH %@: %d frames at %dx%d in %.2fs = %.0f fps (playback needs 60)", name, frames, Int(size.width), Int(size.height), secs, Double(frames) / secs))
         }
     }
 

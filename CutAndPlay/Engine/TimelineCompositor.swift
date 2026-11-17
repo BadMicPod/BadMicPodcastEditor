@@ -96,9 +96,17 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
     private let lock = NSLock()
     private var generation = 0
 
+    // Take frames in the decoder's own YUV formats (8- and 10-bit), so a 4K frame isn't converted to
+    // RGB on the way in; Core Image converts on the GPU as part of compositing.
     let sourcePixelBufferAttributes: [String: any Sendable]? = [
-        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferPixelFormatTypeKey as String: [
+            kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+            kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
+            kCVPixelFormatType_32BGRA,
+        ],
         kCVPixelBufferMetalCompatibilityKey as String: true,
+        kCVPixelBufferIOSurfacePropertiesKey as String: [String: any Sendable](),
     ]
 
     let requiredPixelBufferAttributesForRenderContext: [String: any Sendable] = [
