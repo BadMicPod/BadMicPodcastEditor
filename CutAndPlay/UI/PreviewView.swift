@@ -235,12 +235,12 @@ struct TransportBar: View {
                 }
             }
             HStack(alignment: .center, spacing: 4) {
-                IconButton(symbol: "backward.end.fill", size: 32, help: "Previous Edit (↑)") { model.jumpToEdit(forward: false) }
+                IconButton(symbol: "backward.end.fill", size: 32, help: "Previous Edit (↑ or ⇧←)") { model.jumpToEdit(forward: false) }
                 IconButton(symbol: "backward.frame.fill", size: 32, help: "Back One Frame (←)") { model.step(frames: -1) }
                 PlayButton(playing: model.isPlaying) { model.togglePlay() }
                     .padding(.horizontal, 10)
                 IconButton(symbol: "forward.frame.fill", size: 32, help: "Forward One Frame (→)") { model.step(frames: 1) }
-                IconButton(symbol: "forward.end.fill", size: 32, help: "Next Edit (↓)") { model.jumpToEdit(forward: true) }
+                IconButton(symbol: "forward.end.fill", size: 32, help: "Next Edit (↓ or ⇧→)") { model.jumpToEdit(forward: true) }
             }
         }
         .padding(.horizontal, 16)

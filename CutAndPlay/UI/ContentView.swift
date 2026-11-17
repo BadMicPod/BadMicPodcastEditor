@@ -133,8 +133,9 @@ enum KeyCommands {
         switch e.keyCode {
         case 49: model.togglePlay()
         case 51, 117: model.deleteSelection(ripple: shift)
-        case 123: model.step(frames: shift ? -10 : -1)
-        case 124: model.step(frames: shift ? 10 : 1)
+        // Arrows step a frame; with ⇧ they jump to the previous or next clip start or end (or marker).
+        case 123: shift ? model.jumpToEdit(forward: false) : model.step(frames: -1)
+        case 124: shift ? model.jumpToEdit(forward: true) : model.step(frames: 1)
         case 126: model.jumpToEdit(forward: false)
         case 125: model.jumpToEdit(forward: true)
         case 115: model.seek(to: 0)
