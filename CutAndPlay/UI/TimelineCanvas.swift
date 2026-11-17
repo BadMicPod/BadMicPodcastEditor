@@ -1540,21 +1540,25 @@ final class TimelineCanvas: NSView {
         ctx.restoreGState()
     }
 
-    /// The sound as a row of thin bars, each the loudest moment in its stretch, so nothing is lost
-    /// between them. Silence still shows as a dotted line, so pauses are easy to find and cut on.
+    /// The sound as a row of thin rounded bars, each the average loudness of its stretch, which
+    /// shows beats and sections of dense music better than the very top of each peak. Silence
+    /// still shows as a dotted line, so pauses are easy to find and cut on.
     /// Bars sit on a grid tied to the source, so they don't shimmer while scrolling or trimming.
     private func drawWaveform(_ c: Clip, in r: CGRect, visible: CGRect, ctx: CGContext) {
         guard let wf = model.media.waveform(c), visible.width > 0, !wf.peaks.isEmpty else { return }
-        let top = r.minY + 16, bottom = r.maxY - 3
+        let top = r.minY + 20, bottom = r.maxY - 3
         guard bottom - top > 6 else { return }
         let mid = (top + bottom) / 2, half = (bottom - top) / 2
         let gain = dbToLinear(c.gainDB)
-        let pitch: CGFloat = 3, bar: CGFloat = 1.5
+        let pitch: CGFloat = 4, bar: CGFloat = 2
+        // Average loudness sits well under the peaks, so it's lifted to fill the lane, with headroom.
+        let lift = 2.6, headroom: CGFloat = 0.86
         let secPerPx = Double(1 / pps) * c.speed
         // Where source time zero would sit, so bar k always covers the same stretch of sound.
         let origin = r.minX - CGFloat(c.sourceStart / secPerPx)
         var k = Int(floor((visible.minX - origin) / pitch))
-        let count = wf.peaks.count
+        let levels = wf.rms.isEmpty ? wf.peaks : wf.rms
+        let count = levels.count
         let rects = CGMutablePath()
         let scale = window?.backingScaleFactor ?? 2
         while true {
@@ -1566,25 +1570,32 @@ final class TimelineCanvas: NSView {
             let t0 = Double(bx - origin) * secPerPx
             let i0 = Int(t0 * wf.peaksPerSecond)
             let i1 = Int((t0 + Double(pitch) * secPerPx) * wf.peaksPerSecond)
-            var peak: Float = 0
+            var level = 0.0
             if i0 < count, i1 >= 0 {
                 let a = max(0, i0), b = min(count - 1, max(i0, i1 - 1))
                 if a <= b {
                     let stride = max(1, (b - a) / 32)
+                    var sum = 0.0, n = 0
                     var i = a
                     while i <= b {
-                        if wf.peaks[i] > peak { peak = wf.peaks[i] }
+                        let v = Double(levels[i])
+                        sum += v * v
+                        n += 1
                         i += stride
                     }
+                    level = (sum / Double(max(1, n))).squareRoot()
                 }
             }
-            let h = max(1, (CGFloat(min(1, Double(peak) * gain)) * half * 2).rounded())
+            if wf.rms.isEmpty { level /= lift }
+            let h = max(1.5, (CGFloat(min(1, level * lift * gain)) * half * 2 * headroom).rounded())
             let x0 = max(bx, visible.minX), x1 = min(bx + bar, visible.maxX)
             guard x1 > x0 else { continue }
-            rects.addRect(CGRect(x: x0, y: (mid - h / 2), width: x1 - x0, height: h))
+            let w = x1 - x0
+            rects.addRoundedRect(in: CGRect(x: x0, y: mid - h / 2, width: w, height: h),
+                                 cornerWidth: min(w, h) / 2, cornerHeight: min(w, h) / 2)
         }
         ctx.addPath(rects)
-        ctx.setFillColor(Theme.NS.wave.withAlphaComponent(0.9).cgColor)
+        ctx.setFillColor(NSColor(srgbRed: 0.84, green: 0.84, blue: 0.82, alpha: 0.85).cgColor)
         ctx.fillPath()
     }
 

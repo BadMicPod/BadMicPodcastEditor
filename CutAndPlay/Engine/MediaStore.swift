@@ -47,6 +47,9 @@ struct Waveform {
     /// The first two channels on their own, for left and right meters (the same for mono).
     let left: [Float]
     let right: [Float]
+    /// Average loudness (RMS) of each stretch, for drawing: shows the shape of dense music
+    /// better than the very top of each peak.
+    let rms: [Float]
 }
 
 struct ThumbKey: Hashable {
@@ -362,7 +365,7 @@ final class MediaStore: ObservableObject {
         guard let id = c.assetID, let wf = waveforms[id] else { return nil }
         guard c.playsBackwards else { return wf }
         if let r = reversedWaveforms[id] { return r }
-        let r = Waveform(peaksPerSecond: wf.peaksPerSecond, peaks: wf.peaks.reversed(), left: wf.left.reversed(), right: wf.right.reversed())
+        let r = Waveform(peaksPerSecond: wf.peaksPerSecond, peaks: wf.peaks.reversed(), left: wf.left.reversed(), right: wf.right.reversed(), rms: wf.rms.reversed())
         reversedWaveforms[id] = r
         return r
     }
@@ -404,6 +407,8 @@ enum WaveformReader {
         var left: [Float] = [], right: [Float] = []
         var bucketL: Int32 = 0, bucketR: Int32 = 0
         var bucketPeak: Int32 = 0
+        var bucketSquares = 0.0
+        var rms: [Float] = []
         var bucketFill = 0.0
         var framesPerBucket = 0.0
         var scratch = [Int16]()
@@ -429,11 +434,14 @@ enum WaveformReader {
                         if v > m { m = v }
                     }
                     if m > bucketPeak { bucketPeak = m }
+                    bucketSquares += Double(m) * Double(m)
                     bucketL = max(bucketL, abs(Int32(buf[i])))
                     bucketR = max(bucketR, abs(Int32(buf[i + min(1, channels - 1)])))
                     bucketFill += 1
                     if bucketFill >= framesPerBucket {
                         peaks.append(Float(bucketPeak) / 32768)
+                        rms.append(Float((bucketSquares / max(1, bucketFill)).squareRoot() / 32768))
+                        bucketSquares = 0
                         left.append(Float(bucketL) / 32768)
                         right.append(Float(bucketR) / 32768)
                         bucketPeak = 0
@@ -446,7 +454,7 @@ enum WaveformReader {
             }
         }
         guard !peaks.isEmpty else { return nil }
-        return Waveform(peaksPerSecond: peaksPerSecond, peaks: peaks, left: left, right: right)
+        return Waveform(peaksPerSecond: peaksPerSecond, peaks: peaks, left: left, right: right, rms: rms)
     }
 }
 
