@@ -147,6 +147,7 @@ enum KeyCommands {
             switch e.charactersIgnoringModifiers?.lowercased() {
             case "v", "a": model.tool = .move
             case "c": model.tool = .cut
+            case "s" where shift: model.audioScrub.toggle()
             case "s": model.snapping.toggle()
             case "l": model.loop.toggle()
             case "f": model.toggleViewerFullScreen()

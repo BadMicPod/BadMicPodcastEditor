@@ -62,6 +62,23 @@ final class EditorModel: ObservableObject {
     }
     /// Where the viewer is skimmed to, if anywhere.
     private(set) var skimTime: Double?
+    /// Audio scrubbing: hear short snippets while dragging the playhead or skimming. Off unless turned on.
+    @Published var audioScrub = UserDefaults.standard.bool(forKey: "audioScrub") {
+        didSet {
+            UserDefaults.standard.set(audioScrub, forKey: "audioScrub")
+            if !audioScrub { scrubber.stop() }
+        }
+    }
+    private let scrubber = AudioScrubber()
+    /// The last snippet heard, so the meters can show it.
+    private var lastScrubSound: (time: Double, at: Double)?
+
+    /// Plays a snippet of the timeline's sound at a time, when audio scrubbing is on.
+    func scrubSound(at t: Double) {
+        guard audioScrub, !isPlaying, let item = engine.player.currentItem else { return }
+        scrubber.play(at: t, asset: item.asset, mix: item.audioMix)
+        lastScrubSound = (t, CACurrentMediaTime())
+    }
     /// Sticky edges: clips touching a clip that changes length move with it, closing or opening up
     /// the space instead of leaving a gap or overlapping.
     @Published var sticky = UserDefaults.standard.bool(forKey: "stickyEdges") {
@@ -358,7 +375,12 @@ final class EditorModel: ObservableObject {
             }
         }
         clock.update(time: playhead, fps: project.fps)
-        meters.update(project: project, media: media, time: playhead, playing: isPlaying)
+        // While scrubbing with sound, the meters show what's being heard.
+        if !isPlaying, let s = lastScrubSound, CACurrentMediaTime() - s.at < AudioScrubber.snippet + 0.05 {
+            meters.update(project: project, media: media, time: s.time, playing: true)
+        } else {
+            meters.update(project: project, media: media, time: playhead, playing: isPlaying)
+        }
         for handler in tickHandlers { handler() }
     }
 
@@ -394,6 +416,7 @@ final class EditorModel: ObservableObject {
         guard time != skimTime else { return }
         skimTime = time
         engine.seek(to: time)
+        scrubSound(at: time)
     }
 
     func play() {
