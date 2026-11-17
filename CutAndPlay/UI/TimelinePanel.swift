@@ -138,7 +138,8 @@ private struct RangeThumb: View {
     private func grip(_ part: Int) -> some View {
         Circle()
             .fill(Theme.bg)
-            .overlay(Circle().strokeBorder(hot == part ? Theme.accent : Color.white.opacity(0.75), lineWidth: 2))
+            // The grips work as a pair, so they light up as a pair.
+            .overlay(Circle().strokeBorder(hot == 0 || hot == 2 ? Color.white : Color.white.opacity(0.6), lineWidth: 2))
             .frame(width: RangeBarStyle.handle, height: RangeBarStyle.handle)
     }
 }
@@ -153,7 +154,38 @@ private final class BarDrag {
     var rowHeight: CGFloat = 0
     var length: CGFloat = 0
     var content: CGFloat = 0
-    var center: CGFloat = 0
+    var start: CGFloat = 0
+    var mirror: CGFloat = 1
+}
+
+/// Where a thumb's two edges end up when one grip is dragged. The dragged edge follows the mouse
+/// exactly; the other edge mirrors it. An edge already at the end of the bar stays there, so the
+/// other edge alone carries the change, and a grip at the end can't be pulled further out.
+/// `move` is the mouse travel along the bar since the drag began; lengths are in bar points.
+/// `mirror` is how far the other edge travels for each point the dragged one does: 1 keeps the
+/// middle of the thumb fixed, 0 keeps the other edge fixed.
+func gripDrag(part: Int, start a0: CGFloat, end b0: CGFloat, move: CGFloat, bar: CGFloat,
+              minLength: CGFloat, maxLength: CGFloat, mirror: CGFloat = 1) -> (start: CGFloat, end: CGFloat) {
+    // Positive `grow` pulls the dragged grip outward.
+    var grow = part == 2 ? move : -move
+    grow = min(grow, part == 2 ? bar - b0 : a0)
+    func edges(_ g: CGFloat) -> (start: CGFloat, end: CGFloat) {
+        part == 2 ? (max(0, a0 - g * mirror), b0 + g) : (a0 - g, min(bar, b0 + g * mirror))
+    }
+    func fits(_ g: CGFloat) -> Bool {
+        let e = edges(g)
+        return e.end - e.start >= minLength - 0.0001 && e.end - e.start <= maxLength + 0.0001
+    }
+    if !fits(grow) {
+        // Length only ever increases with `grow`, so close in on the limit from the starting size.
+        var ok: CGFloat = 0, bad = grow
+        for _ in 0..<40 {
+            let mid = (ok + bad) / 2
+            if fits(mid) { ok = mid } else { bad = mid }
+        }
+        grow = ok
+    }
+    return edges(grow)
 }
 
 private func barPart(at p: CGFloat, thumb: CGFloat, length: CGFloat) -> Int? {
@@ -208,6 +240,14 @@ struct ZoomScrollBar: View {
                             }
                             d.pps = view.pps
                             d.scrollX = view.scrollX
+                            // Zoom around the playhead: the far edge moves just enough to hold the playhead
+                            // where it is on screen. With the playhead at the far edge that edge doesn't move
+                            // at all; with it in the middle both edges move equally. If the playhead is off
+                            // screen, or nearer the grip being dragged, fall back to the middle of the view.
+                            let t = (CGFloat(model.playhead) * view.pps - view.scrollX) / max(1, view.viewWidth)
+                            if d.part == 2, t >= 0, t <= 0.5 { d.mirror = t / (1 - t) }
+                            else if d.part == 0, t >= 0.5, t <= 1 { d.mirror = (1 - t) / t }
+                            else { d.mirror = 1 }
                             drag = d
                             hot = d.part
                         }
@@ -215,11 +255,13 @@ struct ZoomScrollBar: View {
                         if d.part == 1 {
                             model.setView(scrollX: d.scrollX + dx / w * extent * d.pps)
                         } else {
-                            // Either grip grows or shrinks the visible span from both ends.
-                            let span0 = view.viewWidth / d.pps
-                            let grow = (d.part == 2 ? dx : -dx) / w * extent * 2
-                            let span = max(view.viewWidth / TimelineViewState.maxPPS, min(extent, span0 + grow))
-                            model.setZoom(view.viewWidth / span)
+                            // The grip stays under the mouse and the other end mirrors it.
+                            let a0 = d.scrollX / d.pps / extent * w
+                            let e = gripDrag(part: d.part, start: a0, end: a0 + view.viewWidth / d.pps / extent * w, move: dx, bar: w,
+                                             minLength: view.viewWidth / TimelineViewState.maxPPS / extent * w, maxLength: w,
+                                             mirror: d.mirror)
+                            let pps = view.viewWidth / ((e.end - e.start) / w * extent)
+                            model.setView(pps: pps, scrollX: e.start / w * extent * pps)
                         }
                     }
                     .onEnded { _ in
@@ -276,10 +318,9 @@ struct RowScaleBar: View {
                             }
                             d.scrollY = view.scrollY
                             d.rowHeight = view.rowHeight
-                            d.length = len
+                            d.length = model.rowWindow * h
                             d.content = world
-                            // What's at the middle of the view, measured from the video/audio gap.
-                            d.center = view.scrollY + model.rowsVisible / 2 - model.rowsAbove
+                            d.start = (view.scrollY - model.minScrollY) / world * h
                             drag = d
                             hot = d.part
                         }
@@ -287,13 +328,21 @@ struct RowScaleBar: View {
                         if d.part == 1 {
                             model.setView(scrollY: d.scrollY + dy / h * d.content)
                         } else {
-                            // A shorter thumb means taller rows. Both ends move together.
-                            let grow = (d.part == 2 ? dy : -dy) * 2
-                            let newLen = max(minLen, min(h, d.length + grow))
-                            model.setView(rowHeight: d.rowHeight * d.length / newLen)
-                            // Keep the same part of the timeline centred while the rows scale.
-                            let scaled = d.center * view.rowHeight / d.rowHeight
-                            model.setView(scrollY: scaled + model.rowsAbove - model.rowsVisible / 2)
+                            // A shorter thumb means taller rows. The grip stays under the mouse and the other end mirrors it.
+                            let rows = TimelineViewState.rowRange
+                            let e = gripDrag(part: d.part, start: d.start, end: d.start + d.length, move: dy, bar: h,
+                                             minLength: model.rowWindow(rowHeight: rows.upperBound) * h,
+                                             maxLength: model.rowWindow(rowHeight: rows.lowerBound) * h)
+                            // Rows are whole points tall, so take the height whose thumb is closest to the one asked for.
+                            var best = view.rowHeight, miss = CGFloat.infinity
+                            for r in stride(from: rows.lowerBound, through: rows.upperBound, by: 1) {
+                                let off = abs(model.rowWindow(rowHeight: r) * h - (e.end - e.start))
+                                if off < miss { miss = off; best = r }
+                            }
+                            model.setView(rowHeight: best)
+                            let actual = model.rowWindow * h
+                            let top = d.part == 2 ? e.end - actual : e.start
+                            model.setView(scrollY: model.minScrollY + top / h * model.rowsWorld)
                         }
                     }
                     .onEnded { _ in

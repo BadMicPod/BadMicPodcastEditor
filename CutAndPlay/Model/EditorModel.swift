@@ -299,6 +299,15 @@ final class EditorModel: ObservableObject {
     /// Fraction of the vertical bar the thumb covers.
     var rowWindow: CGFloat { rowsVisible / rowsWorld }
 
+    /// The same fraction as it would be at another row height.
+    func rowWindow(rowHeight r: CGFloat) -> CGFloat {
+        let tracks = CGFloat(project.videoTracks.count + project.audioTracks.count)
+        let above = TimelineLayout.zone + CGFloat(project.videoTracks.count) * (r + TimelineLayout.gap) + TimelineLayout.divider / 2
+        let content = TimelineLayout.fixedHeight + tracks * (r + TimelineLayout.gap)
+        let zoomed = rowsVisible * r / TimelineViewState.rowRange.lowerBound
+        return rowsVisible / max(rowsVisible, zoomed, 2 * above, 2 * (content - above))
+    }
+
     /// `scrollY` is how far the top of the tracks is above the top of the view; it goes negative
     /// when the tracks sit lower than the top.
     var minScrollY: CGFloat { rowsAbove - rowsWorld / 2 }

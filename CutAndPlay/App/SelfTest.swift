@@ -168,6 +168,30 @@ enum SelfTest {
                 pass = pass && good
             }
             check("initial")
+            // Bar grips: the dragged edge tracks the mouse, the other mirrors it, and an edge at the end stays put.
+            func grip(_ part: Int, _ a: CGFloat, _ b: CGFloat, _ move: CGFloat, _ wantA: CGFloat, _ wantB: CGFloat, _ label: String) {
+                let e = gripDrag(part: part, start: a, end: b, move: move, bar: 400, minLength: 20, maxLength: 400)
+                let good = abs(e.start - wantA) < 0.01 && abs(e.end - wantB) < 0.01
+                if !good { log("GRIP FAIL \(label): \(e.start) \(e.end)") }
+                pass = pass && good
+            }
+            grip(2, 100, 200, 30, 70, 230, "end grip, both free")
+            grip(0, 100, 200, -30, 70, 230, "start grip, both free")
+            grip(2, 0, 200, 30, 0, 230, "end grip, start at end of bar")
+            grip(0, 150, 400, -30, 120, 400, "start grip, end at end of bar")
+            grip(0, 0, 200, -30, 0, 200, "start grip already at end, pulled out")
+            grip(2, 150, 400, 30, 150, 400, "end grip already at end, pulled out")
+            grip(0, 0, 200, 30, 30, 170, "start grip at end, pushed in")
+            grip(2, 100, 200, 500, 0, 400, "end grip past the bar")
+            grip(2, 100, 200, -500, 140, 160, "end grip squeezed to minimum")
+            // Playhead at the start edge: only the dragged end moves.
+            let held = gripDrag(part: 2, start: 0, end: 200, move: -60, bar: 400, minLength: 20, maxLength: 400, mirror: 0)
+            // Playhead a quarter of the way in: the far edge moves a third as much, so the playhead holds its place.
+            let quarter = gripDrag(part: 2, start: 100, end: 200, move: -30, bar: 400, minLength: 20, maxLength: 400, mirror: 1.0 / 3)
+            let anchored = held.start == 0 && abs(held.end - 140) < 0.01 && abs(quarter.start - 110) < 0.01 && abs(quarter.end - 170) < 0.01
+                && abs((125 - quarter.start) / (quarter.end - quarter.start) - 0.25) < 0.001
+            if !anchored { log("GRIP FAIL playhead anchor") }
+            pass = pass && anchored
             m.setView(pps: 0.0001); check("zoom out past limit")
             let fullyOut = m.view.pps
             m.setView(pps: 0.0001); pass = pass && m.view.pps == fullyOut
