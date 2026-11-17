@@ -690,7 +690,7 @@ private struct ParamRow: View {
 }
 
 /// Dropdown showing the current fade shape as a small drawing.
-private struct CurveMenu: View {
+struct CurveMenu: View {
     let selection: FadeCurve
     let rising: Bool
     let active: Bool
@@ -698,18 +698,7 @@ private struct CurveMenu: View {
     @State private var hovering = false
 
     var body: some View {
-        Menu {
-            ForEach(FadeCurve.allCases, id: \.self) { curve in
-                // A toggle so the current one gets the menu's checkmark; the drawing shows the shape.
-                Toggle(isOn: Binding(get: { curve == selection }, set: { _ in onPick(curve) })) {
-                    Label {
-                        Text(curve.label)
-                    } icon: {
-                        Image(nsImage: Self.glyph(curve, rising: rising))
-                    }
-                }
-            }
-        } label: {
+        Button(action: openMenu) {
             HStack(spacing: 5) {
                 CurveGlyph(curve: selection, rising: rising, color: active ? Theme.accent : Theme.textDim)
                     .frame(width: 20, height: 12)
@@ -721,16 +710,40 @@ private struct CurveMenu: View {
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hovering ? Theme.hover : Theme.field))
             .contentShape(Rectangle())
         }
-        .menuStyle(.button)
         .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
         .onHover { hovering = $0 }
         .help(selection.label)
     }
 
+    /// A native menu, so each item can show its curve beside the name; the current one is ticked
+    /// and opens under the mouse, like a pop-up button.
+    private func openMenu() {
+        let (menu, current) = Self.menu(selection: selection, rising: rising, onPick: onPick)
+        menu.popUp(positioning: current, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    static func menu(selection: FadeCurve, rising: Bool, onPick: @escaping (FadeCurve) -> Void) -> (NSMenu, NSMenuItem?) {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        var current: NSMenuItem?
+        for curve in FadeCurve.allCases {
+            let item = ActionItem(curve.label, checked: curve == selection) { onPick(curve) }
+            // Drawn into the title rather than set as the item's image: macOS can be set to hide menu
+            // item icons, but the title always shows.
+            let attachment = NSTextAttachment()
+            attachment.image = glyph(curve, rising: rising, color: .labelColor)
+            attachment.bounds = CGRect(x: 0, y: -2, width: 22, height: 13)
+            let title = NSMutableAttributedString(attachment: attachment)
+            title.append(NSAttributedString(string: "   " + curve.label, attributes: [.font: NSFont.menuFont(ofSize: 0)]))
+            item.attributedTitle = title
+            if curve == selection { current = item }
+            menu.addItem(item)
+        }
+        return (menu, current)
+    }
+
     /// The curve drawn as a small template image, for the menu items.
-    static func glyph(_ curve: FadeCurve, rising: Bool) -> NSImage {
+    static func glyph(_ curve: FadeCurve, rising: Bool, color: NSColor? = nil) -> NSImage {
         let size = NSSize(width: 22, height: 13)
         let image = NSImage(size: size, flipped: false) { r in
             let path = NSBezierPath()
@@ -743,11 +756,11 @@ private struct CurveMenu: View {
             path.lineWidth = 1.5
             path.lineCapStyle = .round
             path.lineJoinStyle = .round
-            NSColor.black.setStroke()
+            (color ?? .black).setStroke()
             path.stroke()
             return true
         }
-        image.isTemplate = true
+        image.isTemplate = color == nil
         return image
     }
 }

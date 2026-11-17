@@ -137,6 +137,11 @@ final class EditorModel: ObservableObject {
                 }
                 if args.contains("--show-export") { self.showExport = true }
                 if args.contains("--play") { self.play() }
+                if args.contains("--curve-menu") {
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    let (menu, current) = CurveMenu.menu(selection: .easeIn, rising: true) { _ in }
+                    menu.popUp(positioning: current, at: NSPoint(x: 400, y: 600), in: nil)
+                }
                 // `--queue-exports <dir>`: queues a 4K HEVC and a WAV export, for checking the queue.
                 if let k = args.firstIndex(of: "--queue-exports"), args.count > k + 1 {
                     let dir = URL(fileURLWithPath: args[k + 1])
