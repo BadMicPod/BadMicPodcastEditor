@@ -27,7 +27,7 @@ struct LibraryView: View {
                 Spacer()
                 AddButton(model: model, symbol: "textformat", payload: .text, help: "Text: click to add at the playhead, or drag to the timeline")
                 AddButton(model: model, symbol: "solid", payload: .solid, help: "Solid: click to add at the playhead, or drag to the timeline")
-                IconButton(symbol: "square.and.arrow.down", size: 26, help: "Import Media (⌘I)") { model.showImportPanel() }
+                IconButton(symbol: "square.and.arrow.down", size: 26, help: "Import Media (⌘I)", nudge: -1.5) { model.showImportPanel() }
             }
             .padding(.leading, 14)
             .padding(.trailing, 8)

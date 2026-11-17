@@ -83,6 +83,8 @@ struct IconButton: View {
     var active = false
     var size: CGFloat = 28
     var help = ""
+    /// Shifts the glyph up (negative) or down to centre symbols whose weight sits off-centre.
+    var nudge: CGFloat = 0
     let action: () -> Void
     @State private var hovering = false
     @Environment(\.isEnabled) private var enabled
@@ -92,6 +94,7 @@ struct IconButton: View {
             Image(systemName: symbol)
                 .font(.system(size: size * 0.46, weight: .medium))
                 .foregroundStyle(active ? Theme.accent : (hovering ? Theme.text : Theme.textDim))
+                .offset(y: nudge)
                 .frame(width: size, height: size)
                 .background(
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
