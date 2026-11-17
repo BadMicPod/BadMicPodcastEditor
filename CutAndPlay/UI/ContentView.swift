@@ -136,6 +136,7 @@ enum KeyCommands {
             case "l": model.loop.toggle()
             case "f": model.toggleViewerFullScreen()
             case "r": model.sticky.toggle()
+            case "k": model.skimming.toggle()
             case "z" where shift, "\\": model.zoomToFit()
             case "=", "+": model.zoom(by: 1.4)
             case "-": model.zoom(by: 1 / 1.4)

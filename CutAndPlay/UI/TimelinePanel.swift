@@ -42,6 +42,8 @@ struct TimelineToolbar: View {
             divider
             SnapButton(active: model.snapping) { model.snapping.toggle() }
             StickyButton(active: model.sticky) { model.sticky.toggle() }
+            IconButton(symbol: "rectangle.and.hand.point.up.left", active: model.skimming,
+                       help: "Skimming (K): hover the timeline to preview frames") { model.skimming.toggle() }
             divider
             IconButton(symbol: "square.split.2x1", help: "Split at Playhead (⌘K)") { model.splitAtPlayhead() }
             IconButton(symbol: "trash", help: "Delete (⌫)") { model.deleteSelection() }

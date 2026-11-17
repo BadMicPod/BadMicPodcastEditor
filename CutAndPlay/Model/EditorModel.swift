@@ -53,6 +53,15 @@ final class EditorModel: ObservableObject {
     @Published var selection: Set<UUID> = []
     @Published var tool: Tool = .move
     @Published var snapping = true
+    /// Skimming: hovering over the timeline shows that frame in the viewer without moving the playhead.
+    @Published var skimming = UserDefaults.standard.object(forKey: "skimming") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(skimming, forKey: "skimming")
+            if !skimming { skim(to: nil) }
+        }
+    }
+    /// Where the viewer is skimmed to, if anywhere.
+    private(set) var skimTime: Double?
     /// Sticky edges: clips touching a clip that changes length move with it, closing or opening up
     /// the space instead of leaving a gap or overlapping.
     @Published var sticky = UserDefaults.standard.bool(forKey: "stickyEdges") {
@@ -353,7 +362,24 @@ final class EditorModel: ObservableObject {
         isPlaying ? pause() : play()
     }
 
+    /// Shows the frame at a time without moving the playhead; nil goes back to the playhead's frame.
+    func skim(to t: Double?) {
+        guard let t else {
+            if skimTime != nil {
+                skimTime = nil
+                if !isPlaying { engine.seek(to: playhead) }
+            }
+            return
+        }
+        guard skimming, !isPlaying else { return }
+        let time = min(max(0, project.snapFrame(t)), project.duration)
+        guard time != skimTime else { return }
+        skimTime = time
+        engine.seek(to: time)
+    }
+
     func play() {
+        skimTime = nil
         guard project.duration > 0 else { return }
         rebuildNow()
         guard !engine.isEmpty else { return }
@@ -374,6 +400,7 @@ final class EditorModel: ObservableObject {
     }
 
     func seek(to time: Double) {
+        skimTime = nil
         if isPlaying {
             engine.pause()
             isPlaying = false

@@ -270,9 +270,17 @@ final class TimelineCanvas: NSView {
     override func mouseMoved(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
         updateHover(at: p)
+        if model.skimming, !model.isPlaying {
+            model.skim(to: time(atX: p.x))
+            needsDisplay = true
+        }
     }
 
     override func mouseExited(with event: NSEvent) {
+        if model.skimTime != nil {
+            model.skim(to: nil)
+            needsDisplay = true
+        }
         if hover != nil || cutHover != nil {
             hover = nil
             cutHover = nil
@@ -325,6 +333,7 @@ final class TimelineCanvas: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        model.skim(to: nil)
         window?.makeFirstResponder(self)
         let p = convert(event.locationInWindow, from: nil)
         lastDragPoint = p
@@ -919,6 +928,14 @@ final class TimelineCanvas: NSView {
         }
         for c in ghosts {
             drawClip(c, ctx: ctx, alpha: 0.55)
+        }
+
+        // Skim line: where the viewer is showing, while the playhead stays put.
+        if let t = model.skimTime {
+            let sx = x(t)
+            ctx.setFillColor(NSColor(white: 1, alpha: 0.55).cgColor)
+            ctx.fill(CGRect(x: sx - 0.5, y: TimelineLayout.ruler, width: 1, height: bounds.height - TimelineLayout.ruler))
+            ctx.fill(CGRect(x: sx - 3, y: TimelineLayout.ruler - 6, width: 6, height: 6))
         }
 
         // Cut preview
