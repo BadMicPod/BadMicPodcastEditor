@@ -12,6 +12,15 @@ final class MediaRuntime {
     var audioRange = CMTimeRange.zero
     var orientation = CGImagePropertyOrientation.up
     var generator: AVAssetImageGenerator?
+    /// Frames for hover-scrubbing a library tile: closer to the asked-for time than the filmstrip's.
+    lazy var scrubGenerator: AVAssetImageGenerator = {
+        let gen = AVAssetImageGenerator(asset: asset)
+        gen.appliesPreferredTrackTransform = true
+        gen.maximumSize = CGSize(width: 400, height: 240)
+        gen.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 10)
+        gen.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 10)
+        return gen
+    }()
 
     init(asset: AVURLAsset) { self.asset = asset }
 }
@@ -239,6 +248,27 @@ final class MediaStore: ObservableObject {
             }
         }
         return nil
+    }
+
+    private var scrubFrames: [ThumbKey: CGImage] = [:]
+
+    /// A frame for hover-scrubbing a library tile. Cached frames come back at once; otherwise any
+    /// earlier request still in flight is dropped, so the frame keeps up with the mouse.
+    func scrubFrame(asset id: UUID, time: Double, completion: @escaping (CGImage) -> Void) {
+        let key = ThumbKey(asset: id, ms: Int((time * 1000).rounded()))
+        if let img = scrubFrames[key] { return completion(img) }
+        guard let rt = runtimes[id], rt.videoTrack != nil else { return }
+        let gen = rt.scrubGenerator
+        gen.cancelAllCGImageGeneration()
+        gen.generateCGImageAsynchronously(for: CMTime(seconds: time, preferredTimescale: 600)) { [weak self] cg, _, _ in
+            guard let cg else { return }
+            Task { @MainActor in
+                guard let self else { return }
+                if self.scrubFrames.count > 600 { self.scrubFrames.removeAll() }
+                self.scrubFrames[key] = cg
+                completion(cg)
+            }
+        }
     }
 
     // MARK: Waveforms

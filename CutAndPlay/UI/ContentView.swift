@@ -5,6 +5,7 @@ struct ContentView: View {
     @ObservedObject var model: EditorModel
     @State private var libraryWidth: CGFloat = 252
     @State private var timelineHeight: CGFloat = 360
+    @State private var dropTargeted = false
 
     var body: some View {
         GeometryReader { geo in
@@ -29,6 +30,28 @@ struct ContentView: View {
             }
         }
         .background(Theme.bg)
+        // Files dropped anywhere the timeline or library doesn't handle them are imported.
+        .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
+            loadURLs(providers) { model.handleOpen($0) }
+            return true
+        }
+        .overlay {
+            if dropTargeted {
+                ZStack {
+                    Theme.accent.opacity(0.06)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Theme.accent, lineWidth: 2)
+                        .padding(6)
+                    Text("Drop to import")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                        .padding(.horizontal, 14)
+                        .frame(height: 32)
+                        .background(Capsule().fill(Theme.raised))
+                }
+                .allowsHitTesting(false)
+            }
+        }
         .preferredColorScheme(.dark)
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -57,7 +80,10 @@ struct ContentView: View {
         } message: {
             Text(model.importError ?? "")
         }
-        .onAppear { KeyCommands.install(model) }
+        .onAppear {
+            KeyCommands.install(model)
+            AppDelegate.shared?.model = model
+        }
     }
 }
 

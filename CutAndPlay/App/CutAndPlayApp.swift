@@ -1,7 +1,38 @@
 import SwiftUI
 
+/// Receives files dropped on the Dock icon or opened with the app from Finder. They can arrive
+/// before the editor exists, so they wait until it does.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    static weak var shared: AppDelegate?
+    private var pending: [URL] = []
+
+    @MainActor weak var model: EditorModel? {
+        didSet { flush() }
+    }
+
+    override init() {
+        super.init()
+        AppDelegate.shared = self
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        MainActor.assumeIsolated {
+            pending += urls
+            flush()
+        }
+    }
+
+    @MainActor private func flush() {
+        guard let model, !pending.isEmpty else { return }
+        let urls = pending
+        pending = []
+        model.handleOpen(urls)
+    }
+}
+
 @main
 struct CutAndPlayApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = EditorModel()
 
     init() {

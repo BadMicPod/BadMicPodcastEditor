@@ -604,6 +604,17 @@ final class EditorModel: ObservableObject {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
+    /// Files handed to the app from outside: a project opens, anything else is imported.
+    func handleOpen(_ urls: [URL]) {
+        if let project = urls.first(where: { $0.pathExtension.lowercased() == "cutplay" }) {
+            guard confirmDiscard() else { return }
+            open(url: project)
+        }
+        let media = urls.filter { $0.pathExtension.lowercased() != "cutplay" }
+        if !media.isEmpty { importFiles(media) }
+        NSApp.activate()
+    }
+
     func newProject() {
         guard confirmDiscard() else { return }
         load(Project(), url: nil)
