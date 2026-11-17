@@ -20,29 +20,34 @@ final class MeterState: ObservableObject {
     static let floor = -60.0
 
     @Published private(set) var tracks: [UUID: MeterReading] = [:]
+    /// The output, as one reading (the louder side) and per side.
     @Published private(set) var master = MeterReading()
+    @Published private(set) var masterLeft = MeterReading()
+    @Published private(set) var masterRight = MeterReading()
 
     /// How far the level may drop per display frame.
     private let release = 0.9
     /// How long a peak holds before it starts to fall, and how fast it falls after.
     private let peakHold = 1.2
     private let peakFall = 0.45
-    private var holdUntil: [UUID?: Double] = [:]
+    private var holdUntil: [String: Double] = [:]
 
     func resetClip(_ track: UUID?) {
         if let track {
             tracks[track]?.clipped = false
         } else {
             master.clipped = false
+            masterLeft.clipped = false
+            masterRight.clipped = false
         }
     }
 
     func update(project: Project, media: MediaStore, time t: Double, playing: Bool) {
         let now = CACurrentMediaTime()
         var next: [UUID: MeterReading] = [:]
-        var power = 0.0
+        var power = 0.0, powerL = 0.0, powerR = 0.0
         for track in project.audioTracks {
-            var level = 0.0
+            var level = 0.0, levelL = 0.0, levelR = 0.0
             if playing, project.isAudible(track) {
                 for c in project.clips where c.trackID == track.id && c.kind == .audio && t >= c.start && t < c.end {
                     guard let id = c.assetID, let wf = media.waveforms[id], !wf.peaks.isEmpty else { continue }
@@ -51,16 +56,33 @@ final class MeterState: ObservableObject {
                     let hi = min(wf.peaks.count - 1, Int(src * wf.peaksPerSecond))
                     let lo = max(0, Int((src - 0.03 * c.speed) * wf.peaksPerSecond))
                     guard hi >= lo else { continue }
-                    var peak: Float = 0
-                    for i in lo...hi { peak = max(peak, wf.peaks[i]) }
-                    level = max(level, Double(peak) * dbToLinear(c.gainDB) * c.fadeGain(at: t))
+                    var peak: Float = 0, pl: Float = 0, pr: Float = 0
+                    for i in lo...hi {
+                        peak = max(peak, wf.peaks[i])
+                        if i < wf.left.count { pl = max(pl, wf.left[i]) }
+                        if i < wf.right.count { pr = max(pr, wf.right[i]) }
+                    }
+                    let g = dbToLinear(c.gainDB) * c.fadeGain(at: t)
+                    level = max(level, Double(peak) * g)
+                    levelL = max(levelL, Double(pl) * g)
+                    levelR = max(levelR, Double(pr) * g)
                 }
-                level *= dbToLinear(track.gainDB)
+                let tg = dbToLinear(track.gainDB)
+                level *= tg
+                levelL *= tg
+                levelR *= tg
             }
             power += level * level
-            next[track.id] = advance(tracks[track.id] ?? MeterReading(), reading: Self.db(level), key: track.id, now: now)
+            powerL += levelL * levelL
+            powerR += levelR * levelR
+            next[track.id] = advance(tracks[track.id] ?? MeterReading(), reading: Self.db(level), key: track.id.uuidString, now: now)
         }
-        let out = advance(master, reading: power > 0 ? 10 * log10(power) : Self.floor, key: nil, now: now)
+        func sum(_ p: Double) -> Double { p > 0 ? 10 * log10(p) : Self.floor }
+        let out = advance(master, reading: sum(power), key: "master", now: now)
+        let outL = advance(masterLeft, reading: sum(powerL), key: "L", now: now)
+        let outR = advance(masterRight, reading: sum(powerR), key: "R", now: now)
+        if outL.differs(from: masterLeft) { masterLeft = outL }
+        if outR.differs(from: masterRight) { masterRight = outR }
         // Skip publishing tiny changes so idle meters don't redraw every frame.
         if next.count != tracks.count || next.contains(where: { $0.value.differs(from: tracks[$0.key] ?? MeterReading()) }) {
             tracks = next
@@ -68,7 +90,7 @@ final class MeterState: ObservableObject {
         if out.differs(from: master) { master = out }
     }
 
-    private func advance(_ old: MeterReading, reading: Double, key: UUID?, now: Double) -> MeterReading {
+    private func advance(_ old: MeterReading, reading: Double, key: String, now: Double) -> MeterReading {
         var r = old
         r.level = max(reading, max(Self.floor, old.level - release))
         if reading >= old.peak {

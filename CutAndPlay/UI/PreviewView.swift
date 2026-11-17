@@ -172,17 +172,23 @@ struct TransportBar: View {
     var body: some View {
         let fps = model.project.fps
         ZStack {
-            HStack(spacing: 8) {
-                TimecodeField(time: Double(clock.frame) / fps, fps: fps) { model.seek(to: $0) }
-                Text("/ " + Timecode.string(model.project.duration, fps: fps))
-                    .font(Theme.mono(11))
-                    .foregroundStyle(Theme.textFaint)
+            HStack(alignment: .center, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    TimecodeField(time: Double(clock.frame) / fps, fps: fps) { model.seek(to: $0) }
+                    Text("/ " + Timecode.string(model.project.duration, fps: fps))
+                        .font(Theme.mono(11, .regular))
+                        .foregroundStyle(Theme.textFaint)
+                }
                 Spacer()
                 IconButton(symbol: "repeat", active: model.loop, size: 28, help: "Loop Playback (L)") { model.loop.toggle() }
-                LevelMeter(meters: meters)
-                    .frame(width: 6, height: 24)
-                    .padding(.horizontal, 6)
-                    .help("Output level")
+                // Output level, left and right.
+                HStack(spacing: 2) {
+                    LevelMeter(meters: meters, side: .left).frame(width: 4)
+                    LevelMeter(meters: meters, side: .right).frame(width: 4)
+                }
+                .frame(height: 24)
+                .padding(.horizontal, 4)
+                .help("Output level, left and right")
                 Menu {
                     ForEach(Self.zooms, id: \.0) { item in
                         Button(item.0) { zoom = item.1 }
@@ -209,17 +215,17 @@ struct TransportBar: View {
                     model.toggleViewerFullScreen()
                 }
             }
-            HStack(spacing: 2) {
-                IconButton(symbol: "backward.end.fill", size: 30, help: "Previous Edit (↑)") { model.jumpToEdit(forward: false) }
-                IconButton(symbol: "backward.frame.fill", size: 30, help: "Back One Frame (←)") { model.step(frames: -1) }
+            HStack(alignment: .center, spacing: 4) {
+                IconButton(symbol: "backward.end.fill", size: 32, help: "Previous Edit (↑)") { model.jumpToEdit(forward: false) }
+                IconButton(symbol: "backward.frame.fill", size: 32, help: "Back One Frame (←)") { model.step(frames: -1) }
                 PlayButton(playing: model.isPlaying) { model.togglePlay() }
-                    .padding(.horizontal, 6)
-                IconButton(symbol: "forward.frame.fill", size: 30, help: "Forward One Frame (→)") { model.step(frames: 1) }
-                IconButton(symbol: "forward.end.fill", size: 30, help: "Next Edit (↓)") { model.jumpToEdit(forward: true) }
+                    .padding(.horizontal, 10)
+                IconButton(symbol: "forward.frame.fill", size: 32, help: "Forward One Frame (→)") { model.step(frames: 1) }
+                IconButton(symbol: "forward.end.fill", size: 32, help: "Next Edit (↓)") { model.jumpToEdit(forward: true) }
             }
         }
         .padding(.horizontal, 18)
-        .frame(height: 48)
+        .frame(height: 68)
     }
 }
 
@@ -248,9 +254,10 @@ private struct TimecodeField: View {
                 Text(Timecode.string(time, fps: fps))
             }
         }
-        .font(Theme.mono(19, .medium))
+        .font(Theme.mono(20, .medium))
+        .kerning(0.4)
         .foregroundStyle(Theme.text)
-        .frame(width: 150, alignment: .leading)
+        .fixedSize()
         .padding(.horizontal, 7)
         .frame(height: 26)
         .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(editing || hovering ? Theme.field : .clear))
@@ -281,11 +288,14 @@ private struct PlayButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: playing ? "pause.fill" : "play.fill")
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(Color.black.opacity(0.88))
-                .offset(x: playing ? 0 : 1)
-                .frame(width: 36, height: 36)
-                .background(Circle().fill(hovering ? Color.white : Color.white.opacity(0.9)))
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(Color(hex: 0x0A0A0A))
+                .offset(x: playing ? 0 : 1.5)
+                .frame(width: 46, height: 46)
+                .background(Circle().fill(hovering ? Color.white : Theme.text))
+                // A dark ring sets it off from the bar, like a physical key.
+                .padding(5)
+                .background(Circle().fill(Color(hex: 0x161616)))
                 .scaleEffect(hovering ? 1.05 : 1)
                 .animation(.easeOut(duration: 0.12), value: hovering)
                 .contentShape(Circle())

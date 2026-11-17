@@ -27,7 +27,11 @@ final class MediaRuntime {
 
 struct Waveform {
     let peaksPerSecond: Double
+    /// Loudest of all channels, for drawing.
     let peaks: [Float]
+    /// The first two channels on their own, for left and right meters (the same for mono).
+    let left: [Float]
+    let right: [Float]
 }
 
 struct ThumbKey: Hashable {
@@ -307,6 +311,8 @@ enum WaveformReader {
         guard reader.startReading() else { return nil }
 
         var peaks: [Float] = []
+        var left: [Float] = [], right: [Float] = []
+        var bucketL: Int32 = 0, bucketR: Int32 = 0
         var bucketPeak: Int32 = 0
         var bucketFill = 0.0
         var framesPerBucket = 0.0
@@ -333,10 +339,16 @@ enum WaveformReader {
                         if v > m { m = v }
                     }
                     if m > bucketPeak { bucketPeak = m }
+                    bucketL = max(bucketL, abs(Int32(buf[i])))
+                    bucketR = max(bucketR, abs(Int32(buf[i + min(1, channels - 1)])))
                     bucketFill += 1
                     if bucketFill >= framesPerBucket {
                         peaks.append(Float(bucketPeak) / 32768)
+                        left.append(Float(bucketL) / 32768)
+                        right.append(Float(bucketR) / 32768)
                         bucketPeak = 0
+                        bucketL = 0
+                        bucketR = 0
                         bucketFill -= framesPerBucket
                     }
                     i += channels
@@ -344,7 +356,7 @@ enum WaveformReader {
             }
         }
         guard !peaks.isEmpty else { return nil }
-        return Waveform(peaksPerSecond: peaksPerSecond, peaks: peaks)
+        return Waveform(peaksPerSecond: peaksPerSecond, peaks: peaks, left: left, right: right)
     }
 }
 
