@@ -632,7 +632,12 @@ final class TimelineCanvas: NSView {
     }
 
     private func updateTrim(grabbed: Clip, left: Bool, startTime: Double, originals: [Clip], p: CGPoint) {
-        if model.sticky { return updateStickyTrim(grabbed: grabbed, left: left, startTime: startTime, originals: originals, p: p) }
+        // Sticky keeps touching clips together. A left edge with nothing against it (no clip touching
+        // it on its track, for the clip or its linked audio, and not at the very start) has nothing
+        // to stay attached to, so it trims freely.
+        if model.sticky, !left || Self.attachedOnLeft(originals, in: model.project) {
+            return updateStickyTrim(grabbed: grabbed, left: left, startTime: startTime, originals: originals, p: p)
+        }
         let project = model.project
         let ids = Set(originals.map(\.id))
         let edge = left ? grabbed.start : grabbed.end
@@ -669,6 +674,16 @@ final class TimelineCanvas: NSView {
 
     /// Trimming with sticky edges: the clip keeps its start (trimming the head takes content off the
     /// front instead of moving the clip), and everything touching its end follows the new end.
+    static func attachedOnLeft(_ clips: [Clip], in project: Project) -> Bool {
+        let ids = Set(clips.map(\.id))
+        let tolerance = 0.5 / project.fps
+        return clips.contains { c in
+            c.start <= tolerance || project.clips.contains { o in
+                !ids.contains(o.id) && o.trackID == c.trackID && abs(o.end - c.start) <= tolerance
+            }
+        }
+    }
+
     private func updateStickyTrim(grabbed: Clip, left: Bool, startTime: Double, originals: [Clip], p: CGPoint) {
         let project = model.project
         let ids = Set(originals.map(\.id))

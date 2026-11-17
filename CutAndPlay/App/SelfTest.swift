@@ -642,6 +642,19 @@ enum SelfTest {
             log("RANGE \(good ? "OK" : "FAIL") length=\(length) kept=\(kept) opensOld=\(opensOld) snaps=\(snaps)")
             ok = ok && good
         }
+        // Sticky trims: a left edge counts as attached at time zero or against a clip, not in the open.
+        do {
+            var p = Project()
+            p.videoTracks = [Track(kind: .video)]
+            let v = p.videoTracks[0].id
+            let a = Clip(trackID: v, kind: .solid, start: 0, duration: 2)
+            let b = Clip(trackID: v, kind: .solid, start: 2, duration: 2)
+            let free = Clip(trackID: v, kind: .solid, start: 6, duration: 2)
+            p.clips = [a, b, free]
+            let good = TimelineCanvas.attachedOnLeft([a], in: p) && TimelineCanvas.attachedOnLeft([b], in: p) && !TimelineCanvas.attachedOnLeft([free], in: p)
+            log("STICKY EDGE \(good ? "OK" : "FAIL")")
+            ok = ok && good
+        }
         // Export shapes: a vertical 9:16 export is 1080 × 1920, and moving the crop changes what's kept.
         do {
             var settings = ExportSettings()
