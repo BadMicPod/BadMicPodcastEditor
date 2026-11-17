@@ -31,14 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         NotificationCenter.default.addObserver(forName: NSMenu.didAddItemNotification, object: nil, queue: .main) { note in
-            // Tidied once SwiftUI has finished updating the menu, never in the middle of it.
-            guard let menu = note.object as? NSMenu else { return }
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard menu.supermenu === NSApp.mainMenu else { return }
-                    MenuCleanup.removeExtras(in: menu)
-                }
-            }
+            // Tidied once SwiftUI has finished updating the menus, never in the middle of it.
+            MainActor.assumeIsolated { MenuCleanup.scheduleTidy() }
         }
     }
 
@@ -65,6 +59,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// any language, then tidies the separators they leave behind.
 @MainActor
 enum MenuCleanup {
+    private static var tidyPending = false
+
+    /// One tidy of the whole menu bar after the current round of menu changes.
+    static func scheduleTidy() {
+        guard !tidyPending else { return }
+        tidyPending = true
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                tidyPending = false
+                removeExtras()
+            }
+        }
+    }
+
     static func removeExtras() {
         for top in NSApp.mainMenu?.items ?? [] {
             if let menu = top.submenu { removeExtras(in: menu) }
