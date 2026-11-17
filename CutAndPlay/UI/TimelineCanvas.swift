@@ -1310,20 +1310,26 @@ final class TimelineCanvas: NSView {
 
     private func showMarkerPanel(_ id: UUID?) {
         guard let id else {
-            markerPopover?.close()
+            markerPopover?.performClose(nil)
             return
         }
         guard let m = model.project.markers?.first(where: { $0.id == id }), window != nil else { return }
-        if let open = markerPopover, open.isShown {
-            (open.contentViewController as? NSHostingController<MarkerPanel>)?.rootView = MarkerPanel(model: model, id: id)
+        if let open = markerPopover, open.isShown, let host = open.contentViewController as? NSHostingController<MarkerPanel> {
+            host.rootView = MarkerPanel(model: model, id: id)
+            open.contentSize = host.view.fittingSize
             open.positioningRect = markerAnchor(m)
             return
         }
+        let host = NSHostingController(rootView: MarkerPanel(model: model, id: id))
+        // Sized to its content before showing, so it opens right at the flag and doesn't shrink
+        // away from it afterwards.
+        host.sizingOptions = [.preferredContentSize]
         let pop = NSPopover()
-        pop.behavior = .semitransient
+        pop.behavior = .transient
         pop.animates = false
         pop.appearance = NSAppearance(named: .darkAqua)
-        pop.contentViewController = NSHostingController(rootView: MarkerPanel(model: model, id: id))
+        pop.contentViewController = host
+        pop.contentSize = host.view.fittingSize
         pop.delegate = self
         markerPopover = pop
         pop.show(relativeTo: markerAnchor(m), of: self, preferredEdge: .maxY)
@@ -1332,6 +1338,11 @@ final class TimelineCanvas: NSView {
     fileprivate func markerPopoverClosed() {
         markerPopover = nil
         if model.editingMarker != nil { model.editingMarker = nil }
+        // Hand focus back to the editor window, so keys and menus go where they should.
+        if let window, NSApp.isActive {
+            window.makeKey()
+            window.makeFirstResponder(self)
+        }
     }
 
     private func markerAnchor(_ m: Marker) -> CGRect {
@@ -1643,7 +1654,7 @@ struct MarkerPanel: View {
             let all = model.project.markerList
             if all.count > 1 {
                 Rectangle().fill(Theme.stroke).frame(height: 1)
-                ScrollView {
+                ScrollView(showsIndicators: all.count > 7) {
                     VStack(spacing: 2) {
                         ForEach(all) { m in
                             MarkerRow(marker: m, fps: model.project.fps, current: m.id == id) {
@@ -1653,7 +1664,7 @@ struct MarkerPanel: View {
                         }
                     }
                 }
-                .frame(maxHeight: min(CGFloat(all.count) * 28, 196))
+                .frame(height: min(CGFloat(all.count) * 28, 196))
             }
         }
         .padding(14)
