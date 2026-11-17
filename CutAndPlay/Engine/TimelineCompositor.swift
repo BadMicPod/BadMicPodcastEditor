@@ -72,8 +72,15 @@ final class TimelineInstruction: NSObject, AVVideoCompositionInstructionProtocol
     /// Bottom-most first.
     let layers: [RenderLayer]
 
-    init(timeRange: CMTimeRange, layers: [RenderLayer], trackIDs: [CMPersistentTrackID]) {
+    /// The sequence is laid out at this size, and the output is the window at `offset` within it
+    /// (the same as the output, unless exporting to a different shape).
+    let canvas: CGSize
+    let offset: CGPoint
+
+    init(timeRange: CMTimeRange, layers: [RenderLayer], trackIDs: [CMPersistentTrackID], canvas: CGSize, offset: CGPoint = .zero) {
         self.timeRange = timeRange
+        self.canvas = canvas
+        self.offset = offset
         self.layers = layers
         self.requiredSourceTrackIDs = trackIDs.map { NSNumber(value: $0) }
     }
@@ -149,7 +156,7 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
 
     private static func compose(_ instruction: TimelineInstruction, request: AVAsynchronousVideoCompositionRequest) -> CIImage {
         let t = request.compositionTime.seconds + 1e-4
-        let size = request.renderContext.size
+        let size = instruction.canvas
         let frame = CGRect(origin: .zero, size: size)
         var out = CIImage(color: .black).cropped(to: frame)
 
@@ -197,6 +204,10 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
             }
             out = image.composited(over: out)
         }
-        return out.cropped(to: frame)
+        let output = request.renderContext.size
+        if instruction.offset != .zero || output != size {
+            out = out.transformed(by: CGAffineTransform(translationX: -instruction.offset.x, y: -instruction.offset.y))
+        }
+        return out.cropped(to: CGRect(origin: .zero, size: output))
     }
 }

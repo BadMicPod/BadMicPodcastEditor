@@ -15,11 +15,50 @@ struct ExportSettings: Equatable {
     var includeAudio = true
     /// Target integrated loudness in LUFS; nil leaves levels as they are.
     var loudness: Double?
+    /// The output's shape. Anything but the sequence's own crops the picture to fit.
+    var shape = Shape.original
+    /// Which part of the picture to keep when cropping, as the crop's centre (0...1 across and down).
+    var reframe = CGPoint(x: 0.5, y: 0.5)
+
+    enum Shape: String, CaseIterable {
+        case original, vertical, square, portrait
+
+        var label: String {
+            switch self {
+            case .original: return "Sequence shape"
+            case .vertical: return "Vertical 9:16"
+            case .square: return "Square 1:1"
+            case .portrait: return "Portrait 4:5"
+            }
+        }
+
+        /// Height over width, or nil for the sequence's own shape.
+        var tallness: Double? {
+            switch self {
+            case .original: return nil
+            case .vertical: return 16.0 / 9.0
+            case .square: return 1
+            case .portrait: return 5.0 / 4.0
+            }
+        }
+    }
 
     func renderSize(for project: Project) -> CGSize {
+        func even(_ v: Double) -> CGFloat { max(2, CGFloat((v / 2).rounded() * 2)) }
+        if let tall = shape.tallness {
+            // The resolution names the short side; crops are never taller-than-wide in the other direction.
+            let short = Double(height ?? min(project.width, project.height))
+            return CGSize(width: even(short), height: even(short * tall))
+        }
         let h = Double(height ?? project.height)
         let w = h * Double(project.width) / Double(max(1, project.height))
-        return CGSize(width: max(2, (w / 2).rounded() * 2), height: max(2, (h / 2).rounded() * 2))
+        return CGSize(width: even(w), height: even(h))
+    }
+
+    /// Whether the output crops the sequence's picture.
+    func crops(_ project: Project) -> Bool {
+        let s = renderSize(for: project)
+        return abs(Double(s.width / s.height) - Double(project.aspect)) > 0.01
     }
 
     func videoBitrate(size: CGSize, fps: Double) -> Int {
@@ -91,7 +130,8 @@ final class Exporter: ObservableObject {
         let wav = settings.format == .wav
         let size = settings.renderSize(for: project)
         guard let built = CompositionBuilder.build(project: project, media: media, renderSize: size,
-                                                   includeVideo: !wav, includeAudio: wav || settings.includeAudio) else {
+                                                   includeVideo: !wav, includeAudio: wav || settings.includeAudio,
+                                                   reframe: settings.crops(project) ? settings.reframe : nil) else {
             state = .failed("The timeline is empty.")
             return
         }

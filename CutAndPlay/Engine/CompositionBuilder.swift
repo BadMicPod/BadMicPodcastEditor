@@ -49,8 +49,24 @@ enum CompositionBuilder {
     }
 
     @MainActor
+    /// With `reframe`, the sequence is scaled to cover `renderSize` and cropped around that point
+    /// (0...1 across and down), for outputs of a different shape.
     static func build(project: Project, media: MediaStore, renderSize: CGSize,
-                      includeVideo: Bool = true, includeAudio: Bool = true) -> BuiltTimeline? {
+                      includeVideo: Bool = true, includeAudio: Bool = true, reframe: CGPoint? = nil) -> BuiltTimeline? {
+        // The sequence is laid out on `canvas`, then `offset` picks the output's window from it.
+        var canvas = renderSize
+        var offset = CGPoint.zero
+        if let center = reframe, renderSize.height > 0 {
+            let pa = project.aspect, oa = renderSize.width / renderSize.height
+            if abs(pa - oa) > 0.001 {
+                canvas = pa > oa ? CGSize(width: (renderSize.height * pa).rounded(), height: renderSize.height)
+                                 : CGSize(width: renderSize.width, height: (renderSize.width / pa).rounded())
+                let ox = min(max(0, center.x * canvas.width - renderSize.width / 2), canvas.width - renderSize.width)
+                let top = min(max(0, center.y * canvas.height - renderSize.height / 2), canvas.height - renderSize.height)
+                // Core Image counts up from the bottom.
+                offset = CGPoint(x: ox, y: canvas.height - renderSize.height - top)
+            }
+        }
         let total = project.duration
         guard total > 0 else { return nil }
         let comp = AVMutableComposition()
@@ -68,7 +84,7 @@ enum CompositionBuilder {
         // Video
         var layers: [RenderLayer] = []
         var requiredTracks: [CMPersistentTrackID] = []
-        let frame = CGRect(origin: .zero, size: renderSize)
+        let frame = CGRect(origin: .zero, size: canvas)
 
         if includeVideo {
             for track in project.videoTracks where !track.hidden {
@@ -108,7 +124,7 @@ enum CompositionBuilder {
                         let c = clip.color
                         layers.append(RenderLayer(clip: clip, source: .color(CIColor(red: c.r, green: c.g, blue: c.b, alpha: c.a)), cube: GradeBaker.cube(for: clip.grade), plan: plan))
                     case .text:
-                        guard let img = TextRenderer.image(clip.text, renderSize: renderSize) else { continue }
+                        guard let img = TextRenderer.image(clip.text, renderSize: canvas) else { continue }
                         layers.append(RenderLayer(clip: clip, source: .image(img), cube: GradeBaker.cube(for: clip.grade), plan: plan))
                     case .audio:
                         continue
@@ -186,7 +202,7 @@ enum CompositionBuilder {
         vc.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
         vc.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
         let range = CMTimeRange(start: .zero, duration: CMTimeMaximum(comp.duration, time(total)))
-        vc.instructions = [TimelineInstruction(timeRange: range, layers: layers, trackIDs: requiredTracks)]
+        vc.instructions = [TimelineInstruction(timeRange: range, layers: layers, trackIDs: requiredTracks, canvas: canvas, offset: offset)]
 
         var mix: AVMutableAudioMix?
         if !mixParams.isEmpty {

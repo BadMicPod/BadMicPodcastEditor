@@ -28,12 +28,19 @@ struct ExportSheet: View {
         let vertical = p.height > p.width
         let base: [(String, Int)] = [("4K", 2160), ("1440p", 1440), ("1080p", 1080), ("720p", 720)]
         // For vertical frames the label names the short side.
-        let scaled: [(String, Int?)] = base.map { item in
-            let h = vertical ? Int((Double(item.1) * Double(p.height) / Double(p.width)).rounded()) : item.1
-            let size = ExportSettings(height: h).renderSize(for: p)
-            return ("\(item.0) (\(Int(size.width)) × \(Int(size.height)))", h)
+        func size(_ h: Int?) -> CGSize {
+            var s = settings
+            s.height = h
+            return s.renderSize(for: p)
         }
-        return [("Source (\(p.width) × \(p.height))", nil)] + scaled
+        let scaled: [(String, Int?)] = base.map { item in
+            // A crop to another shape names its short side; so does a vertical sequence.
+            let h = settings.shape == .original && vertical ? Int((Double(item.1) * Double(p.height) / Double(p.width)).rounded()) : item.1
+            let s = size(h)
+            return ("\(item.0) (\(Int(s.width)) × \(Int(s.height)))", h)
+        }
+        let source = size(nil)
+        return [("Source (\(Int(source.width)) × \(Int(source.height)))", nil)] + scaled
     }
 
     private var isVideo: Bool { settings.format == .mp4 }
@@ -74,7 +81,7 @@ struct ExportSheet: View {
         return "\(Int(v)) LUFS".replacingOccurrences(of: "-", with: "−")
     }
 
-    static let previewWidth: CGFloat = 288
+    static let previewWidth: CGFloat = 388
     static let fieldHeight: CGFloat = 28
 
     // MARK: Left column
@@ -128,6 +135,16 @@ struct ExportSheet: View {
                         }
                     }
                 }
+                row("Shape") {
+                    SheetMenu(label: settings.shape.label, height: h) {
+                        ForEach(ExportSettings.Shape.allCases, id: \.self) { shape in
+                            Button(shape.label) {
+                                settings.shape = shape
+                                settings.reframe = CGPoint(x: 0.5, y: 0.5)
+                            }
+                        }
+                    }
+                }
                 row("Codec") {
                     SheetMenu(label: settings.codec.rawValue, height: h) {
                         ForEach(ExportSettings.Codec.allCases, id: \.self) { codec in
@@ -172,7 +189,9 @@ struct ExportSheet: View {
         let size = settings.renderSize(for: p)
         let w = Self.previewWidth
         return VStack(alignment: .leading, spacing: 12) {
-            PreviewPlayerBox(player: player, showsVideo: isVideo)
+            PreviewPlayerBox(player: player, showsVideo: isVideo, projectAspect: p.aspect,
+                             crop: isVideo && settings.crops(p) ? settings.renderSize(for: p) : nil,
+                             reframe: $settings.reframe)
                 .frame(width: w, height: (w * 9 / 16).rounded())
 
             // Spread edge to edge under the preview: first item flush left, last flush right.
@@ -234,6 +253,7 @@ struct ExportSheet: View {
         }
         model.pause()
         player.load(model)
+        if CommandLine.arguments.contains("--export-vertical") { settings.shape = .vertical; settings.reframe = CGPoint(x: 0.3, y: 0.5) }
         if CommandLine.arguments.contains("--play-export-preview") { player.toggle() }
         // Don't open with the filename selected; it reads as an error state.
         DispatchQueue.main.async { nameFocused = false }
@@ -435,13 +455,21 @@ private struct PlayerLayerView: NSViewRepresentable {
 private struct PreviewPlayerBox: View {
     @ObservedObject var player: PreviewPlayer
     let showsVideo: Bool
+    let projectAspect: CGFloat
+    /// The output size when it crops the picture; nil shows the whole frame.
+    let crop: CGSize?
+    @Binding var reframe: CGPoint
     @State private var hovering = false
+    @State private var dragStart: CGPoint?
 
     var body: some View {
         ZStack {
             Color.black
             if showsVideo {
                 PlayerLayerView(player: player.player)
+                if let crop {
+                    GeometryReader { g in reframeOverlay(crop, in: g.size) }
+                }
             } else {
                 Image(systemName: "waveform")
                     .font(.system(size: 30, weight: .light))
@@ -475,6 +503,49 @@ private struct PreviewPlayerBox: View {
         .animation(.easeOut(duration: 0.12), value: hovering)
         .onTapGesture { player.toggle() }
         .help("Play preview")
+    }
+}
+
+extension PreviewPlayerBox {
+    /// Where the picture sits in the box, and the window of it the export keeps.
+    private func geometry(_ crop: CGSize, in box: CGSize) -> (picture: CGRect, window: CGRect) {
+        let pw = min(box.width, box.height * projectAspect)
+        let picture = CGRect(x: (box.width - pw) / 2, y: (box.height - pw / projectAspect) / 2, width: pw, height: pw / projectAspect)
+        let oa = crop.width / crop.height
+        let size = oa < projectAspect ? CGSize(width: picture.height * oa, height: picture.height)
+                                      : CGSize(width: picture.width, height: picture.width / oa)
+        let cx = min(max(picture.minX + size.width / 2, picture.minX + reframe.x * picture.width), picture.maxX - size.width / 2)
+        let cy = min(max(picture.minY + size.height / 2, picture.minY + reframe.y * picture.height), picture.maxY - size.height / 2)
+        return (picture, CGRect(x: cx - size.width / 2, y: cy - size.height / 2, width: size.width, height: size.height))
+    }
+
+    /// Dims what the export leaves out; drag the bright window to choose what to keep.
+    @ViewBuilder fileprivate func reframeOverlay(_ crop: CGSize, in box: CGSize) -> some View {
+        let geo = geometry(crop, in: box)
+        ZStack(alignment: .topLeading) {
+            Path { p in
+                p.addRect(CGRect(origin: .zero, size: box))
+                p.addRect(geo.window)
+            }
+            .fill(Color.black.opacity(0.6), style: FillStyle(eoFill: true))
+            Rectangle()
+                .strokeBorder(Color.white.opacity(0.9), lineWidth: 1.5)
+                .frame(width: geo.window.width, height: geo.window.height)
+                .offset(x: geo.window.minX, y: geo.window.minY)
+                .contentShape(Rectangle())
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 1)
+                        .onChanged { v in
+                            if dragStart == nil { dragStart = reframe }
+                            guard let s = dragStart else { return }
+                            let half = CGSize(width: geo.window.width / 2 / geo.picture.width, height: geo.window.height / 2 / geo.picture.height)
+                            reframe = CGPoint(x: min(max(half.width, s.x + v.translation.width / geo.picture.width), 1 - half.width),
+                                              y: min(max(half.height, s.y + v.translation.height / geo.picture.height), 1 - half.height))
+                        }
+                        .onEnded { _ in dragStart = nil }
+                )
+                .onHover { inside in if inside { NSCursor.openHand.push() } else { NSCursor.pop() } }
+        }
     }
 }
 

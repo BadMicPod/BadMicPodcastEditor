@@ -577,6 +577,33 @@ enum SelfTest {
                 ok = false
             }
         }
+        // Export shapes: a vertical 9:16 export is 1080 × 1920, and moving the crop changes what's kept.
+        do {
+            var settings = ExportSettings()
+            settings.includeAudio = false
+            settings.height = 1080
+            settings.shape = .vertical
+            settings.reframe = CGPoint(x: 0.1, y: 0.5)
+            let left = outDir.appendingPathComponent("vertical_left.mp4"), right = outDir.appendingPathComponent("vertical_right.mp4")
+            _ = await export(project, media, settings, to: left)
+            settings.reframe = CGPoint(x: 0.9, y: 0.5)
+            _ = await export(project, media, settings, to: right)
+            func probe(_ url: URL) async -> (CGSize, [UInt8]) {
+                let a = AVURLAsset(url: url)
+                let size = (try? await a.loadTracks(withMediaType: .video).first?.load(.naturalSize)) ?? .zero
+                let g = AVAssetImageGenerator(asset: a)
+                g.requestedTimeToleranceBefore = .zero; g.requestedTimeToleranceAfter = .zero
+                g.maximumSize = CGSize(width: 90, height: 160)
+                let cg = try? await g.image(at: CMTime(seconds: 1.0, preferredTimescale: 600)).image
+                return (size, cg.flatMap { $0.dataProvider?.data as Data? }.map { Array($0) } ?? [])
+            }
+            let (ls, lb) = await probe(left), (rs, rb) = await probe(right)
+            var d = 0.0
+            if !lb.isEmpty, lb.count == rb.count { d = Double(zip(lb, rb).reduce(0) { $0 + abs(Int($1.0) - Int($1.1)) }) / Double(lb.count) }
+            let good = ls == CGSize(width: 1080, height: 1920) && rs == ls && d > 10
+            log("SHAPES \(good ? "OK" : "FAIL") size=\(ls) leftVsRight=\(d)")
+            ok = ok && good
+        }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")
     }
 }
