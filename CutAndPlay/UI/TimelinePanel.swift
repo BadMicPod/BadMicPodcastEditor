@@ -39,7 +39,7 @@ struct TimelineToolbar: View {
         // Left: tools and the edits they go with. Right: editing modes and zoom.
         HStack(spacing: 8) {
             HStack(spacing: 2) {
-                ToolKey(symbol: "cursorarrow", on: model.tool == .move, help: "Move (V)") { model.tool = .move }
+                ToolKey(symbol: "cursorarrow", on: model.tool == .move, help: "Select (V or A)") { model.tool = .move }
                 ToolKey(symbol: "scissors", on: model.tool == .cut, help: "Cut (C)") { model.tool = .cut }
             }
             .padding(3)

@@ -145,7 +145,7 @@ enum KeyCommands {
             model.tool = .move
         default:
             switch e.charactersIgnoringModifiers?.lowercased() {
-            case "v": model.tool = .move
+            case "v", "a": model.tool = .move
             case "c": model.tool = .cut
             case "s": model.snapping.toggle()
             case "l": model.loop.toggle()
