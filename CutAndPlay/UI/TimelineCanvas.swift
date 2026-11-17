@@ -79,7 +79,19 @@ final class TimelineCanvas: NSView {
     private var overrides: [UUID: Clip] = [:]
     private var ghosts: [Clip] = []
     private var hover: (id: UUID, zone: Zone)?
-    private var snapLine: Double?
+    /// Where the current drag has snapped to. Landing on a new edge gives a light tap on the trackpad.
+    private var snapLine: Double? {
+        didSet {
+            if let s = snapLine, s != oldValue { Self.tap() }
+        }
+    }
+    /// While dragging the playhead, the time shown beside it on the ruler.
+    private var scrubReadout: Double?
+    private var lastScrubSnap: Double?
+
+    private static func tap() {
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+    }
     private var cutHover: (id: UUID, time: Double)?
     private var marquee: CGRect?
     private var bubble: (text: String, point: CGPoint)?
@@ -480,14 +492,21 @@ final class TimelineCanvas: NSView {
         snapLine = nil
         marquee = nil
         bubble = nil
+        scrubReadout = nil
+        lastScrubSnap = nil
         needsDisplay = true
         updateHover(at: convert(event.locationInWindow, from: nil))
     }
 
     private func scrub(to p: CGPoint) {
         var t = max(0, time(atX: p.x))
-        if let s = snap([t], to: model.project.snapTargets(excluding: []), pixels: 6) { t += s.delta }
+        let s = snap([t], to: model.project.snapTargets(excluding: []), pixels: 6)
+        if let s { t += s.delta }
+        if let target = s?.target, target != lastScrubSnap { Self.tap() }
+        lastScrubSnap = s?.target
         model.seek(to: t)
+        scrubReadout = model.playhead
+        needsDisplay = true
     }
 
     private func updateMove(grabbed: Clip, startTime: Double, originals: [Clip], p: CGPoint) {
@@ -903,8 +922,8 @@ final class TimelineCanvas: NSView {
         .foregroundColor: NSColor(white: 1, alpha: 0.95),
     ]
     private static let rulerAttrs: [NSAttributedString.Key: Any] = [
-        .font: NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .medium),
-        .foregroundColor: Theme.NS.textDim,
+        .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular),
+        .foregroundColor: Theme.NS.textFaint,
     ]
     private static let bubbleAttrs: [NSAttributedString.Key: Any] = [
         .font: NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .semibold),
@@ -1004,9 +1023,14 @@ final class TimelineCanvas: NSView {
 
         // Snap guide
         if let s = snapLine {
+            // A white line with a dot at each end of the clips it joins.
             let sx = x(s)
-            ctx.setFillColor(Theme.NS.accent.cgColor)
-            ctx.fill(CGRect(x: sx - 0.5, y: ruler, width: 1, height: bounds.height - ruler))
+            let ys = (Array(overrides.values) + ghosts).compactMap { rect(for: $0) }
+            let top = max(ruler, (ys.map(\.minY).min() ?? ruler) - 4)
+            let bottom = min(bounds.height, (ys.map(\.maxY).max() ?? bounds.height) + 4)
+            ctx.setFillColor(NSColor(white: 1, alpha: 0.9).cgColor)
+            ctx.fill(CGRect(x: sx - 0.5, y: top, width: 1, height: bottom - top))
+            for y in [top, bottom] { ctx.fillEllipse(in: CGRect(x: sx - 3, y: y - 3, width: 6, height: 6)) }
         }
 
         // Marquee
@@ -1032,7 +1056,24 @@ final class TimelineCanvas: NSView {
             ctx.fillPath()
             text.draw(at: CGPoint(x: r.minX + 7, y: r.minY + 3))
         }
+
+        // The playhead's time beside its flag while it's being dragged.
+        if let t = scrubReadout {
+            let text = NSAttributedString(string: Timecode.string(t, fps: project.fps), attributes: Self.readoutAttrs)
+            let size = text.size()
+            var r = CGRect(x: x(t) + 10, y: 4, width: size.width + 12, height: size.height + 4)
+            if r.maxX > bounds.width - 4 { r.origin.x = x(t) - 10 - r.width }
+            ctx.setFillColor(Theme.NS.accent.cgColor)
+            ctx.addPath(CGPath(roundedRect: r, cornerWidth: 4, cornerHeight: 4, transform: nil))
+            ctx.fillPath()
+            text.draw(at: CGPoint(x: r.minX + 6, y: r.minY + 2))
+        }
     }
+
+    private static let readoutAttrs: [NSAttributedString.Key: Any] = [
+        .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),
+        .foregroundColor: NSColor.white,
+    ]
 
     private func drawRuler(_ ctx: CGContext, project: Project) {
         let ruler = TimelineLayout.ruler
@@ -1259,7 +1300,8 @@ final class TimelineCanvas: NSView {
             let tx = r.minX + CGFloat((ts - c.sourceStart) / c.speed) * pps
             let sample = min(max(0, ts), max(0, asset.duration - 0.05))
             if let img = model.media.thumbnail(asset: asset.id, time: sample) {
-                drawImage(img, fill: CGRect(x: tx, y: r.minY, width: w + 0.5, height: r.height), ctx: ctx)
+                // Frames sit side by side with a 1pt dark gap, like a contact sheet.
+                drawImage(img, fill: CGRect(x: tx, y: r.minY, width: max(1, w - 1), height: r.height), ctx: ctx)
             }
             k += 1
             drawn += 1
