@@ -151,6 +151,7 @@ struct InspectorView: View {
         } else if visual.count == 1, visual[0].kind == .text {
             textTransformSection(visual[0])
         }
+        if visual.count == 1 { transitionSection(visual[0]) }
         if !visual.isEmpty { fadeSection(audio.isEmpty ? "Fade" : "Video fade", visual) }
         if !audio.isEmpty { fadeSection(visual.isEmpty ? "Fade" : "Audio fade", audio) }
         if !visual.isEmpty { colorSection(visual) }
@@ -209,6 +210,67 @@ struct InspectorView: View {
             ParamRow(icon: .symbol("arrow.up.and.down"), label: "Y", value: tf.y * h, range: -h...h,
                      format: { "\(Int($0.rounded()))" }, onEditing: done,
                      onChange: { v in live { $0.y = v.rounded() / h } })
+        }
+    }
+
+    /// Transitions on the cuts either side of a clip: In blends from the clip before, Out into the clip after.
+    @ViewBuilder private func transitionSection(_ c: Clip) -> some View {
+        let p = model.project
+        let before = p.previous(touching: c)
+        let after = p.next(touching: c)
+        if before != nil || after != nil {
+            let incoming = before != nil ? c : nil
+            let outgoing = after
+            let marked = incoming?.transitionIn != nil || outgoing?.transitionIn != nil
+            InspectorSection("Transitions", collapsedByDefault: true, marked: marked) {
+                if let clip = incoming, let a = before { transitionRows("In", into: clip, from: a) }
+                if let clip = outgoing { transitionRows("Out", into: clip, from: c) }
+            }
+        }
+    }
+
+    @ViewBuilder private func transitionRows(_ label: String, into clip: Clip, from a: Clip) -> some View {
+        let t = clip.transitionIn
+        HStack(spacing: 8) {
+            Image(systemName: label == "In" ? "arrow.right.to.line" : "arrow.right.to.line.compact")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Theme.textDim)
+                .frame(width: 18)
+            Text(label)
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.text)
+                .frame(width: 52, alignment: .leading)
+            MenuField(label: t?.kind.label ?? "None", height: 26) {
+                Button("None") { model.setTransition(into: clip.id, nil) }
+                Divider()
+                ForEach(TransitionKind.allCases, id: \.self) { kind in
+                    Button(kind.label) {
+                        var n = t ?? Transition()
+                        n.kind = kind
+                        model.setTransition(into: clip.id, n)
+                    }
+                }
+            }
+        }
+        .frame(height: 28)
+        if let t {
+            let span = model.project.transitionSpan(from: a, into: clip)
+            let actual = span.map { $0.end - $0.start } ?? 0
+            ParamRow(icon: .symbol("timer"), label: "Length", value: t.duration, range: 0.1...5,
+                     format: { String(format: "%.2fs", $0) },
+                     onEditing: { if !$0 { model.commitLive() } },
+                     onChange: { v in
+                         model.live(autoCommit: false) { p in
+                             if let i = p.index(of: clip.id) { p.clips[i].transitionIn?.duration = (v * 100).rounded() / 100 }
+                         }
+                     })
+            if actual < t.duration - 0.01 {
+                Text(actual > 0 ? String(format: "Shortened to %.2fs: no more media beyond the cut.", actual)
+                                : "Needs media beyond the cut to blend; try Dip to Black.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.textFaint)
+                    .padding(.leading, 26)
+            }
         }
     }
 

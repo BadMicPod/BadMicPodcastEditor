@@ -99,6 +99,8 @@ struct Clip: Identifiable, Codable, Hashable {
     var grade: ColorGrade?
     /// Size and placement for video, image and solid clips; nil means fitted to the frame.
     var transform: ClipTransform?
+    /// A transition into this clip from the clip that ends where it starts, on the same track.
+    var transitionIn: Transition?
 
     /// Clips that can be scaled and moved in the frame (text has its own placement).
     var isTransformable: Bool { kind == .video || kind == .image || kind == .solid }
@@ -136,6 +138,43 @@ struct Clip: Identifiable, Codable, Hashable {
 
 extension Comparable {
     func clamped(to r: ClosedRange<Self>) -> Self { min(max(self, r.lowerBound), r.upperBound) }
+}
+
+enum TransitionKind: String, Codable, CaseIterable {
+    case dissolve, dipToBlack, wipe
+
+    var label: String {
+        switch self {
+        case .dissolve: return "Dissolve"
+        case .dipToBlack: return "Dip to Black"
+        case .wipe: return "Wipe"
+        }
+    }
+}
+
+struct Transition: Codable, Hashable {
+    var kind = TransitionKind.dissolve
+    /// Seconds; may be shortened to what the clips allow.
+    var duration = 0.5
+}
+
+/// A stretch of time over which a clip is brought in or taken out by a transition.
+struct TransitionEdge: Hashable {
+    var start: Double
+    var end: Double
+    var kind: TransitionKind
+
+    func progress(_ t: Double) -> Double { ((t - start) / max(1e-6, end - start)).clamped(to: 0...1) }
+}
+
+/// How transitions change the way one clip is drawn: shown for longer, brought in, or taken out.
+struct TransitionPlan: Hashable {
+    /// Seconds shown before the clip's start, from media before its in point.
+    var leadIn = 0.0
+    /// Seconds shown after its end, from media after its out point.
+    var tailOut = 0.0
+    var reveal: TransitionEdge?
+    var conceal: TransitionEdge?
 }
 
 /// Scale and position of a clip within the frame.
@@ -534,6 +573,73 @@ extension Project {
             }
         }
         return true
+    }
+
+    // MARK: Transitions
+
+    /// The clip ending where this one starts, on the same track.
+    func previous(touching c: Clip) -> Clip? {
+        let tol = 0.5 / fps
+        return clips.first { $0.id != c.id && $0.trackID == c.trackID && $0.kind != .audio && abs($0.end - c.start) <= tol }
+    }
+
+    /// The clip starting where this one ends, on the same track.
+    func next(touching c: Clip) -> Clip? {
+        let tol = 0.5 / fps
+        return clips.first { $0.id != c.id && $0.trackID == c.trackID && $0.kind != .audio && abs($0.start - c.end) <= tol }
+    }
+
+    /// Unused media before a clip's in point, in timeline seconds.
+    private func headRoom(_ c: Clip) -> Double {
+        c.kind.usesSource ? c.sourceStart / c.speed : .infinity
+    }
+
+    /// Unused media after a clip's out point, in timeline seconds.
+    private func tailRoom(_ c: Clip) -> Double {
+        guard c.kind.usesSource, let limit = sourceLimit(c) else { return .infinity }
+        return max(0, (limit - c.sourceStart - c.duration * c.speed) / c.speed)
+    }
+
+    /// Where the transition into `b` from `a` sits. A dissolve or wipe needs both pictures at once, so
+    /// it ends at the cut using media from before `b`'s in point, or failing that starts at the cut
+    /// using media after `a`'s out point. A dip to black needs neither and sits across the cut.
+    func transitionSpan(from a: Clip, into b: Clip) -> (start: Double, end: Double, fromHead: Bool)? {
+        guard let t = b.transitionIn, b.kind != .audio, a.kind != .audio else { return nil }
+        let cut = b.start
+        let frame = 1 / fps
+        if t.kind == .dipToBlack {
+            let d = min(t.duration, 2 * a.duration, 2 * b.duration)
+            return d >= frame ? (cut - d / 2, cut + d / 2, false) : nil
+        }
+        let want = min(t.duration, a.duration, b.duration)
+        let head = headRoom(b), tail = tailRoom(a)
+        if head >= want { return (cut - want, cut, true) }
+        if tail >= want { return (cut, cut + want, false) }
+        let d = max(head, tail)
+        guard d >= frame else { return nil }
+        return head >= tail ? (cut - d, cut, true) : (cut, cut + d, false)
+    }
+
+    /// How transitions on either side of a clip change the way it's drawn.
+    func transitionPlan(_ c: Clip) -> TransitionPlan {
+        var plan = TransitionPlan()
+        guard c.kind != .audio else { return plan }
+        if let a = previous(touching: c), let span = transitionSpan(from: a, into: c), let kind = c.transitionIn?.kind {
+            if kind == .dipToBlack {
+                plan.reveal = TransitionEdge(start: c.start, end: span.end, kind: kind)
+            } else {
+                plan.reveal = TransitionEdge(start: span.start, end: span.end, kind: kind)
+                if span.fromHead { plan.leadIn = c.start - span.start }
+            }
+        }
+        if let b = next(touching: c), let span = transitionSpan(from: c, into: b), let kind = b.transitionIn?.kind {
+            if kind == .dipToBlack {
+                plan.conceal = TransitionEdge(start: span.start, end: c.end, kind: kind)
+            } else if !span.fromHead {
+                plan.tailOut = span.end - c.end
+            }
+        }
+        return plan
     }
 
     /// Breaks the link between the given clips and their partners.

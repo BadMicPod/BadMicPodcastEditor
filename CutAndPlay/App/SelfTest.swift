@@ -84,6 +84,8 @@ enum SelfTest {
         grade.look = "Mono"
         grade.highlights = WheelPoint(x: 1, y: 0)
         c2.grade = grade
+        // Dissolve from the normal-speed section into the graded, sped-up one.
+        c2.transitionIn = Transition(kind: .dissolve, duration: 0.5)
         c1.fadeInCurve = .easeIn
         c1a.fadeInCurve = .easeIn
         project.clips = [c1, c1a, c2, c2a, solid, text]
@@ -325,6 +327,27 @@ enum SelfTest {
                 return c.1 == nil ? v == nil : v.map { abs($0 - c.1!) < 1e-9 } ?? false
             }
             log("TIMECODE \(good ? "OK" : "FAIL")")
+            ok = ok && good
+        }
+        // Transition timing: the dissolve borrows the sped-up clip's unused head and ends at the cut;
+        // a dip sits across the cut; with no spare media at all, a dissolve uses what there is.
+        do {
+            var p = Project()
+            let v = p.videoTracks[0].id
+            let a = Clip(trackID: v, kind: .video, start: 0, duration: 2)
+            var b = Clip(trackID: v, kind: .video, start: 2, duration: 1, sourceStart: 2, speed: 4)
+            b.transitionIn = Transition(kind: .dissolve, duration: 0.5)
+            p.clips = [a, b]
+            let span = p.transitionSpan(from: a, into: b)
+            let headOK = span.map { abs($0.start - 1.5) < 1e-9 && $0.end == 2 && $0.fromHead } ?? false
+            let plan = p.transitionPlan(b)
+            let planOK = abs(plan.leadIn - 0.5) < 1e-9 && plan.reveal?.start == 1.5
+            p.clips[1].transitionIn = Transition(kind: .dipToBlack, duration: 1)
+            let dip = p.transitionSpan(from: a, into: p.clips[1])
+            let dipOK = dip.map { $0.start == 1.5 && $0.end == 2.5 } ?? false
+            let concealOK = p.transitionPlan(a).conceal?.end == 2
+            let good = headOK && planOK && dipOK && concealOK
+            log("TRANSITIONS \(good ? "OK" : "FAIL") head=\(headOK) plan=\(planOK) dip=\(dipOK) conceal=\(concealOK)")
             ok = ok && good
         }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")

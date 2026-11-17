@@ -10,8 +10,14 @@ struct RenderLayer {
         case color(CIColor)
     }
 
+    /// When the layer is drawn: the clip, plus any extra a transition shows before or after it.
     let start: Double
     let end: Double
+    /// The clip itself, which its own fades are measured from.
+    let fadeStart: Double
+    let fadeEnd: Double
+    let reveal: TransitionEdge?
+    let conceal: TransitionEdge?
     let fadeIn: Double
     let fadeOut: Double
     let inCurve: FadeCurve
@@ -21,11 +27,15 @@ struct RenderLayer {
     let cube: Data?
     let transform: ClipTransform?
 
-    init(clip: Clip, source: Source, cube: Data? = nil) {
+    init(clip: Clip, source: Source, cube: Data? = nil, plan: TransitionPlan = TransitionPlan()) {
         self.cube = cube
         transform = clip.transform.flatMap { $0.isIdentity ? nil : $0 }
-        start = clip.start
-        end = clip.end
+        start = clip.start - plan.leadIn
+        end = clip.end + plan.tailOut
+        fadeStart = clip.start
+        fadeEnd = clip.end
+        reveal = plan.reveal
+        conceal = plan.conceal
         fadeIn = clip.fadeIn
         fadeOut = clip.fadeOut
         inCurve = clip.inCurve
@@ -35,9 +45,20 @@ struct RenderLayer {
 
     func opacity(at t: Double) -> Double {
         var o = 1.0
-        if fadeIn > 0 { o = min(o, inCurve.apply((t - start) / fadeIn)) }
-        if fadeOut > 0 { o = min(o, outCurve.apply((end - t) / fadeOut)) }
+        // The clip's own fades; in the extra a transition shows, they hold their value at that end.
+        let ft = min(max(t, fadeStart), fadeEnd)
+        if fadeIn > 0 { o = min(o, inCurve.apply((ft - fadeStart) / fadeIn)) }
+        if fadeOut > 0 { o = min(o, outCurve.apply((fadeEnd - ft) / fadeOut)) }
+        if let r = reveal, r.kind != .wipe { o *= r.progress(t) }
+        if let c = conceal { o *= 1 - c.progress(t) }
         return max(0, min(1, o))
+    }
+
+    /// For a wipe in progress, how much of the picture (from the left) is showing.
+    func wipe(at t: Double) -> Double? {
+        guard let r = reveal, r.kind == .wipe, t < r.end else { return nil }
+        let p = r.progress(t)
+        return p * p * (3 - 2 * p)
     }
 }
 
@@ -143,6 +164,9 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
                 image = img
             case .color(let color):
                 image = CIImage(color: color).cropped(to: frame)
+            }
+            if let w = layer.wipe(at: t) {
+                image = image.cropped(to: CGRect(x: 0, y: 0, width: size.width * w, height: size.height))
             }
             if let tf = layer.transform {
                 // Scale about the frame's centre, then offset (Core Image's y runs up).

@@ -74,19 +74,27 @@ enum CompositionBuilder {
             for track in project.videoTracks where !track.hidden {
                 hasher.combine(track.id)
                 let clips = project.clips.filter { $0.trackID == track.id }.sorted { $0.start < $1.start }
-                var compTrack: AVMutableCompositionTrack?
-                var cursor = CMTime.zero
-                for clip in clips {
+                // Clips alternate between two composition tracks, so neighbours can overlap in a transition.
+                var compTracks: [AVMutableCompositionTrack?] = [nil, nil]
+                var cursors: [CMTime] = [.zero, .zero]
+                for (index, clip) in clips.enumerated() {
+                    let plan = project.transitionPlan(clip)
                     switch clip.kind {
                     case .video:
                         guard let id = clip.assetID, let rt = media.runtimes[id], let src = rt.videoTrack else { continue }
-                        if compTrack == nil {
-                            compTrack = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
-                            if let ct = compTrack { requiredTracks.append(ct.trackID) }
+                        let lane = index % 2
+                        if compTracks[lane] == nil {
+                            compTracks[lane] = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
+                            if let ct = compTracks[lane] { requiredTracks.append(ct.trackID) }
                         }
-                        guard let ct = compTrack, insert(clip, source: src, range: rt.videoRange, into: ct, cursor: &cursor) else { continue }
-                        hash(clip, into: &hasher)
-                        layers.append(RenderLayer(clip: clip, source: .track(ct.trackID, rt.orientation), cube: GradeBaker.cube(for: clip.grade)))
+                        // The stretch of media actually shown, including any a transition borrows.
+                        var shown = clip
+                        shown.start -= plan.leadIn
+                        shown.sourceStart -= plan.leadIn * clip.speed
+                        shown.duration += plan.leadIn + plan.tailOut
+                        guard let ct = compTracks[lane], insert(shown, source: src, range: rt.videoRange, into: ct, cursor: &cursors[lane]) else { continue }
+                        hash(shown, into: &hasher)
+                        layers.append(RenderLayer(clip: clip, source: .track(ct.trackID, rt.orientation), cube: GradeBaker.cube(for: clip.grade), plan: plan))
                     case .image:
                         guard let cg = media.still(clip.assetID) else { continue }
                         let img = CIImage(cgImage: cg)
@@ -95,13 +103,13 @@ enum CompositionBuilder {
                         let fitted = img.transformed(by: CGAffineTransform(a: s, b: 0, c: 0, d: s,
                                                                            tx: (frame.width - e.width * s) / 2,
                                                                            ty: (frame.height - e.height * s) / 2))
-                        layers.append(RenderLayer(clip: clip, source: .image(fitted), cube: GradeBaker.cube(for: clip.grade)))
+                        layers.append(RenderLayer(clip: clip, source: .image(fitted), cube: GradeBaker.cube(for: clip.grade), plan: plan))
                     case .solid:
                         let c = clip.color
-                        layers.append(RenderLayer(clip: clip, source: .color(CIColor(red: c.r, green: c.g, blue: c.b, alpha: c.a)), cube: GradeBaker.cube(for: clip.grade)))
+                        layers.append(RenderLayer(clip: clip, source: .color(CIColor(red: c.r, green: c.g, blue: c.b, alpha: c.a)), cube: GradeBaker.cube(for: clip.grade), plan: plan))
                     case .text:
                         guard let img = TextRenderer.image(clip.text, renderSize: renderSize) else { continue }
-                        layers.append(RenderLayer(clip: clip, source: .image(img), cube: GradeBaker.cube(for: clip.grade)))
+                        layers.append(RenderLayer(clip: clip, source: .image(img), cube: GradeBaker.cube(for: clip.grade), plan: plan))
                     case .audio:
                         continue
                     }

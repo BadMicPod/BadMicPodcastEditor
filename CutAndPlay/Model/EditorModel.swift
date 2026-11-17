@@ -724,6 +724,25 @@ final class EditorModel: ObservableObject {
         selection = Set(project.clips.map(\.id))
     }
 
+    /// Sets (or with nil removes) the transition into a clip from the one before it.
+    func setTransition(into id: UUID, _ transition: Transition?) {
+        mutate { p in
+            if let i = p.index(of: id) { p.clips[i].transitionIn = transition }
+        }
+    }
+
+    /// Puts a dissolve on the cut nearest the playhead, looking at selected clips first.
+    func addTransitionAtPlayhead() {
+        let cuts = project.clips.filter { c in
+            c.kind != .audio && !project.isLocked(c.trackID) && project.previous(touching: c) != nil
+        }
+        let selected = cuts.filter { c in
+            selection.contains(c.id) || project.previous(touching: c).map { selection.contains($0.id) } ?? false
+        }
+        guard let best = (selected.isEmpty ? cuts : selected).min(by: { abs($0.start - playhead) < abs($1.start - playhead) }) else { return }
+        setTransition(into: best.id, best.transitionIn ?? Transition())
+    }
+
     func setSpeed(_ speed: Double) {
         let ids = project.linked(selection)
         let sticky = self.sticky

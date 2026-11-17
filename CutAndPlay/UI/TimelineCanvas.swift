@@ -733,6 +733,28 @@ final class TimelineCanvas: NSView {
                 speed.submenu = sub
                 menu.addItem(speed)
             }
+            // Transitions on the cuts either side of this clip.
+            if h.clip.kind != .audio {
+                let project = model.project
+                func transitionMenu(_ title: String, into clip: Clip) -> NSMenuItem {
+                    let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+                    let sub = NSMenu()
+                    sub.autoenablesItems = false
+                    sub.addItem(ActionItem("None", checked: clip.transitionIn == nil) { model.setTransition(into: clip.id, nil) })
+                    sub.addItem(.separator())
+                    for kind in TransitionKind.allCases {
+                        sub.addItem(ActionItem(kind.label, checked: clip.transitionIn?.kind == kind) {
+                            var t = clip.transitionIn ?? Transition()
+                            t.kind = kind
+                            model.setTransition(into: clip.id, t)
+                        })
+                    }
+                    item.submenu = sub
+                    return item
+                }
+                if project.previous(touching: h.clip) != nil { menu.addItem(transitionMenu("Transition In", into: h.clip)) }
+                if let next = project.next(touching: h.clip) { menu.addItem(transitionMenu("Transition Out", into: next)) }
+            }
             if h.clip.fadeIn > 0 || h.clip.fadeOut > 0 {
                 menu.addItem(ActionItem("Remove Fades") {
                     let ids = model.selection
@@ -928,6 +950,34 @@ final class TimelineCanvas: NSView {
         }
         for c in ghosts {
             drawClip(c, ctx: ctx, alpha: 0.55)
+        }
+
+        // Transitions: a hatched block over the stretch each one covers.
+        for b in project.clips where b.transitionIn != nil && !lifted.contains(b.id) {
+            guard let a = project.previous(touching: b), !lifted.contains(a.id),
+                  let span = project.transitionSpan(from: a, into: b), let band = rect(for: b) else { continue }
+            let r = CGRect(x: x(span.start), y: band.minY + 3, width: max(4, x(span.end) - x(span.start)), height: band.height - 6)
+            guard r.maxX > 0, r.minX < bounds.width else { continue }
+            let path = CGPath(roundedRect: r, cornerWidth: 4, cornerHeight: 4, transform: nil)
+            ctx.saveGState()
+            ctx.addPath(path)
+            ctx.clip()
+            ctx.setFillColor(NSColor(white: 0, alpha: 0.35).cgColor)
+            ctx.fill(r)
+            ctx.setStrokeColor(NSColor(white: 1, alpha: 0.35).cgColor)
+            ctx.setLineWidth(2)
+            var sx = r.minX - r.height
+            while sx < r.maxX {
+                ctx.move(to: CGPoint(x: sx, y: r.maxY))
+                ctx.addLine(to: CGPoint(x: sx + r.height, y: r.minY))
+                sx += 7
+            }
+            ctx.strokePath()
+            ctx.restoreGState()
+            ctx.addPath(path)
+            ctx.setStrokeColor(NSColor.white.withAlphaComponent(model.selection.contains(b.id) ? 1 : 0.75).cgColor)
+            ctx.setLineWidth(1.5)
+            ctx.strokePath()
         }
 
         // Skim line: where the viewer is showing, while the playhead stays put.
