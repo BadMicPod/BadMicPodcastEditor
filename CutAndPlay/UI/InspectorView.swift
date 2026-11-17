@@ -146,7 +146,11 @@ struct InspectorView: View {
         }
 
         let movable = visual.filter(\.isTransformable)
-        if !movable.isEmpty { transformSection(movable) }
+        if !movable.isEmpty {
+            transformSection(movable)
+        } else if visual.count == 1, visual[0].kind == .text {
+            textTransformSection(visual[0])
+        }
         if !visual.isEmpty { fadeSection(audio.isEmpty ? "Fade" : "Video fade", visual) }
         if !audio.isEmpty { fadeSection(visual.isEmpty ? "Fade" : "Audio fade", audio) }
         if !visual.isEmpty { colorSection(visual) }
@@ -362,14 +366,34 @@ struct InspectorView: View {
                      format: { "\(Int($0.rounded()))" },
                      onEditing: { if !$0 { model.commitLive() } },
                      onChange: { v in update { $0.size = v.rounded() } })
-            ParamRow(icon: .symbol("arrow.left.and.right"), label: "X", value: c.text.x * 100, range: 0...100,
-                     format: { "\(Int($0.rounded()))%" },
-                     onEditing: { if !$0 { model.commitLive() } },
-                     onChange: { v in update { $0.x = v / 100 } })
-            ParamRow(icon: .symbol("arrow.up.and.down"), label: "Y", value: c.text.y * 100, range: 0...100,
-                     format: { "\(Int($0.rounded()))%" },
-                     onEditing: { if !$0 { model.commitLive() } },
-                     onChange: { v in update { $0.y = v / 100 } })
+        }
+    }
+
+    /// Position for a text clip, in frame pixels from the centre like other clips. No scale: the
+    /// font size does that and keeps the text sharp.
+    @ViewBuilder private func textTransformSection(_ c: Clip) -> some View {
+        let w = Double(model.project.width), h = Double(model.project.height)
+        let centred = abs(c.text.x - 0.5) < 1e-6 && abs(c.text.y - 0.5) < 1e-6
+        let update: (@escaping (inout TextStyle) -> Void) -> Void = { body in
+            model.live(autoCommit: false) { p in
+                if let i = p.index(of: c.id) { body(&p.clips[i].text) }
+            }
+        }
+        let done: (Bool) -> Void = { if !$0 { model.commitLive() } }
+        InspectorSection("Transform", action: centred ? nil : ("Reset", {
+            model.mutate { p in
+                if let i = p.index(of: c.id) {
+                    p.clips[i].text.x = 0.5
+                    p.clips[i].text.y = 0.5
+                }
+            }
+        }), collapsedByDefault: true, marked: !centred) {
+            ParamRow(icon: .symbol("arrow.left.and.right"), label: "X", value: (c.text.x - 0.5) * w, range: -w / 2...w / 2,
+                     format: { "\(Int($0.rounded()))" }, onEditing: done,
+                     onChange: { v in update { $0.x = 0.5 + v.rounded() / w } })
+            ParamRow(icon: .symbol("arrow.up.and.down"), label: "Y", value: (c.text.y - 0.5) * h, range: -h / 2...h / 2,
+                     format: { "\(Int($0.rounded()))" }, onEditing: done,
+                     onChange: { v in update { $0.y = 0.5 + v.rounded() / h } })
         }
     }
 }
