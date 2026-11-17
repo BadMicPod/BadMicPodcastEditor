@@ -359,11 +359,14 @@ final class TimelineCanvas: NSView {
         let extend = event.modifierFlags.contains(.shift)
 
         if p.y < TimelineLayout.ruler {
-            if let id = markerHit(at: p) {
+            // The playhead sits on top of markers, so near it a click takes the playhead; a marker
+            // under it can still be clicked by its name.
+            let onPlayhead = abs(p.x - x(model.playhead)) <= 6
+            if !onPlayhead, let id = markerHit(at: p) {
                 drag = .marker(id: id, startX: p.x, moved: false)
                 return
             }
-            if let isIn = rangeEdgeHit(at: p) {
+            if !onPlayhead, let isIn = rangeEdgeHit(at: p) {
                 drag = .rangeEdge(isIn: isIn)
                 return
             }
@@ -1332,7 +1335,9 @@ final class TimelineCanvas: NSView {
         pop.contentSize = host.view.fittingSize
         pop.delegate = self
         markerPopover = pop
-        pop.show(relativeTo: markerAnchor(m), of: self, preferredEdge: .maxY)
+        // Above the flag (this view is flipped, so minY is its top edge): the timeline sits at the
+        // bottom of the window, so there's rarely room below.
+        pop.show(relativeTo: markerAnchor(m), of: self, preferredEdge: .minY)
     }
 
     fileprivate func markerPopoverClosed() {

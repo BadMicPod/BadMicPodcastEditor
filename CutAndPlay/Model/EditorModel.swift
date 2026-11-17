@@ -470,6 +470,13 @@ final class EditorModel: ObservableObject {
         }
     }
 
+    /// Removes every marker (one undo step).
+    func clearMarkers() {
+        guard !(project.markers ?? []).isEmpty else { return }
+        editingMarker = nil
+        mutate { p in p.markers = nil }
+    }
+
     func setInPoint() {
         let t = project.snapFrame(playhead)
         mutate { p in

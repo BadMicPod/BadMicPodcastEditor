@@ -139,6 +139,9 @@ struct CutAndPlayApp: App {
             // text field isn't affected; the menu lists them for finding.
             CommandMenu("Mark") {
                 Button("Add Marker   M") { model.addMarker() }
+                Button("Clear All Markers") { model.clearMarkers() }
+                    .disabled((model.project.markers ?? []).isEmpty)
+                Divider()
                 Button("Set In   I") { model.setInPoint() }
                 Button("Set Out   O") { model.setOutPoint() }
                 Button("Clear In and Out   ⇧X") { model.clearRange() }
