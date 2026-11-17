@@ -121,9 +121,11 @@ struct CutAndPlayApp: App {
                 Button("Add Dissolve") { model.addTransitionAtPlayhead() }.keyboardShortcut("d")
                 Button("Even Out Audio Levels") { model.evenOutLevels() }
                 Button("Detach Audio") { model.detachAudio() }.keyboardShortcut("l", modifiers: [.command, .shift])
+                Button("Duplicate") { model.duplicateSelection() }.keyboardShortcut("d", modifiers: [.command, .shift])
                 Divider()
                 Button("Delete") { model.deleteSelection() }
                 Button("Ripple Delete") { model.deleteSelection(ripple: true) }
+                Button("Close All Gaps") { model.closeAllGaps() }
                 Divider()
                 Button("Add Text") { model.addAtPlayhead(.text) }.keyboardShortcut("t")
                 Button("Add Solid") { model.addAtPlayhead(.solid) }

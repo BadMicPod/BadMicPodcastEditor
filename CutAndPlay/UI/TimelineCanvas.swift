@@ -87,6 +87,8 @@ final class TimelineCanvas: NSView {
     }
     /// While dragging the playhead, the time shown beside it on the ruler.
     private var scrubReadout: Double?
+    /// ⌥ held during a move: drop copies instead of moving the clips.
+    private var duplicating = false
     private var lastScrubSnap: Double?
 
     private static func tap() {
@@ -472,6 +474,16 @@ final class TimelineCanvas: NSView {
         let finished = drag
         drag = .none
         switch finished {
+        case .move where duplicating:
+            // ⌥-drag: the clips stay where they were and copies land where they were dropped.
+            let moved = Array(overrides.values)
+            overrides = [:]
+            duplicating = false
+            if !moved.isEmpty, let t0 = moved.map(\.start).min() {
+                let copies = model.placed(moved.map { c in var c = c; c.start -= t0; return c }, at: t0)
+                    .enumerated().map { i, c -> Clip in var c = c; c.trackID = moved[i].trackID; return c }
+                model.insert(copies)
+            }
         case .move, .trim:
             let moved = overrides
             overrides = [:]
@@ -511,6 +523,8 @@ final class TimelineCanvas: NSView {
     }
 
     private func updateMove(grabbed: Clip, startTime: Double, originals: [Clip], p: CGPoint) {
+        duplicating = NSEvent.modifierFlags.contains(.option)
+        (duplicating ? NSCursor.dragCopy : NSCursor.closedHand).set()
         let project = model.project
         let ids = Set(originals.map(\.id))
         let minStart = originals.map(\.start).min() ?? 0
@@ -726,6 +740,19 @@ final class TimelineCanvas: NSView {
         model.selectAll()
     }
 
+    // Edit › Cut, Copy and Paste act on clips while the timeline has focus.
+    @objc func copy(_ sender: Any?) { model.copySelection() }
+    @objc func cut(_ sender: Any?) { model.cutSelection() }
+    @objc func paste(_ sender: Any?) { model.paste() }
+
+    @objc func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(copy(_:)), #selector(cut(_:)): return !model.selection.isEmpty
+        case #selector(paste(_:)): return !model.clipboard.isEmpty
+        default: return true
+        }
+    }
+
     @objc func delete(_ sender: Any?) {
         model.deleteSelection()
     }
@@ -793,6 +820,15 @@ final class TimelineCanvas: NSView {
             menu.addItem(ActionItem("Delete") { model.deleteSelection() })
             menu.addItem(ActionItem("Ripple Delete") { model.deleteSelection(ripple: true) })
         } else {
+            // Empty space on a track: offer to close the gap here, or every gap on the track.
+            if case .track(let track, _) = lane(atY: p.y), !track.locked {
+                let t = time(atX: p.x)
+                menu.addItem(ActionItem("Delete Gap", enabled: model.project.gap(on: track.id, at: t) != nil) {
+                    model.deleteGap(on: track.id, at: t)
+                })
+                menu.addItem(ActionItem("Close All Gaps on Track") { model.closeAllGaps(on: [track.id]) })
+                menu.addItem(.separator())
+            }
             menu.addItem(ActionItem("Add Video Track") { model.addTrack(.video) })
             menu.addItem(ActionItem("Add Audio Track") { model.addTrack(.audio) })
             if case .track(let track, _) = lane(atY: p.y), model.project.tracks(track.kind).count > 1 {
@@ -972,7 +1008,8 @@ final class TimelineCanvas: NSView {
         }
 
         // Clips
-        let lifted = Set(overrides.keys)
+        // While ⌥-dragging, the originals stay put and the dragged ones are the copies.
+        let lifted = duplicating ? Set<UUID>() : Set(overrides.keys)
         for c in project.clips where !lifted.contains(c.id) {
             drawClip(c, ctx: ctx, alpha: project.isLocked(c.trackID) ? 0.45 : 1)
         }

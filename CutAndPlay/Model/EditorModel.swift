@@ -771,6 +771,79 @@ final class EditorModel: ObservableObject {
         selection = Set(project.clips.map(\.id))
     }
 
+    // MARK: Gaps
+
+    func deleteGap(on track: UUID, at t: Double) {
+        guard let g = project.gap(on: track, at: t) else { return }
+        mutate { $0.pullLeft(on: track, from: g.end, by: g.end - g.start) }
+    }
+
+    /// Closes the gaps on the selected clips' tracks, or on every track with nothing selected.
+    func closeAllGaps(on tracks: [UUID]? = nil) {
+        let chosen = tracks ?? {
+            let selected = Set(project.clips.filter { selection.contains($0.id) }.map(\.trackID))
+            return selected.isEmpty ? (project.videoTracks + project.audioTracks).map(\.id) : Array(selected)
+        }()
+        mutate { p in for t in chosen { p.closeAllGaps(on: t) } }
+    }
+
+    // MARK: Copy, paste, duplicate
+
+    /// Copied clips, with times measured from the earliest of them.
+    private(set) var clipboard: [Clip] = []
+
+    private var selectedForCopy: [Clip] {
+        let ids = project.unlocked(project.linked(selection))
+        return project.clips.filter { ids.contains($0.id) }
+    }
+
+    func copySelection() {
+        let clips = selectedForCopy
+        guard let t0 = clips.map(\.start).min() else { return }
+        clipboard = clips.map { c in var c = c; c.start -= t0; return c }
+    }
+
+    func cutSelection() {
+        copySelection()
+        deleteSelection()
+    }
+
+    /// Pastes at the playhead, on the same tracks, over whatever is there (like Premiere), and moves
+    /// the playhead to the end of what was pasted.
+    func paste() {
+        let copies = placed(clipboard, at: playhead)
+        guard !copies.isEmpty else { return }
+        insert(copies)
+        if let end = copies.map(\.end).max() { seek(to: end) }
+    }
+
+    /// Puts a copy of the selection straight after it, on the same tracks.
+    func duplicateSelection() {
+        let clips = selectedForCopy
+        guard let t0 = clips.map(\.start).min(), let t1 = clips.map(\.end).max() else { return }
+        insert(placed(clips.map { c in var c = c; c.start -= t0; return c }, at: t1))
+    }
+
+    /// Fresh copies of clips (times relative to 0) placed at a time, with new ids and links kept
+    /// between the copies. Copies whose track has gone or is locked land on an open track of their kind.
+    func placed(_ clips: [Clip], at t: Double) -> [Clip] {
+        var links: [UUID: UUID] = [:]
+        return clips.map { original in
+            var c = original
+            c.id = UUID()
+            if let l = c.linkID {
+                if links[l] == nil { links[l] = UUID() }
+                c.linkID = links[l]
+            }
+            c.start += t
+            if project.track(c.trackID) == nil || project.isLocked(c.trackID) {
+                let kind = c.kind.trackKind
+                c.trackID = project.tracks(kind).first { !$0.locked }?.id ?? (kind == .video ? TrackToken.newVideo : TrackToken.newAudio)
+            }
+            return c
+        }
+    }
+
     /// Sets every selected audio clip (or every audio clip, with none selected) to the same typical
     /// level, so quiet and loud recordings sit together. Clips without a waveform yet are left alone.
     func evenOutLevels() {

@@ -479,6 +479,35 @@ enum SelfTest {
             log("METERS \(lit && empty ? "OK" : "FAIL") lit=\(lit) emptyOnStop=\(empty)")
             ok = ok && lit && empty
         }
+        // Gaps and pasting: a gap closes with linked audio following; all gaps close; paste makes fresh,
+        // still-linked copies at the playhead.
+        do {
+            var p = Project()
+            let v = p.videoTracks[0].id, a = p.audioTracks[0].id
+            let link = UUID()
+            let c1 = Clip(trackID: v, kind: .solid, start: 0, duration: 2)
+            let c2 = Clip(trackID: v, kind: .video, start: 3, duration: 2, linkID: link)
+            let c2a = Clip(trackID: a, kind: .audio, start: 3, duration: 2, linkID: link)
+            let c3 = Clip(trackID: v, kind: .solid, start: 6, duration: 1)
+            p.clips = [c1, c2, c3, c2a]
+            let g = p.gap(on: v, at: 2.5)
+            var q = p
+            q.pullLeft(on: v, from: 3, by: 1)
+            let closed = g.map { $0.start == 2 && $0.end == 3 } == true && q.clip(c2.id)?.start == 2 && q.clip(c2a.id)?.start == 2 && q.clip(c3.id)?.start == 5
+            var r = p
+            r.closeAllGaps(on: v)
+            let all = r.clip(c2.id)?.start == 2 && r.clip(c3.id)?.start == 4
+            let m = EditorModel()
+            m.load(p, url: nil)
+            m.selection = [c2.id]
+            m.copySelection()
+            m.seek(to: 10)
+            m.paste()
+            let pasted = m.project.clips.filter { $0.start == 10 }
+            let pasteOK = pasted.count == 2 && Set(pasted.map(\.linkID)).count == 1 && pasted[0].linkID != link && !pasted.contains { $0.id == c2.id }
+            log("GAPS+PASTE \(closed && all && pasteOK ? "OK" : "FAIL") gap=\(closed) all=\(all) paste=\(pasteOK)")
+            ok = ok && closed && all && pasteOK
+        }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")
     }
 }

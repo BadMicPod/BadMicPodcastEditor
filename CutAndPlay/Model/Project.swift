@@ -666,6 +666,54 @@ extension Project {
         return plan
     }
 
+    // MARK: Gaps
+
+    /// The empty stretch on a track around a time: from the end of the clip before (or the start of
+    /// the timeline) to the start of the clip after. Nil if the time is on a clip or past the last one.
+    func gap(on track: UUID, at t: Double) -> (start: Double, end: Double)? {
+        let here = clips.filter { $0.trackID == track }
+        guard !here.contains(where: { t >= $0.start && t < $0.end }) else { return nil }
+        let before = here.filter { $0.end <= t + 1e-9 }.map(\.end).max() ?? 0
+        guard let after = here.filter({ $0.start >= t - 1e-9 }).map(\.start).min(), after - before > 1e-6 else { return nil }
+        return (before, after)
+    }
+
+    /// Pulls everything on a track from a time onward left by an amount, with linked clips on other
+    /// tracks moving too. If something that isn't moving is in the way, it goes only as far as fits.
+    /// Returns how far it moved.
+    @discardableResult
+    mutating func pullLeft(on track: UUID, from time: Double, by amount: Double) -> Double {
+        guard !isLocked(track), amount > 1e-9 else { return 0 }
+        let movers = unlocked(linked(Set(clips.filter { $0.trackID == track && $0.start >= time - 1e-6 }.map(\.id))))
+        guard !movers.isEmpty else { return 0 }
+        func moved(_ d: Double) -> [UUID: Clip] {
+            var out: [UUID: Clip] = [:]
+            for c in clips where movers.contains(c.id) { var m = c; m.start -= d; out[c.id] = m }
+            return out
+        }
+        var d = amount
+        if !fits(moved(d)) {
+            var ok = 0.0, bad = d
+            for _ in 0..<30 { let mid = (ok + bad) / 2; if fits(moved(mid)) { ok = mid } else { bad = mid } }
+            d = snapFrame(ok) <= ok + 1e-9 ? snapFrame(ok) : ok
+            if !fits(moved(d)) { d = ok }
+        }
+        guard d > 1e-9 else { return 0 }
+        for (id, c) in moved(d) { if let i = index(of: id) { clips[i] = c } }
+        return d
+    }
+
+    /// Closes every gap between clips on a track, so they run back to back from the first clip.
+    mutating func closeAllGaps(on track: UUID) {
+        for _ in 0..<500 {
+            let here = clips.filter { $0.trackID == track }.sorted { $0.start < $1.start }
+            guard let i = here.indices.dropLast().first(where: { here[$0 + 1].start - here[$0].end > 1e-6 }) else { return }
+            let next = here[i + 1]
+            let shift = next.start - here[i].end
+            if pullLeft(on: track, from: next.start, by: shift) < 1e-9 { return }
+        }
+    }
+
     /// Breaks the link between the given clips and their partners.
     mutating func unlink(ids: Set<UUID>) {
         let all = linked(ids)
