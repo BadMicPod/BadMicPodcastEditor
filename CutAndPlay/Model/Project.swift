@@ -80,6 +80,11 @@ struct Clip: Identifiable, Codable, Hashable {
     var text = TextStyle()
     /// Colour correction for visual clips; nil means untouched.
     var grade: ColorGrade?
+    /// Size and placement for video, image and solid clips; nil means fitted to the frame.
+    var transform: ClipTransform?
+
+    /// Clips that can be scaled and moved in the frame (text has its own placement).
+    var isTransformable: Bool { kind == .video || kind == .image || kind == .solid }
 
     var end: Double { start + duration }
     var inCurve: FadeCurve { fadeInCurve ?? .linear }
@@ -102,6 +107,23 @@ struct Clip: Identifiable, Codable, Hashable {
         duration = t - start
         clampFades()
     }
+}
+
+extension Comparable {
+    func clamped(to r: ClosedRange<Self>) -> Self { min(max(self, r.lowerBound), r.upperBound) }
+}
+
+/// Scale and position of a clip within the frame.
+struct ClipTransform: Codable, Hashable {
+    /// 1 is fitted to the frame.
+    var scale = 1.0
+    /// Offset of the clip's centre from the frame's centre, as a fraction of the frame's width and
+    /// height. Positive y is down.
+    var x = 0.0
+    var y = 0.0
+
+    var isIdentity: Bool { self == ClipTransform() }
+    static let scaleRange = 0.05...10.0
 }
 
 enum MediaKind: String, Codable { case video, audio, image }

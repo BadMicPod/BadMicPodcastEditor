@@ -72,6 +72,8 @@ enum SelfTest {
         var solid = Clip(trackID: v1, kind: .solid, start: 3.5, duration: 1)
         solid.color = RGBA(r: 0.9, g: 0.2, b: 0.2, a: 1)
         solid.fadeIn = 0.5
+        // Half size, in the top-right quarter of the frame.
+        solid.transform = ClipTransform(scale: 0.5, x: 0.25, y: -0.25)
         var text = Clip(trackID: v2, kind: .text, start: 0.5, duration: 2)
         text.text.string = "Cut and Play"
         text.fadeIn = 0.5

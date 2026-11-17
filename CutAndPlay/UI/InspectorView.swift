@@ -145,6 +145,8 @@ struct InspectorView: View {
             }
         }
 
+        let movable = visual.filter(\.isTransformable)
+        if !movable.isEmpty { transformSection(movable) }
         if !visual.isEmpty { fadeSection(audio.isEmpty ? "Fade" : "Video fade", visual) }
         if !audio.isEmpty { fadeSection(visual.isEmpty ? "Fade" : "Audio fade", audio) }
         if !visual.isEmpty { colorSection(visual) }
@@ -172,6 +174,37 @@ struct InspectorView: View {
         model.live(autoCommit: false) { p in
             p.clips = origin
             p.setSpeed(ids: p.linked(ids), speed: speed, sticky: model.sticky)
+        }
+    }
+
+    @ViewBuilder private func transformSection(_ clips: [Clip]) -> some View {
+        let ids = Set(clips.map(\.id))
+        let tf = clips[0].transform ?? ClipTransform()
+        let w = Double(model.project.width), h = Double(model.project.height)
+        let live: (@escaping (inout ClipTransform) -> Void) -> Void = { body in
+            model.live(autoCommit: false) { p in
+                for i in p.clips.indices where ids.contains(p.clips[i].id) {
+                    var t = p.clips[i].transform ?? ClipTransform()
+                    body(&t)
+                    p.clips[i].transform = t.isIdentity ? nil : t
+                }
+            }
+        }
+        let done: (Bool) -> Void = { if !$0 { model.commitLive() } }
+        InspectorSection("Transform", action: tf.isIdentity ? nil : ("Reset", {
+            model.mutate { p in
+                for i in p.clips.indices where ids.contains(p.clips[i].id) { p.clips[i].transform = nil }
+            }
+        }), collapsedByDefault: true, marked: !tf.isIdentity) {
+            ParamRow(icon: .symbol("arrow.up.left.and.arrow.down.right"), label: "Scale", value: tf.scale * 100,
+                     range: 5...1000, logarithmic: true, format: { "\(Int($0.rounded()))%" }, onEditing: done,
+                     onChange: { v in live { $0.scale = (v.rounded() / 100).clamped(to: ClipTransform.scaleRange) } })
+            ParamRow(icon: .symbol("arrow.left.and.right"), label: "X", value: tf.x * w, range: -w...w,
+                     format: { "\(Int($0.rounded()))" }, onEditing: done,
+                     onChange: { v in live { $0.x = v.rounded() / w } })
+            ParamRow(icon: .symbol("arrow.up.and.down"), label: "Y", value: tf.y * h, range: -h...h,
+                     format: { "\(Int($0.rounded()))" }, onEditing: done,
+                     onChange: { v in live { $0.y = v.rounded() / h } })
         }
     }
 

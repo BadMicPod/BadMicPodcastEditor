@@ -19,9 +19,11 @@ struct RenderLayer {
     let source: Source
     /// Baked colour cube for this clip's grade, if it has one.
     let cube: Data?
+    let transform: ClipTransform?
 
     init(clip: Clip, source: Source, cube: Data? = nil) {
         self.cube = cube
+        transform = clip.transform.flatMap { $0.isIdentity ? nil : $0 }
         start = clip.start
         end = clip.end
         fadeIn = clip.fadeIn
@@ -141,6 +143,14 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
                 image = img
             case .color(let color):
                 image = CIImage(color: color).cropped(to: frame)
+            }
+            if let tf = layer.transform {
+                // Scale about the frame's centre, then offset (Core Image's y runs up).
+                let cx = size.width / 2, cy = size.height / 2
+                let m = CGAffineTransform(translationX: -cx, y: -cy)
+                    .concatenating(CGAffineTransform(scaleX: tf.scale, y: tf.scale))
+                    .concatenating(CGAffineTransform(translationX: cx + tf.x * size.width, y: cy - tf.y * size.height))
+                image = image.transformed(by: m)
             }
             if let cube = layer.cube {
                 image = image.applyingFilter("CIColorCube", parameters: [
