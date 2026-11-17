@@ -246,7 +246,7 @@ final class TimelineCanvas: NSView {
 
     private func hit(at p: CGPoint) -> Hit? {
         guard p.y >= TimelineLayout.ruler else { return nil }
-        for c in model.project.clips {
+        for c in model.project.clips where !model.project.isLocked(c.trackID) {
             guard let r = rect(for: c), r.contains(p) else { continue }
             let showHandles = r.width > 36
             if showHandles, p.y < r.minY + 17 {
@@ -352,7 +352,7 @@ final class TimelineCanvas: NSView {
             return
         }
 
-        let group = model.project.linked([h.clip.id])
+        let group = model.project.unlocked(model.project.linked([h.clip.id]))
         switch h.zone {
         case .body:
             if extend {
@@ -396,7 +396,7 @@ final class TimelineCanvas: NSView {
             scrub(to: p)
         case .pendingMove(let grabbed, let start, let t0):
             guard abs(p.x - start.x) > 3 || abs(p.y - start.y) > 3 else { return }
-            let ids = model.project.linked(model.selection)
+            let ids = model.project.unlocked(model.project.linked(model.selection))
             let originals = model.project.clips.filter { ids.contains($0.id) }
             moveTrackDelta = 0
             drag = .move(grabbed: grabbed, time: t0, originals: originals)
@@ -437,10 +437,10 @@ final class TimelineCanvas: NSView {
             let r = content.offsetBy(dx: -view.scrollX, dy: -view.scrollY)
             marquee = r
             var ids = base
-            for c in model.project.clips {
+            for c in model.project.clips where !model.project.isLocked(c.trackID) {
                 if let cr = rect(for: c), cr.intersects(r) { ids.insert(c.id) }
             }
-            ids = model.project.linked(ids)
+            ids = model.project.unlocked(model.project.linked(ids))
             if ids != model.selection { model.selection = ids }
             needsDisplay = true
         }
@@ -504,6 +504,7 @@ final class TimelineCanvas: NSView {
 
         let kind = grabbed.kind.trackKind
         let tracks = project.tracks(kind)
+        let previousDelta = moveTrackDelta
         if let gi = project.trackIndex(grabbed.trackID, kind: kind) {
             switch lane(atY: p.y) {
             case .track(let t, let i) where t.kind == kind: moveTrackDelta = i - gi
@@ -515,6 +516,10 @@ final class TimelineCanvas: NSView {
         let indices = originals.filter { $0.kind.trackKind == kind }.compactMap { project.trackIndex($0.trackID, kind: kind) }
         if let lo = indices.min(), let hi = indices.max() {
             moveTrackDelta = max(-lo, min(moveTrackDelta, tracks.count - hi))
+        }
+        // Clips can't be moved onto a locked track.
+        if indices.contains(where: { i in tracks.indices.contains(i + moveTrackDelta) && tracks[i + moveTrackDelta].locked }) {
+            moveTrackDelta = previousDelta
         }
 
         var out: [UUID: Clip] = [:]
@@ -790,6 +795,14 @@ final class TimelineCanvas: NSView {
             break
         }
 
+        // Nothing lands on a locked track: use the nearest open one, or a new track.
+        func open(_ id: UUID, _ kind: TrackKind) -> UUID {
+            guard project.isLocked(id) else { return id }
+            return project.tracks(kind).first { !$0.locked }?.id ?? (kind == .video ? TrackToken.newVideo : TrackToken.newAudio)
+        }
+        vTrack = open(vTrack, .video)
+        aTrack = open(aTrack, .audio)
+
         let duration = payload.map { model.payloadDuration($0) } ?? 5
         var start = max(0, time(atX: p.x))
         if let s = snap([start, start + duration], to: project.snapTargets(excluding: []) + [model.playhead]), start + s.delta >= -1e-9 {
@@ -877,7 +890,7 @@ final class TimelineCanvas: NSView {
         for row in layout.rows {
             let r = CGRect(x: 0, y: ruler + row.y - view.scrollY, width: bounds.width, height: row.height)
             guard r.maxY > ruler, r.minY < bounds.height else { continue }
-            let off = row.track.kind == .video ? row.track.hidden : row.track.muted
+            let off = row.track.locked || (row.track.kind == .video ? row.track.hidden : !project.isAudible(row.track))
             (off ? Theme.NS.bg.blended(withFraction: 0.4, of: Theme.NS.lane)! : Theme.NS.lane).setFill()
             r.fill()
         }
@@ -899,7 +912,7 @@ final class TimelineCanvas: NSView {
         // Clips
         let lifted = Set(overrides.keys)
         for c in project.clips where !lifted.contains(c.id) {
-            drawClip(c, ctx: ctx, alpha: 1)
+            drawClip(c, ctx: ctx, alpha: project.isLocked(c.trackID) ? 0.45 : 1)
         }
         for c in overrides.values {
             drawClip(c, ctx: ctx, alpha: 0.82)

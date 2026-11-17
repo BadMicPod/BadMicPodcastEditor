@@ -66,6 +66,7 @@ final class EditorModel: ObservableObject {
     let view = TimelineViewState()
     let clock = Clock()
     let media = MediaStore()
+    let meters = MeterState()
     let engine = PlaybackEngine()
     let exporter = Exporter()
 
@@ -103,6 +104,7 @@ final class EditorModel: ObservableObject {
                     self.selection = self.project.linked([first.id])
                 }
                 if args.contains("--show-export") { self.showExport = true }
+                if args.contains("--play") { self.play() }
             }
         }
     }
@@ -220,6 +222,7 @@ final class EditorModel: ObservableObject {
     func tick() {
         if isPlaying { playhead = min(engine.currentTime, max(engine.duration, 0)) }
         clock.update(time: playhead, fps: project.fps)
+        meters.update(project: project, media: media, time: playhead, playing: isPlaying)
         for handler in tickHandlers { handler() }
     }
 
@@ -528,7 +531,8 @@ final class EditorModel: ObservableObject {
 
     func deleteSelection(ripple: Bool = false) {
         guard !selection.isEmpty else { return }
-        let ids = project.linked(selection)
+        let ids = project.unlocked(project.linked(selection))
+        guard !ids.isEmpty else { return }
         mutate { $0.remove(ids: ids, ripple: ripple) }
     }
 
@@ -536,7 +540,7 @@ final class EditorModel: ObservableObject {
         let t = playhead
         let under = project.clips.filter { $0.start < t && $0.end > t }
         let selected = under.filter { selection.contains($0.id) }
-        let targets = project.linked(Set((selected.isEmpty ? under : selected).map(\.id)))
+        let targets = project.unlocked(project.linked(Set((selected.isEmpty ? under : selected).map(\.id))))
         guard !targets.isEmpty else { return }
         mutate { p in _ = p.split(ids: targets, at: t) }
     }

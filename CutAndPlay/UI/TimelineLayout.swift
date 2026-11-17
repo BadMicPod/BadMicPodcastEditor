@@ -6,7 +6,7 @@ struct TimelineLayout {
     static let zone: CGFloat = 26
     static let gap: CGFloat = 1
     static let divider: CGFloat = 9
-    static let headerWidth: CGFloat = 138
+    static let headerWidth: CGFloat = 176
 
     struct Row {
         let track: Track

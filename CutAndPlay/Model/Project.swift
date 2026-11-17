@@ -17,6 +17,23 @@ struct Track: Identifiable, Codable, Hashable {
     var hidden = false
     var muted = false
     var gainDB: Double = 0
+    /// Audio only: while any track is soloed, only soloed tracks are heard.
+    var solo = false
+    /// A locked track's clips can't be selected, moved, trimmed or cut.
+    var locked = false
+
+    init(kind: TrackKind) { self.kind = kind }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        kind = try c.decode(TrackKind.self, forKey: .kind)
+        hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+        muted = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
+        gainDB = try c.decodeIfPresent(Double.self, forKey: .gainDB) ?? 0
+        solo = try c.decodeIfPresent(Bool.self, forKey: .solo) ?? false
+        locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
+    }
 }
 
 enum ClipKind: String, Codable {
@@ -87,6 +104,14 @@ struct Clip: Identifiable, Codable, Hashable {
     var isTransformable: Bool { kind == .video || kind == .image || kind == .solid }
 
     var end: Double { start + duration }
+
+    /// Level from the fades at a time on the timeline, 0...1.
+    func fadeGain(at t: Double) -> Double {
+        var g = 1.0
+        if fadeIn > 0 { g = min(g, inCurve.apply((t - start) / fadeIn)) }
+        if fadeOut > 0 { g = min(g, outCurve.apply((end - t) / fadeOut)) }
+        return max(0, min(1, g))
+    }
     var inCurve: FadeCurve { fadeInCurve ?? .linear }
     var outCurve: FadeCurve { fadeOutCurve ?? .linear }
 
@@ -216,6 +241,22 @@ extension Project {
     }
 
     func clip(_ id: UUID) -> Clip? { clips.first { $0.id == id } }
+
+    func track(_ id: UUID) -> Track? { (videoTracks + audioTracks).first { $0.id == id } }
+    func isLocked(_ trackID: UUID) -> Bool { track(trackID)?.locked ?? false }
+
+    /// Drops clips on locked tracks.
+    func unlocked(_ ids: Set<UUID>) -> Set<UUID> {
+        let locked = Set((videoTracks + audioTracks).filter(\.locked).map(\.id))
+        guard !locked.isEmpty else { return ids }
+        return Set(clips.filter { ids.contains($0.id) && !locked.contains($0.trackID) }.map(\.id))
+    }
+
+    /// Whether an audio track is heard, taking mute and solo into account.
+    func isAudible(_ track: Track) -> Bool {
+        if track.muted { return false }
+        return !audioTracks.contains(where: \.solo) || track.solo
+    }
     func index(of id: UUID) -> Int? { clips.firstIndex { $0.id == id } }
 
     func tracks(_ kind: TrackKind) -> [Track] { kind == .video ? videoTracks : audioTracks }
@@ -461,6 +502,7 @@ extension Project {
             let shift = q.newEnd - q.oldEnd
             guard abs(shift) > 1e-9 else { continue }
             // Only the next clip along can be touching or run into; ones further on are reached through it.
+            guard !isLocked(q.track) else { continue }
             let after = clips.filter { $0.trackID == q.track && edited[$0.id] == nil && $0.start >= q.oldEnd - touch }
             guard let nearest = after.map(\.start).min() else { continue }
             for c in after where c.start <= nearest + 1e-9 && out[c.id] == nil {

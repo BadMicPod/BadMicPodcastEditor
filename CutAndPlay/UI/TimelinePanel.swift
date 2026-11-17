@@ -454,13 +454,28 @@ struct TrackHeader: View {
     let label: String
     let canDelete: Bool
 
+    private func update(_ body: @escaping (inout Track) -> Void) {
+        model.mutate { $0.updateTrack(track.id, body) }
+    }
+
     var body: some View {
-        let off = track.kind == .video ? track.hidden : track.muted
-        HStack(spacing: 6) {
+        let off = track.locked || (track.kind == .video ? track.hidden : !model.project.isAudible(track))
+        HStack(spacing: 3) {
             Text(label)
                 .font(Theme.mono(11, .semibold))
                 .foregroundStyle(off ? Theme.textFaint : Theme.text)
                 .frame(width: 24, alignment: .leading)
+            if track.kind == .audio {
+                LetterToggle(letter: "M", on: track.muted, color: Theme.accent, help: "Mute") { update { $0.muted.toggle() } }
+                LetterToggle(letter: "S", on: track.solo, color: Color(nsColor: Theme.NS.snap), help: "Solo") { update { $0.solo.toggle() } }
+            } else {
+                IconButton(symbol: track.hidden ? "eye.slash" : "eye", active: track.hidden, size: 22, help: "Hide") {
+                    update { $0.hidden.toggle() }
+                }
+            }
+            IconButton(symbol: track.locked ? "lock.fill" : "lock.open", active: track.locked, size: 22, help: track.locked ? "Unlock" : "Lock") {
+                update { $0.locked.toggle() }
+            }
             Spacer(minLength: 0)
             if track.kind == .audio {
                 GainPill(db: track.gainDB) { value in
@@ -468,18 +483,14 @@ struct TrackHeader: View {
                 } onEnd: {
                     model.commitLive()
                 }
-                IconButton(symbol: track.muted ? "speaker.slash.fill" : "speaker.wave.2.fill",
-                           active: track.muted, size: 24, help: "Mute") {
-                    model.mutate { $0.updateTrack(track.id) { $0.muted.toggle() } }
-                }
-            } else {
-                IconButton(symbol: track.hidden ? "eye.slash" : "eye", active: track.hidden, size: 24, help: "Hide") {
-                    model.mutate { $0.updateTrack(track.id) { $0.hidden.toggle() } }
-                }
+                LevelMeter(meters: model.meters, track: track.id)
+                    .frame(width: 4)
+                    .padding(.vertical, 8)
+                    .padding(.leading, 3)
             }
         }
         .padding(.leading, 12)
-        .padding(.trailing, 8)
+        .padding(.trailing, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.panel)
         .overlay(Hairline(), alignment: .bottom)
@@ -489,6 +500,50 @@ struct TrackHeader: View {
             if canDelete {
                 Divider()
                 Button("Delete Track") { model.removeTrack(track.id) }
+            }
+        }
+    }
+}
+
+/// A one-letter toggle, for mute and solo.
+struct LetterToggle: View {
+    let letter: String
+    let on: Bool
+    let color: Color
+    let help: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(letter)
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundStyle(on ? Color.black.opacity(0.85) : (hovering ? Theme.text : Theme.textDim))
+                .frame(width: 20, height: 20)
+                .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(on ? color : (hovering ? Theme.hover : Theme.field)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(help)
+    }
+}
+
+/// A vertical level meter: green, then yellow from -12 dB, red from -3 dB. Pass no track for the output.
+struct LevelMeter: View {
+    @ObservedObject var meters: MeterState
+    var track: UUID?
+
+    var body: some View {
+        let db = track.map { meters.tracks[$0] ?? MeterState.floor } ?? meters.master
+        GeometryReader { g in
+            let fill = CGFloat(((db - MeterState.floor) / -MeterState.floor).clamped(to: 0...1))
+            ZStack(alignment: .bottom) {
+                RoundedRectangle(cornerRadius: 1.5).fill(Color.white.opacity(0.07))
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(db > -3 ? Color(red: 1, green: 0.32, blue: 0.27) : db > -12 ? Color(nsColor: Theme.NS.snap) : Color(nsColor: Theme.NS.audio))
+                    .frame(height: g.size.height * fill)
             }
         }
     }
@@ -518,12 +573,12 @@ struct GainPill: View {
                         if !isFocused, editing { commit() }
                     }
             } else {
-                Text(formatDB(db))
+                Text(formatDB(db).replacingOccurrences(of: " dB", with: ""))
             }
         }
         .font(Theme.mono(10))
         .foregroundStyle(editing || abs(db) > 0.05 ? Theme.text : Theme.textDim)
-        .frame(width: 58, height: 22)
+        .frame(width: 46, height: 22)
         .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(hovering || startDB != nil || editing ? Theme.hover : Theme.field))
         .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.accent.opacity(editing ? 0.9 : 0)))
         .contentShape(Rectangle())

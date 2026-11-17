@@ -302,6 +302,21 @@ enum SelfTest {
             log("STICKY \(pulled && grew && sped ? "OK" : "FAIL") pulled=\(pulled) grew=\(grew) speed=\(sped)")
             ok = ok && pulled && grew && sped
         }
+        // Tracks: old files without solo/lock still open; solo silences the others; locked clips are left out.
+        do {
+            let old = #"{"id":"6F1D8C64-1B2E-4C38-9A6E-0B9C1F6A1B2C","kind":"audio","hidden":false,"muted":false,"gainDB":0}"#
+            let decoded = (try? JSONDecoder().decode(Track.self, from: Data(old.utf8))).map { !$0.solo && !$0.locked } ?? false
+            var p = Project()
+            p.audioTracks[1].solo = true
+            let solo = !p.isAudible(p.audioTracks[0]) && p.isAudible(p.audioTracks[1])
+            p.videoTracks[0].locked = true
+            let a = Clip(trackID: p.videoTracks[0].id, kind: .solid, start: 0, duration: 1)
+            let b = Clip(trackID: p.videoTracks[1].id, kind: .solid, start: 0, duration: 1)
+            p.clips = [a, b]
+            let lock = p.unlocked([a.id, b.id]) == [b.id]
+            log("TRACKS \(decoded && solo && lock ? "OK" : "FAIL") decode=\(decoded) solo=\(solo) lock=\(lock)")
+            ok = ok && decoded && solo && lock
+        }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")
     }
 }

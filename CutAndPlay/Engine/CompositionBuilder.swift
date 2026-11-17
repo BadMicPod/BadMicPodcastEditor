@@ -112,7 +112,7 @@ enum CompositionBuilder {
         // Audio
         var mixParams: [AVMutableAudioMixInputParameters] = []
         if includeAudio {
-            for track in project.audioTracks where !track.muted {
+            for track in project.audioTracks where project.isAudible(track) {
                 hasher.combine(track.id)
                 let clips = project.clips.filter { $0.trackID == track.id && $0.kind == .audio }.sorted { $0.start < $1.start }
                 var compTrack: AVMutableCompositionTrack?
