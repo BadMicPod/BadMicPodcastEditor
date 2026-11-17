@@ -109,6 +109,9 @@ enum MediaKind: String, Codable { case video, audio, image }
 struct MediaAsset: Identifiable, Codable, Hashable {
     var id = UUID()
     var path: String
+    /// `path` as seen from the project file's folder, written on save. It lets a project folder that
+    /// is moved or copied as a whole find its media again.
+    var relativePath: String?
     /// Set when the original had to be converted to something AVFoundation can decode.
     var playablePath: String?
     var name: String
@@ -120,6 +123,36 @@ struct MediaAsset: Identifiable, Codable, Hashable {
     var hasAudio: Bool
 
     var url: URL { URL(fileURLWithPath: playablePath ?? path) }
+}
+
+extension Project {
+    /// Records where each file sits relative to the project's folder.
+    mutating func stampRelativePaths(projectDir: URL) {
+        let base = projectDir.standardizedFileURL.pathComponents
+        for i in assets.indices {
+            let file = URL(fileURLWithPath: assets[i].path).standardizedFileURL.pathComponents
+            var shared = 0
+            while shared < base.count, shared < file.count, base[shared] == file[shared] { shared += 1 }
+            let parts = Array(repeating: "..", count: base.count - shared) + file[shared...]
+            assets[i].relativePath = parts.joined(separator: "/")
+        }
+    }
+
+    /// Points assets whose file has gone from its saved place at the same file relative to the
+    /// project's folder, when it's there. Returns how many were found that way.
+    @discardableResult
+    mutating func resolveMovedMedia(projectDir: URL) -> Int {
+        var found = 0
+        for i in assets.indices where !FileManager.default.fileExists(atPath: assets[i].path) {
+            guard let rel = assets[i].relativePath else { continue }
+            let candidate = projectDir.appendingPathComponent(rel).standardizedFileURL.path
+            if FileManager.default.fileExists(atPath: candidate) {
+                assets[i].path = candidate
+                found += 1
+            }
+        }
+        return found
+    }
 }
 
 enum TrackToken {

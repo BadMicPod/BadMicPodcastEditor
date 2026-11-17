@@ -104,8 +104,9 @@ final class EditorModel: ObservableObject {
 
     func open(url: URL) {
         do {
-            let doc = try JSONDecoder().decode(SavedDocument.self, from: Data(contentsOf: url))
-            load(doc.project, url: url)
+            var doc = try JSONDecoder().decode(SavedDocument.self, from: Data(contentsOf: url))
+            doc.project.resolveMovedMedia(projectDir: url.deletingLastPathComponent())
+            load(doc.project, url: url, offerLocate: true)
         } catch {
             importError = "Couldn't open \(url.lastPathComponent)."
         }
@@ -624,7 +625,9 @@ final class EditorModel: ObservableObject {
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(SavedDocument(project: project)).write(to: url, options: .atomic)
+            var saved = project
+            saved.stampRelativePaths(projectDir: url.deletingLastPathComponent())
+            try encoder.encode(SavedDocument(project: saved)).write(to: url, options: .atomic)
             fileURL = url
             isDirty = false
         } catch {
@@ -632,7 +635,7 @@ final class EditorModel: ObservableObject {
         }
     }
 
-    func load(_ p: Project, url: URL?) {
+    func load(_ p: Project, url: URL?, offerLocate: Bool = false) {
         if isPlaying { pause() }
         commitLive()
         undoStack.removeAll()
@@ -646,9 +649,78 @@ final class EditorModel: ObservableObject {
         centerRows()
         setNeedsRebuild()
         Task {
-            await media.restore(p.assets)
+            let reconverted = await media.restore(p.assets)
+            for i in self.project.assets.indices {
+                if let path = reconverted[self.project.assets[i].id] { self.project.assets[i].playablePath = path }
+            }
             self.objectWillChange.send()
             self.setNeedsRebuild()
+            if offerLocate { self.offerToLocateMissing() }
         }
+    }
+
+    // MARK: Missing media
+
+    /// Library items whose file can't be found.
+    var missingAssets: [MediaAsset] {
+        project.assets.filter { !FileManager.default.fileExists(atPath: $0.url.path) }
+    }
+
+    /// Points a library item at a new file, then looks in that file's folder for any other missing
+    /// items by file name. Returns false when the chosen file can't stand in for the item.
+    @discardableResult
+    func relink(_ id: UUID, to url: URL) async -> Bool {
+        guard let old = project.assets.first(where: { $0.id == id }),
+              let fresh = await media.importFile(url, replacing: old),
+              let i = project.assets.firstIndex(where: { $0.id == id }) else { return false }
+        commitLive()
+        project.assets[i] = fresh
+        let folder = url.deletingLastPathComponent()
+        for other in missingAssets where other.id != id {
+            let candidate = folder.appendingPathComponent(URL(fileURLWithPath: other.path).lastPathComponent)
+            guard FileManager.default.fileExists(atPath: candidate.path),
+                  let found = await media.importFile(candidate, replacing: other),
+                  let j = project.assets.firstIndex(where: { $0.id == other.id }) else { continue }
+            project.assets[j] = found
+        }
+        // Undo snapshots still hold the old paths, so they can't be kept.
+        undoStack.removeAll()
+        redoStack.removeAll()
+        didChange()
+        return true
+    }
+
+    /// Asks where a missing item's file is. With `thenOthers`, keeps asking for whatever is still
+    /// missing afterwards until everything is found or the panel is cancelled.
+    func locate(_ id: UUID, thenOthers: Bool = false) {
+        guard let asset = project.assets.first(where: { $0.id == id }) else { return }
+        let original = URL(fileURLWithPath: asset.path)
+        let panel = NSOpenPanel()
+        panel.message = "Locate “\(original.lastPathComponent)”"
+        panel.prompt = "Locate"
+        panel.allowedContentTypes = Self.importTypes
+        panel.allowsOtherFileTypes = true
+        panel.nameFieldStringValue = original.lastPathComponent
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task {
+            if await relink(id, to: url) {
+                if thenOthers, let next = missingAssets.first { locate(next.id, thenOthers: true) }
+            } else {
+                importError = "“\(url.lastPathComponent)” can't be used in place of “\(original.lastPathComponent)”."
+            }
+        }
+    }
+
+    private func offerToLocateMissing() {
+        let missing = missingAssets
+        guard let first = missing.first else { return }
+        let names = missing.prefix(6).map { URL(fileURLWithPath: $0.path).lastPathComponent }
+        let alert = NSAlert()
+        alert.messageText = missing.count == 1 ? "1 media file is missing" : "\(missing.count) media files are missing"
+        alert.informativeText = names.joined(separator: "\n") + (missing.count > names.count ? "\n…" : "")
+            + "\n\nLocate one and any others in the same folder are found too."
+        alert.addButton(withTitle: "Locate…")
+        alert.addButton(withTitle: "Not Now")
+        if alert.runModal() == .alertFirstButtonReturn { locate(first.id, thenOthers: true) }
     }
 }

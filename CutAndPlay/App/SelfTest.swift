@@ -229,6 +229,43 @@ enum SelfTest {
             log("VIEW LIMITS \(pass ? "OK" : "FAIL")")
             ok = ok && pass
         }
+        // Missing media: a project folder moved as a whole finds its files by relative path, and
+        // relinking one file finds the others beside it.
+        do {
+            let fm = FileManager.default
+            let work = outDir.appendingPathComponent("relink")
+            try? fm.removeItem(at: work)
+            let first = work.appendingPathComponent("first"), footage = first.appendingPathComponent("footage")
+            try? fm.createDirectory(at: footage, withIntermediateDirectories: true)
+            var p = Project()
+            for name in ["a_main.mp4", "b_tone.wav"] {
+                let copy = footage.appendingPathComponent(name)
+                try? fm.copyItem(at: mediaDir.appendingPathComponent(name), to: copy)
+                if let a = await media.importFile(copy) { p.assets.append(a) }
+            }
+            p.stampRelativePaths(projectDir: first)
+            let second = work.appendingPathComponent("second")
+            try? fm.moveItem(at: first, to: second)
+            var moved = p
+            let found = moved.resolveMovedMedia(projectDir: second)
+            let relative = p.assets.count == 2 && found == 2 && moved.assets.allSatisfy { fm.fileExists(atPath: $0.path) }
+                && p.assets[0].relativePath == "footage/a_main.mp4"
+
+            // Now scatter the files somewhere the relative paths don't reach, and relink just one.
+            let elsewhere = work.appendingPathComponent("elsewhere")
+            try? fm.moveItem(at: second.appendingPathComponent("footage"), to: elsewhere)
+            let m = EditorModel()
+            m.load(p, url: nil)
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            let missingBefore = m.missingAssets.count
+            let linked = await m.relink(p.assets[0].id, to: elsewhere.appendingPathComponent("a_main.mp4"))
+            let wrongKind = await m.relink(p.assets[0].id, to: elsewhere.appendingPathComponent("b_tone.wav"))
+            let swept = linked && !wrongKind && missingBefore == 2 && m.missingAssets.isEmpty
+                && m.project.assets.map(\.id) == p.assets.map(\.id)
+                && m.project.assets.allSatisfy { !m.media.isOffline($0) }
+            log("RELINK \(relative && swept ? "OK" : "FAIL") relative=\(relative) swept=\(swept) missingBefore=\(missingBefore)")
+            ok = ok && relative && swept
+        }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")
     }
 }

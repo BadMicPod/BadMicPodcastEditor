@@ -54,8 +54,11 @@ final class MediaStore: ObservableObject {
     // MARK: Import
 
     /// Probes a file and returns a library asset, converting through ffmpeg when AVFoundation can't read it.
-    func importFile(_ url: URL) async -> MediaAsset? {
-        let name = url.deletingPathExtension().lastPathComponent
+    /// Pass `replacing` to point an existing library item at a new file: it keeps its identity and
+    /// name, so every clip made from it follows. The new file must be the same kind of media.
+    func importFile(_ url: URL, replacing old: MediaAsset? = nil) async -> MediaAsset? {
+        let name = old?.name ?? url.deletingPathExtension().lastPathComponent
+        let id = old?.id ?? UUID()
         if let type = UTType(filenameExtension: url.pathExtension.lowercased()), type.conforms(to: .image) {
             guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
                   let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] else { return nil }
@@ -63,7 +66,9 @@ final class MediaStore: ObservableObject {
             var h = props[kCGImagePropertyPixelHeight] as? Int ?? 0
             if let o = props[kCGImagePropertyOrientation] as? UInt32, o >= 5 { swap(&w, &h) }
             guard w > 0, h > 0 else { return nil }
-            let asset = MediaAsset(path: url.path, name: name, kind: .image, duration: 0, width: w, height: h, fps: 0, hasAudio: false)
+            if let old, old.kind != .image { return nil }
+            let asset = MediaAsset(id: id, path: url.path, name: name, kind: .image, duration: 0, width: w, height: h, fps: 0, hasAudio: false)
+            forget(id)
             loadStill(asset)
             return asset
         }
@@ -75,7 +80,9 @@ final class MediaStore: ObservableObject {
             playable = converted.path
         }
         guard let (rt, info) = probed else { return nil }
-        let asset = MediaAsset(path: url.path, playablePath: playable, name: name,
+        if let old, old.kind != (rt.videoTrack != nil ? .video : .audio) { return nil }
+        forget(id)
+        let asset = MediaAsset(id: id, path: url.path, playablePath: playable, name: name,
                                kind: rt.videoTrack != nil ? .video : .audio,
                                duration: info.duration, width: info.width, height: info.height,
                                fps: info.fps, hasAudio: rt.audioTrack != nil)
@@ -83,14 +90,24 @@ final class MediaStore: ObservableObject {
         return asset
     }
 
-    /// Re-attaches runtimes for assets coming from a saved project.
-    func restore(_ assets: [MediaAsset]) async {
-        for a in assets where runtimes[a.id] == nil {
+    /// Re-attaches runtimes for assets coming from a saved project. When a converted copy has gone
+    /// but its original is still there, the original is converted again; the new copies' paths are
+    /// returned by asset id so the project can be updated.
+    func restore(_ assets: [MediaAsset]) async -> [UUID: String] {
+        var reconverted: [UUID: String] = [:]
+        for var a in assets where runtimes[a.id] == nil {
             if a.kind == .image { loadStill(a); continue }
+            if let playable = a.playablePath, !FileManager.default.fileExists(atPath: playable),
+               FileManager.default.fileExists(atPath: a.path),
+               let again = await FFmpeg.makePlayable(URL(fileURLWithPath: a.path)) {
+                a.playablePath = again.path
+                reconverted[a.id] = again.path
+            }
             guard FileManager.default.fileExists(atPath: a.url.path),
                   let (rt, _) = await Self.probe(a.url) else { continue }
             adopt(rt, for: a)
         }
+        return reconverted
     }
 
     func isOffline(_ asset: MediaAsset) -> Bool {
@@ -321,7 +338,10 @@ enum FFmpeg {
         guard let bin = binary else { return nil }
         let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
         let stamp = "\(url.path)|\(attrs?[.size] ?? 0)|\(attrs?[.modificationDate] ?? Date.distantPast)"
-        let base = url.deletingPathExtension().lastPathComponent + "-" + String(UInt(bitPattern: stamp.hashValue), radix: 36)
+        // A hash that is the same on every launch, so re-converting a file reuses its copy's name.
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in stamp.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100000001b3 }
+        let base = url.deletingPathExtension().lastPathComponent + "-" + String(hash, radix: 36)
         let out = cacheDir.appendingPathComponent(base + ".mov")
 
         // 1. Stream copy into a QuickTime container (instant for H.264/HEVC/AAC inside MKV etc).

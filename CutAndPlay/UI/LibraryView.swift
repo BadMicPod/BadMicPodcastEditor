@@ -192,6 +192,10 @@ private struct AssetTile: View {
             return NSItemProvider(object: ("cutandplay:" + asset.id.uuidString) as NSString)
         }
         .contextMenu {
+            if offline {
+                Button("Locate…") { model.locate(asset.id) }
+                Divider()
+            }
             Button("Add to Timeline") { model.addAtPlayhead(.asset(asset.id)) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: asset.path)]) }
             Divider()
