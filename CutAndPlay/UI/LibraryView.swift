@@ -295,7 +295,7 @@ private struct AssetRow: View {
         }
         .padding(4)
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hovering ? Theme.hover : .clear))
-        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color.white.opacity(selected ? 0.85 : 0), lineWidth: 1.5))
+        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color(hex: 0x3A3A3A).opacity(selected ? 1 : 0), lineWidth: 1))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .modifier(AssetActions(model: model, asset: asset, offline: offline))
