@@ -643,7 +643,7 @@ struct GainPill: View {
         .foregroundStyle(editing || abs(db) > 0.05 ? Theme.text : Theme.textDim)
         .frame(width: 46, height: 22)
         .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(hovering || startDB != nil || editing ? Theme.hover : Theme.field))
-        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.accent.opacity(editing ? 0.9 : 0)))
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.text.opacity(editing ? 0.85 : 0)))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .gesture(

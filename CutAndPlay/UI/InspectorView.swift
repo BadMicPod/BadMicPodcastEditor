@@ -667,7 +667,7 @@ private struct ParamRow: View {
             .padding(.horizontal, 5)
             .frame(width: 60, height: 26)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
-            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Theme.accent.opacity(focused ? 0.9 : 0)))
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Theme.text.opacity(focused ? 0.85 : 0)))
             // The whole box is the click target, not just the digits.
             .contentShape(Rectangle())
             .simultaneousGesture(TapGesture().onEnded { focused = true })
@@ -1003,7 +1003,7 @@ private struct FrameSizeFields: View {
             .frame(height: 28)
             .frame(maxWidth: .infinity)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.field))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.accent.opacity(focus == tag ? 0.9 : 0)))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.text.opacity(focus == tag ? 0.85 : 0)))
             // The whole box is the click target, not just the line of text.
             .contentShape(Rectangle())
             .onTapGesture { focus = tag }

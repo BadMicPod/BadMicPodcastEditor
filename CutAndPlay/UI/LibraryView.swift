@@ -94,7 +94,7 @@ private struct SearchField: View {
         .padding(.horizontal, 9)
         .frame(height: 26)
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
-        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Theme.accent.opacity(focused ? 0.9 : 0)))
+        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Theme.text.opacity(focused ? 0.85 : 0)))
         .contentShape(Rectangle())
         .onTapGesture { focused = true }
     }

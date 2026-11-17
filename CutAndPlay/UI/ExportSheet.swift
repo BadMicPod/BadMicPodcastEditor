@@ -478,7 +478,7 @@ extension View {
     func sheetField(hovering: Bool = false, focused: Bool = false) -> some View {
         background(RoundedRectangle(cornerRadius: SheetStyle.radius, style: .continuous).fill(hovering ? SheetStyle.fieldHover : SheetStyle.field))
             .overlay(RoundedRectangle(cornerRadius: SheetStyle.radius, style: .continuous)
-                .strokeBorder(focused ? Theme.accent.opacity(0.85) : SheetStyle.fieldStroke, lineWidth: 1))
+                .strokeBorder(focused ? Theme.text.opacity(0.85) : SheetStyle.fieldStroke, lineWidth: 1))
     }
 }
 

@@ -254,7 +254,7 @@ private struct TimecodeField: View {
         .padding(.horizontal, 7)
         .frame(height: 26)
         .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(editing || hovering ? Theme.field : .clear))
-        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.accent.opacity(editing ? 0.9 : 0)))
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.text.opacity(editing ? 0.85 : 0)))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture {
