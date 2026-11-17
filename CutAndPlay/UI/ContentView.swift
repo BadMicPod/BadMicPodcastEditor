@@ -57,6 +57,9 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(.dark)
+        // The title bar in the panel black, not macOS's lighter default.
+        .toolbarBackground(Theme.panel, for: .windowToolbar)
+        .toolbarBackground(.visible, for: .windowToolbar)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 6) {
@@ -105,6 +108,12 @@ enum KeyCommands {
         installed = true
         // Hand the Dock the icon directly rather than relying on its cache of this bundle path.
         if let icon = NSImage(named: "AppIcon") { NSApp.applicationIconImage = icon }
+        DispatchQueue.main.async {
+            for window in NSApp.windows where window.canBecomeMain {
+                window.backgroundColor = Theme.NS.panel
+                window.titlebarAppearsTransparent = true
+            }
+        }
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             MainActor.assumeIsolated { handle(event, model) ? nil : event }
         }
