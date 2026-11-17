@@ -84,7 +84,7 @@ struct ToolKey: View {
     }
 }
 
-/// A labelled on/off toggle; a red-orange dot shows it's on.
+/// A labelled on/off toggle.
 struct ToggleChip: View {
     let title: String
     let on: Bool
@@ -94,14 +94,12 @@ struct ToggleChip: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                if on { Circle().fill(Theme.accent).frame(width: 5, height: 5) }
-                Text(title).font(.system(size: 11, weight: .medium))
-            }
-            .foregroundStyle(on || hovering ? Theme.text : Theme.textDim)
-            .padding(.horizontal, 9)
+            // On is white text on a lighter key; off is dim and flat.
+            Text(title).font(.system(size: 11, weight: .medium))
+            .foregroundStyle(on ? Theme.text : (hovering ? Theme.text.opacity(0.75) : Theme.textFaint))
+            .padding(.horizontal, 10)
             .frame(height: 24)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(on ? Theme.raised : (hovering ? Theme.hover : .clear)))
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(on ? Color(hex: 0x2A2A2A) : (hovering ? Theme.hover : .clear)))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
