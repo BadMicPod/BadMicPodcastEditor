@@ -16,8 +16,13 @@ struct InspectorView: View {
         let clips = selected
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 9) {
-                Image(systemName: headerSymbol(clips))
-                    .font(.system(size: 12, weight: .medium))
+                Group {
+                    if !clips.isEmpty, clips.allSatisfy({ $0.kind == .solid }) {
+                        SolidIcon().frame(width: 15, height: 11)
+                    } else {
+                        Image(systemName: headerSymbol(clips)).font(.system(size: 12, weight: .medium))
+                    }
+                }
                     .foregroundStyle(Theme.textDim)
                     .frame(width: 18)
                 Text(title(clips))
