@@ -120,7 +120,7 @@ struct IconButton: View {
 struct LineIcon: Shape {
     let name: String
 
-    static let names: Set<String> = ["cursorarrow", "scissors", "textformat", "square.and.arrow.down", "eye", "eye.slash",
+    static let names: Set<String> = ["cursorarrow", "scissors", "square.and.arrow.down", "eye", "eye.slash",
                                      "lock", "repeat", "arrow.left.and.right", "arrow.up.left.and.arrow.down.right",
                                      "arrow.down.right.and.arrow.up.left", "trash"]
 
@@ -206,8 +206,29 @@ struct Glyph: View {
                 .frame(width: size * 1.2, height: size * 1.2)
         } else if symbol == "solid" {
             SolidIcon(lineWidth: 1.3).frame(width: size * 1.15, height: size * 0.86)
+        } else if symbol == "textformat" {
+            TextFrameIcon().frame(width: size * 1.15, height: size * 0.86)
         } else {
             Image(systemName: symbol).font(.system(size: size, weight: weight))
+        }
+    }
+}
+
+/// The icon for a text clip: a T inside the same frame as the solid icon, so the two read as a pair.
+struct TextFrameIcon: View {
+    var lineWidth: CGFloat = 1.3
+
+    var body: some View {
+        Canvas { ctx, size in
+            let outer = CGRect(x: lineWidth / 2, y: lineWidth / 2, width: size.width - lineWidth, height: size.height - lineWidth)
+            let style = StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+            ctx.stroke(Path(roundedRect: outer, cornerRadius: 2.2), with: .foreground, style: style)
+            // On the frame's 17 × 13 grid: crossbar from 5 to 12 at 4, stem down to 9.5.
+            let sx = size.width / 17, sy = size.height / 13
+            var t = Path()
+            t.move(to: CGPoint(x: 5 * sx, y: 4 * sy)); t.addLine(to: CGPoint(x: 12 * sx, y: 4 * sy))
+            t.move(to: CGPoint(x: 8.5 * sx, y: 4 * sy)); t.addLine(to: CGPoint(x: 8.5 * sx, y: 9.5 * sy))
+            ctx.stroke(t, with: .foreground, style: style)
         }
     }
 }
