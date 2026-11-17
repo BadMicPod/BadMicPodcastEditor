@@ -106,6 +106,14 @@ struct Clip: Identifiable, Codable, Hashable {
     var transform: ClipTransform?
     /// A transition into this clip from the clip that ends where it starts, on the same track.
     var transitionIn: Transition?
+    /// A freeze frame: shows the single frame at `sourceStart` for its whole length.
+    var freeze: Bool?
+    /// Set on a reversed clip: where its footage came from, so reversing again restores it.
+    var reversedFrom: ReverseSource?
+
+    var isFreeze: Bool { freeze == true }
+    /// Plays through its source over time (so speed and source limits apply); a freeze frame doesn't.
+    var playsSource: Bool { kind.usesSource && !isFreeze }
 
     /// Clips that can be scaled and moved in the frame (text has its own placement).
     var isTransformable: Bool { kind == .video || kind == .image || kind == .solid }
@@ -131,7 +139,7 @@ struct Clip: Identifiable, Codable, Hashable {
         let d = t - start
         start = t
         duration -= d
-        if kind.usesSource { sourceStart = max(0, sourceStart + d * speed) }
+        if playsSource { sourceStart = max(0, sourceStart + d * speed) }
         clampFades()
     }
 
@@ -180,6 +188,12 @@ struct TransitionPlan: Hashable {
     var tailOut = 0.0
     var reveal: TransitionEdge?
     var conceal: TransitionEdge?
+}
+
+/// The footage a reversed clip was made from.
+struct ReverseSource: Codable, Hashable {
+    var assetID: UUID
+    var sourceStart: Double
 }
 
 /// Scale and position of a clip within the frame.
@@ -327,7 +341,7 @@ extension Project {
     }
 
     func sourceLimit(_ clip: Clip) -> Double? {
-        guard clip.kind.usesSource else { return nil }
+        guard clip.playsSource else { return nil }
         return asset(clip.assetID)?.duration
     }
 
@@ -355,7 +369,7 @@ extension Project {
         if left {
             let prevEnd = others.filter { $0.end <= c.start + 1e-6 }.map(\.end).max() ?? 0
             var lo = prevEnd - c.start
-            if c.kind.usesSource { lo = max(lo, -c.sourceStart / c.speed) }
+            if c.playsSource { lo = max(lo, -c.sourceStart / c.speed) }
             let hi = c.duration - minDur
             return min(lo, hi)...hi
         } else {
@@ -527,12 +541,12 @@ extension Project {
         let speed = min(max(speed, 0.05), 100)
         for track in videoTracks + audioTracks {
             let order = clips.indices.filter { clips[$0].trackID == track.id }.sorted { clips[$0].start < clips[$1].start }
-            guard order.contains(where: { ids.contains(clips[$0].id) && clips[$0].kind.usesSource }) else { continue }
+            guard order.contains(where: { ids.contains(clips[$0].id) && clips[$0].playsSource }) else { continue }
             var shift = 0.0
             var prevEnd = 0.0
             for i in order {
                 var c = clips[i]
-                if ids.contains(c.id), c.kind.usesSource {
+                if ids.contains(c.id), c.playsSource {
                     let newDuration = max(snapFrame(c.duration * c.speed / speed), 1 / fps)
                     c.start += shift
                     shift += newDuration - c.duration
@@ -615,12 +629,12 @@ extension Project {
 
     /// Unused media before a clip's in point, in timeline seconds.
     private func headRoom(_ c: Clip) -> Double {
-        c.kind.usesSource ? c.sourceStart / c.speed : .infinity
+        c.playsSource ? c.sourceStart / c.speed : .infinity
     }
 
     /// Unused media after a clip's out point, in timeline seconds.
     private func tailRoom(_ c: Clip) -> Double {
-        guard c.kind.usesSource, let limit = sourceLimit(c) else { return .infinity }
+        guard c.playsSource, let limit = sourceLimit(c) else { return .infinity }
         return max(0, (limit - c.sourceStart - c.duration * c.speed) / c.speed)
     }
 

@@ -121,7 +121,7 @@ struct InspectorView: View {
         let ids = Set(clips.map(\.id))
         let visual = clips.filter { $0.kind != .audio }
         let audio = clips.filter { $0.kind == .audio }
-        let sourced = clips.filter { $0.kind.usesSource }
+        let sourced = clips.filter { $0.playsSource }
         let offSpeed = sourced.first.map { abs($0.speed - 1) > 0.001 } ?? false
         let offGain = audio.first.map { abs($0.gainDB) > 0.001 } ?? false
 

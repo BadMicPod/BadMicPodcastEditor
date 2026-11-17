@@ -508,6 +508,43 @@ enum SelfTest {
             log("GAPS+PASTE \(closed && all && pasteOK ? "OK" : "FAIL") gap=\(closed) all=\(all) paste=\(pasteOK)")
             ok = ok && closed && all && pasteOK
         }
+        // Freeze frame: the clip splits at the playhead, a 2s hold goes in and the rest moves along;
+        // exported frames across the hold are identical.
+        if let video = project.assets.first(where: { $0.kind == .video && $0.duration >= 6 }) {
+            var p = Project()
+            p.width = 640; p.height = 360; p.fps = 30
+            p.assets = project.assets
+            let v = p.videoTracks[0].id
+            p.clips = [Clip(trackID: v, kind: .video, assetID: video.id, start: 0, duration: 4)]
+            let m = EditorModel()
+            m.load(p, url: nil)
+            m.seek(to: 1)
+            m.freezeFrame()
+            let parts = m.project.clips.sorted { $0.start < $1.start }.map { ($0.start, $0.end, $0.isFreeze) }
+            let shape = parts.count == 3 && parts[1] == (1, 3, true) && parts[2].0 == 3 && abs(parts[2].1 - 6) < 1e-9
+            let url = outDir.appendingPathComponent("freeze.mp4")
+            var settings = ExportSettings()
+            settings.includeAudio = false
+            _ = await export(m.project, media, settings, to: url)
+            let gen = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+            gen.requestedTimeToleranceBefore = .zero
+            gen.requestedTimeToleranceAfter = .zero
+            func bytes(_ t: Double) async -> [UInt8] {
+                guard let cg = try? await gen.image(at: CMTime(seconds: t, preferredTimescale: 600)).image,
+                      let data = cg.dataProvider?.data as Data? else { return [] }
+                return Array(data)
+            }
+            func diff(_ a: [UInt8], _ b: [UInt8]) -> Double {
+                guard !a.isEmpty, a.count == b.count else { return 999 }
+                var sum = 0
+                for i in stride(from: 0, to: a.count, by: 7) { sum += abs(Int(a[i]) - Int(b[i])) }
+                return Double(sum) / Double(a.count / 7)
+            }
+            let f1 = await bytes(1.3), f2 = await bytes(2.7), moving = await bytes(4.5)
+            let held = diff(f1, f2) < 2 && diff(f1, moving) > 2
+            log("FREEZE \(shape && held ? "OK" : "FAIL") shape=\(shape) held=\(held) d=\(diff(f1, f2)) vs \(diff(f1, moving))")
+            ok = ok && shape && held
+        }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")
     }
 }

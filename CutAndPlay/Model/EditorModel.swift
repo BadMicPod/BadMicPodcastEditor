@@ -771,6 +771,37 @@ final class EditorModel: ObservableObject {
         selection = Set(project.clips.map(\.id))
     }
 
+    // MARK: Freeze frame
+
+    /// Holds the frame under the playhead for two seconds: the clip splits there, a freeze frame goes
+    /// in, and everything after it on the clip's tracks moves along to make room.
+    func freezeFrame(seconds hold: Double = 2) {
+        let t = project.snapFrame(playhead)
+        let under = project.clips.filter { $0.kind == .video && !$0.isFreeze && !project.isLocked($0.trackID) && t >= $0.start && t < $0.end }
+        let chosen = under.first { selection.contains($0.id) } ?? under.max { a, b in
+            (project.trackIndex(a.trackID, kind: .video) ?? 0) < (project.trackIndex(b.trackID, kind: .video) ?? 0)
+        }
+        guard let c = chosen else { return }
+        let source = c.sourceStart + (t - c.start) * c.speed
+        var made: UUID?
+        mutate { p in
+            let group = p.linked([c.id])
+            _ = p.split(ids: group, at: t)
+            let tracks = Set(p.clips.filter { group.contains($0.id) }.map(\.trackID))
+            var shifting = Set(p.clips.filter { tracks.contains($0.trackID) && $0.start >= t - 1e-6 }.map(\.id))
+            shifting = p.unlocked(p.linked(shifting))
+            for i in p.clips.indices where shifting.contains(p.clips[i].id) { p.clips[i].start += hold }
+            var f = Clip(trackID: c.trackID, kind: .video, assetID: c.assetID, start: t, duration: hold, sourceStart: source)
+            f.freeze = true
+            f.grade = c.grade
+            f.transform = c.transform
+            p.clips.append(f)
+            p.resolveOverlaps(keeping: shifting.union([f.id]))
+            made = f.id
+        }
+        if let made { selection = [made] }
+    }
+
     // MARK: Gaps
 
     func deleteGap(on track: UUID, at t: Double) {

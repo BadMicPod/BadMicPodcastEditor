@@ -634,7 +634,7 @@ final class TimelineCanvas: NSView {
         var lo = -Double.infinity, hi = Double.infinity
         for c in originals {
             if left {
-                if c.kind.usesSource { lo = max(lo, -c.sourceStart / c.speed) }
+                if c.playsSource { lo = max(lo, -c.sourceStart / c.speed) }
                 hi = min(hi, c.duration - minDur)
             } else {
                 lo = max(lo, minDur - c.duration)
@@ -770,7 +770,7 @@ final class TimelineCanvas: NSView {
             let t = model.playhead
             menu.addItem(ActionItem("Split at Playhead", enabled: t > h.clip.start && t < h.clip.end) { model.splitAtPlayhead() })
             menu.addItem(ActionItem("Detach Audio", enabled: model.selectionIsLinked) { model.detachAudio() })
-            if h.clip.kind.usesSource {
+            if h.clip.playsSource {
                 let speed = NSMenuItem(title: "Speed", action: nil, keyEquivalent: "")
                 let sub = NSMenu()
                 sub.autoenablesItems = false
@@ -1227,7 +1227,8 @@ final class TimelineCanvas: NSView {
                 ctx.fill(CGRect(x: r.minX, y: r.minY, width: r.width, height: 17))
             }
             var label = model.project.name(of: c)
-            if abs(c.speed - 1) > 0.001 { label += "   \(Int((c.speed * 100).rounded()))%" }
+            if c.isFreeze { label += "   Freeze" } else if abs(c.speed - 1) > 0.001 { label += "   \(Int((c.speed * 100).rounded()))%" }
+            if c.reversedFrom != nil { label += "   Reversed" }
             if c.kind == .audio, abs(c.gainDB) > 0.05 { label += "   " + formatDB(c.gainDB) }
             var lx = max(r.minX, 0) + 8
             if r.width > 36 { lx = max(lx, fadeHandleX(c, r, fadeIn: true) + 10) }
@@ -1349,7 +1350,7 @@ final class TimelineCanvas: NSView {
         while k <= kEnd, drawn < 240 {
             let ts = Double(k) * step
             let tx = r.minX + CGFloat((ts - c.sourceStart) / c.speed) * pps
-            let sample = min(max(0, ts), max(0, asset.duration - 0.05))
+            let sample = c.isFreeze ? c.sourceStart : min(max(0, ts), max(0, asset.duration - 0.05))
             if let img = model.media.thumbnail(asset: asset.id, time: sample) {
                 // Frames sit side by side with a 1pt dark gap, like a contact sheet.
                 drawImage(img, fill: CGRect(x: tx, y: r.minY, width: max(1, w - 1), height: r.height), ctx: ctx)

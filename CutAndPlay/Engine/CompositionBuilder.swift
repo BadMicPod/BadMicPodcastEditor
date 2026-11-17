@@ -228,6 +228,18 @@ enum CompositionBuilder {
         let start = time(clip.start)
         let end = time(clip.end)
         guard start >= cursor, end > start else { return false }
+        if clip.isFreeze {
+            // One source frame stretched over the whole clip.
+            let frame = CMTime(value: 1, timescale: 60)
+            var at = time(clip.sourceStart)
+            if at < range.start { at = range.start }
+            if at + frame > range.end { at = range.end - frame }
+            guard at >= range.start else { return false }
+            do { try track.insertTimeRange(CMTimeRange(start: at, duration: frame), of: source, at: start) } catch { return false }
+            track.scaleTimeRange(CMTimeRange(start: start, duration: frame), toDuration: end - start)
+            cursor = end
+            return true
+        }
         let unity = abs(clip.speed - 1) < 1e-9
         var srcStart = time(clip.sourceStart)
         var tgtDur = end - start
