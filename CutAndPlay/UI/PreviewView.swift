@@ -126,6 +126,11 @@ struct PreviewView: View {
                                 .allowsHitTesting(false)
                         )
                         .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(Color.white.opacity(0.06)))
+                    // Nothing on the timeline yet: say how to start, and take a click as "import".
+                    if model.project.clips.isEmpty {
+                        EmptyViewerPrompt(hasMedia: !model.project.assets.isEmpty) { model.showImportPanel() }
+                            .frame(width: w, height: h)
+                    }
                 }
                 .frame(width: w, height: h, alignment: .topLeading)
                 .coordinateSpace(name: "viewer")
@@ -234,6 +239,55 @@ struct TransportBar: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 68)
+    }
+}
+
+/// What the viewer shows on an empty timeline: a dashed drop area with a film frame and an arrow.
+private struct EmptyViewerPrompt: View {
+    let hasMedia: Bool
+    let onImport: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        GeometryReader { g in
+            VStack(spacing: 16) {
+                Canvas { ctx, size in
+                    let s = size.width / 74
+                    func r(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> CGRect { CGRect(x: x * s, y: y * s, width: w * s, height: h * s) }
+                    var frame = Path(roundedRect: r(1, 9, 58, 40), cornerRadius: 5 * s)
+                    for y: CGFloat in [17, 41] { frame.move(to: CGPoint(x: 1 * s, y: y * s)); frame.addLine(to: CGPoint(x: 59 * s, y: y * s)) }
+                    for x: CGFloat in [9, 19, 29, 39, 49] {
+                        frame.move(to: CGPoint(x: x * s, y: 9 * s)); frame.addLine(to: CGPoint(x: x * s, y: 17 * s))
+                        frame.move(to: CGPoint(x: x * s, y: 41 * s)); frame.addLine(to: CGPoint(x: x * s, y: 49 * s))
+                    }
+                    let style = StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round)
+                    ctx.stroke(frame, with: .color(Theme.textFaint), style: style)
+                    var arrow = Path()
+                    arrow.move(to: CGPoint(x: 66 * s, y: 4 * s)); arrow.addLine(to: CGPoint(x: 66 * s, y: 24 * s))
+                    arrow.move(to: CGPoint(x: 59 * s, y: 17 * s)); arrow.addLine(to: CGPoint(x: 66 * s, y: 24 * s)); arrow.addLine(to: CGPoint(x: 73 * s, y: 17 * s))
+                    ctx.stroke(arrow, with: .color(Theme.text), style: style)
+                }
+                .frame(width: 96, height: 70)
+                Text(hasMedia ? "Drag media from the library to the timeline" : "Drop video, audio or images anywhere")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                Text(hasMedia ? "or double-click it to add it at the playhead"
+                              : "or press ⌘I to import  ·  MP4, MOV, MKV, WebM, WAV, MP3, JPG, PNG")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textFaint)
+            }
+            .frame(width: g.size.width * 0.62, height: g.size.height * 0.58)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                    .foregroundStyle(hovering ? Color.white.opacity(0.3) : Color(hex: 0x2C2C2C))
+            )
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: hovering)
+            .onTapGesture { if !hasMedia { onImport() } }
+            .frame(width: g.size.width, height: g.size.height)
+        }
     }
 }
 

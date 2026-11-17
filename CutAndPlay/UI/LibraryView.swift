@@ -37,7 +37,13 @@ struct LibraryView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     if model.project.assets.isEmpty {
-                        EmptyLibrary(targeted: dropTargeted) { model.showImportPanel() }
+                        SearchField(text: $search)
+                        Text("Imported media\nappears here")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textFaint)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 16)
                     } else {
                         SearchField(text: $search)
                         VStack(spacing: 3) {
@@ -174,36 +180,6 @@ func loadURLs(_ providers: [NSItemProvider], completion: @escaping ([URL]) -> Vo
     group.notify(queue: .main) { completion(urls) }
 }
 
-private struct EmptyLibrary: View {
-    let targeted: Bool
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 8) {
-                Image(systemName: "arrow.down.to.line")
-                    .font(.system(size: 18, weight: .medium))
-                Text("Drop media")
-                    .font(.system(size: 11.5, weight: .medium))
-            }
-            .foregroundStyle(hovering || targeted ? Theme.text : Theme.textFaint)
-            .frame(maxWidth: .infinity)
-            .frame(height: 130)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
-                    .foregroundStyle(hovering || targeted ? Theme.accent : Color.white.opacity(0.14))
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.12), value: hovering)
-    }
-}
-
-/// Header button for text or a solid: click to add one at the playhead, or drag it to the timeline.
 private struct AddButton: View {
     let model: EditorModel
     let symbol: String

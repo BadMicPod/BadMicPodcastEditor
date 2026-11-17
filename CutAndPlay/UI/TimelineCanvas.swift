@@ -948,6 +948,14 @@ final class TimelineCanvas: NSView {
             r.fill()
         }
 
+        // An empty timeline says how to fill it, across V1.
+        if project.clips.isEmpty, ghosts.isEmpty, let v1 = project.videoTracks.first, let band = layout.band(for: v1.id) {
+            let hint = NSAttributedString(string: "Drag media here, or double-click it in the library", attributes: Self.hintAttrs)
+            let size = hint.size()
+            let y = ruler + band.y - view.scrollY + (band.height - size.height) / 2
+            hint.draw(at: CGPoint(x: (bounds.width - size.width) / 2, y: y))
+        }
+
         // "New track" drop zones
         let targets = Set(ghosts.map(\.trackID)).union(overrides.values.map(\.trackID))
         for (token, zoneY) in [(TrackToken.newVideo, layout.videoZoneY), (TrackToken.newAudio, layout.audioZoneY)] where targets.contains(token) {
@@ -1069,6 +1077,11 @@ final class TimelineCanvas: NSView {
             text.draw(at: CGPoint(x: r.minX + 6, y: r.minY + 2))
         }
     }
+
+    private static let hintAttrs: [NSAttributedString.Key: Any] = [
+        .font: NSFont.systemFont(ofSize: 11.5),
+        .foregroundColor: NSColor(hex: 0x3E3E3C),
+    ]
 
     private static let readoutAttrs: [NSAttributedString.Key: Any] = [
         .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),

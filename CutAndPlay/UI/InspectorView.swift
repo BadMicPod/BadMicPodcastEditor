@@ -103,6 +103,11 @@ struct InspectorView: View {
                     Button(Self.fpsLabel(rate)) { model.setFPS(rate) }
                 }
             }
+            if !p.settingsLocked && !p.assets.contains(where: { $0.kind == .video }) {
+                Text("Matches the first video you import.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.textFaint)
+            }
         }
     }
 
