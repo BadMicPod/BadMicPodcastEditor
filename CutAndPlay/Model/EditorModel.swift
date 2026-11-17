@@ -126,8 +126,9 @@ final class EditorModel: ObservableObject {
         engine.onEnded = { [weak self] in
             guard let self else { return }
             if self.loop, self.project.duration > 0 {
-                self.playhead = 0
-                self.engine.seek(to: 0)
+                let start = self.loopSpan.start
+                self.playhead = start
+                self.engine.seek(to: start)
                 self.engine.play()
                 return
             }
@@ -160,6 +161,10 @@ final class EditorModel: ObservableObject {
                     self.selection = self.project.linked([first.id])
                 }
                 if args.contains("--reverse-first") { self.reverseSelection() }
+                if args.contains("--edit-marker"), let m = self.project.markerList.dropFirst().first {
+                    try? await Task.sleep(nanoseconds: 800_000_000)
+                    self.editingMarker = m.id
+                }
                 if args.contains("--show-export") { self.showExport = true }
                 if args.contains("--play") { self.play() }
                 if args.contains("--curve-menu") {
@@ -376,10 +381,10 @@ final class EditorModel: ObservableObject {
         if isPlaying {
             playhead = min(engine.currentTime, max(engine.duration, 0))
             // Within a frame of the end, or stopped by the player: start over when looping.
-            let end = project.duration
-            if loop, end > 0, playhead >= end - 1 / project.fps || !engine.isPlaying {
-                playhead = 0
-                engine.seek(to: 0)
+            let span = loopSpan
+            if loop, span.end > 0, playhead >= span.end - 1 / project.fps || !engine.isPlaying {
+                playhead = span.start
+                engine.seek(to: span.start)
                 engine.play()
             }
         }
@@ -405,6 +410,85 @@ final class EditorModel: ObservableObject {
                 self.engine.seek(to: self.playhead)
             }
         }
+    }
+
+    /// What Loop repeats: the in/out range when there is one, otherwise the whole timeline.
+    var loopSpan: (start: Double, end: Double) {
+        project.playRange ?? (0, project.duration)
+    }
+
+    // MARK: Markers and in/out
+
+    /// The marker the timeline is showing its panel for.
+    @Published var editingMarker: UUID?
+
+    /// Adds a marker at the playhead, or opens the one already there.
+    func addMarker() {
+        let t = project.snapFrame(playhead)
+        if let here = project.markerList.first(where: { abs($0.time - t) < 0.5 / project.fps }) {
+            editingMarker = here.id
+            return
+        }
+        let m = Marker(time: t, name: "Marker \((project.markers?.count ?? 0) + 1)")
+        mutate { p in p.markers = (p.markers ?? []) + [m] }
+    }
+
+    func updateMarker(_ id: UUID, _ change: (inout Marker) -> Void) {
+        mutate { p in
+            guard let i = p.markers?.firstIndex(where: { $0.id == id }) else { return }
+            change(&p.markers![i])
+        }
+    }
+
+    /// While dragging a flag: one undo step for the whole drag.
+    func updateMarkerLive(_ id: UUID, _ change: (inout Marker) -> Void) {
+        live(autoCommit: false) { p in
+            guard let i = p.markers?.firstIndex(where: { $0.id == id }) else { return }
+            change(&p.markers![i])
+        }
+    }
+
+    /// Typing a marker's name: one undo step per pause in typing.
+    func renameMarker(_ id: UUID, to name: String) {
+        live { p in
+            guard let i = p.markers?.firstIndex(where: { $0.id == id }) else { return }
+            p.markers![i].name = name
+        }
+    }
+
+    func setRangeEdgeLive(isIn: Bool, to t: Double) {
+        live(autoCommit: false) { p in
+            if isIn { p.inPoint = t } else { p.outPoint = t }
+        }
+    }
+
+    func deleteMarker(_ id: UUID) {
+        if editingMarker == id { editingMarker = nil }
+        mutate { p in
+            p.markers?.removeAll { $0.id == id }
+            if p.markers?.isEmpty == true { p.markers = nil }
+        }
+    }
+
+    func setInPoint() {
+        let t = project.snapFrame(playhead)
+        mutate { p in
+            p.inPoint = t
+            if let o = p.outPoint, o <= t { p.outPoint = nil }
+        }
+    }
+
+    func setOutPoint() {
+        let t = project.snapFrame(playhead)
+        mutate { p in
+            p.outPoint = t
+            if let i = p.inPoint, i >= t { p.inPoint = nil }
+        }
+    }
+
+    func clearRange() {
+        guard project.inPoint != nil || project.outPoint != nil else { return }
+        mutate { p in p.inPoint = nil; p.outPoint = nil }
     }
 
     func togglePlay() {
@@ -433,9 +517,10 @@ final class EditorModel: ObservableObject {
         guard project.duration > 0 else { return }
         rebuildNow()
         guard !engine.isEmpty else { return }
-        if playhead >= project.duration - 1 / project.fps {
-            playhead = 0
-            engine.seek(to: 0)
+        let span = loopSpan
+        if playhead >= project.duration - 1 / project.fps || (loop && project.playRange != nil && (playhead < span.start || playhead >= span.end - 1 / project.fps)) {
+            playhead = span.start
+            engine.seek(to: span.start)
         }
         engine.play()
         isPlaying = true

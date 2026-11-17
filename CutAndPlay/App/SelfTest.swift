@@ -619,6 +619,29 @@ enum SelfTest {
             log("REVERSE \(good ? "OK" : "FAIL") length=\(length) start=\(startMatch) end=\(endMatch) forwards=\(wrongWay) audio=\(audio)")
             ok = ok && good
         }
+        // In/out: exporting just the range gives a file the range's length, and markers survive saving.
+        do {
+            var p = project
+            p.inPoint = 1
+            p.outPoint = 2.5
+            p.markers = [Marker(time: 1.2, name: "Beat drop", tint: .green)]
+            var settings = ExportSettings()
+            settings.includeAudio = true
+            settings.height = 360
+            settings.rangeOnly = true
+            let url = outDir.appendingPathComponent("range.mp4")
+            _ = await export(p, media, settings, to: url)
+            let length = (try? await AVURLAsset(url: url).loadTracks(withMediaType: .video).first?.load(.timeRange).duration.seconds) ?? 0
+            let back = (try? JSONDecoder().decode(Project.self, from: JSONEncoder().encode(p)))
+            let kept = back?.markers?.first?.name == "Beat drop" && back?.inPoint == 1 && back?.outPoint == 2.5
+            var old = try? JSONSerialization.jsonObject(with: JSONEncoder().encode(project)) as? [String: Any]
+            old?["markers"] = nil
+            let opensOld = old.flatMap { try? JSONSerialization.data(withJSONObject: $0) }.flatMap { try? JSONDecoder().decode(Project.self, from: $0) } != nil
+            let snaps = p.snapTargets(excluding: []).contains(1.2)
+            let good = abs(length - 1.5) < 0.06 && kept && opensOld && snaps
+            log("RANGE \(good ? "OK" : "FAIL") length=\(length) kept=\(kept) opensOld=\(opensOld) snaps=\(snaps)")
+            ok = ok && good
+        }
         // Export shapes: a vertical 9:16 export is 1080 × 1920, and moving the crop changes what's kept.
         do {
             var settings = ExportSettings()

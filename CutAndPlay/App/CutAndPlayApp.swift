@@ -135,6 +135,15 @@ struct CutAndPlayApp: App {
                 Button("Add Video Track") { model.addTrack(.video) }
                 Button("Add Audio Track") { model.addTrack(.audio) }
             }
+            // Bare-key shortcuts (M, I, O, ⇧X) are handled by the editor window, so typing in a
+            // text field isn't affected; the menu lists them for finding.
+            CommandMenu("Mark") {
+                Button("Add Marker   M") { model.addMarker() }
+                Button("Set In   I") { model.setInPoint() }
+                Button("Set Out   O") { model.setOutPoint() }
+                Button("Clear In and Out   ⇧X") { model.clearRange() }
+                    .disabled(model.project.inPoint == nil && model.project.outPoint == nil)
+            }
             CommandGroup(after: .toolbar) {
                 Button("Zoom In") { model.zoom(by: 1.4) }.keyboardShortcut("=")
                 Button("Zoom Out") { model.zoom(by: 1 / 1.4) }.keyboardShortcut("-")

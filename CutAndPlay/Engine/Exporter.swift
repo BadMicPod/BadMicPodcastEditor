@@ -19,6 +19,14 @@ struct ExportSettings: Equatable {
     var shape = Shape.original
     /// Which part of the picture to keep when cropping, as the crop's centre (0...1 across and down).
     var reframe = CGPoint(x: 0.5, y: 0.5)
+    /// Export just the in/out range, when the timeline has one.
+    var rangeOnly = false
+
+    /// What gets exported: the whole timeline, or just its in/out range moved to start at zero.
+    func output(_ project: Project) -> Project {
+        guard rangeOnly, let r = project.playRange else { return project }
+        return project.cropped(to: r)
+    }
 
     enum Shape: String, CaseIterable {
         case original, vertical, square, portrait
@@ -94,8 +102,9 @@ final class Exporter: ObservableObject {
 
     private var measuringCancelled = false
 
-    func start(project: Project, media: MediaStore, settings: ExportSettings, url: URL) {
+    func start(project whole: Project, media: MediaStore, settings: ExportSettings, url: URL) {
         guard state != .running else { return }
+        let project = settings.output(whole)
         progress = 0
         if media.needsReversedAudio(project) {
             // Reversed clips' sound is still being made: wait for it first.

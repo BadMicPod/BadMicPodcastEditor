@@ -149,6 +149,10 @@ enum KeyCommands {
             case "c": model.tool = .cut
             case "s" where shift: model.audioScrub.toggle()
             case "s": model.snapping.toggle()
+            case "m": model.addMarker()
+            case "i": model.setInPoint()
+            case "o": model.setOutPoint()
+            case "x" where shift: model.clearRange()
             case "l": model.loop.toggle()
             case "f": model.toggleViewerFullScreen()
             case "r": model.sticky.toggle()

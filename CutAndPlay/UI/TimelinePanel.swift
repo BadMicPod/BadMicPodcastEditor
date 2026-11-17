@@ -47,6 +47,9 @@ struct TimelineToolbar: View {
             TextAction(title: "Split", help: "Split at Playhead (⌘K)") { model.splitAtPlayhead() }
             TextAction(title: "Delete", help: "Delete (⌫)") { model.deleteSelection() }
                 .disabled(model.selection.isEmpty)
+            if model.project.inPoint != nil || model.project.outPoint != nil {
+                RangeReadout(model: model).padding(.leading, 4)
+            }
             Spacer()
             ToggleChip(title: "Snap", on: model.snapping, help: "Snapping (S)") { model.snapping.toggle() }
             ToggleChip(title: "Sticky", on: model.sticky, help: "Sticky Edges (R): clips touching a clip that changes length move with it") { model.sticky.toggle() }
@@ -58,6 +61,57 @@ struct TimelineToolbar: View {
         .padding(.horizontal, 12)
         .frame(height: 44)
         .background(Theme.panel).panelTopLight()
+    }
+}
+
+/// The in/out range: click In or Out to go there, ✕ to clear it.
+struct RangeReadout: View {
+    @ObservedObject var model: EditorModel
+    @State private var hoveringClear = false
+
+    var body: some View {
+        let p = model.project
+        let range = p.playRange
+        HStack(spacing: 6) {
+            point("In", p.inPoint ?? 0)
+            point("Out", p.outPoint ?? p.duration)
+            if let r = range {
+                Text("· " + Self.length(r.end - r.start))
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Theme.textFaint)
+            }
+            Button { model.clearRange() } label: {
+                Text("✕").font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(hoveringClear ? Theme.text : Theme.textFaint)
+                    .frame(width: 16, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hoveringClear = $0 }
+            .help("Clear In and Out (⇧X)")
+        }
+        .padding(.leading, 10).padding(.trailing, 4)
+        .frame(height: 24)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.bg))
+    }
+
+    private func point(_ label: String, _ t: Double) -> some View {
+        Button { model.seek(to: t) } label: {
+            HStack(spacing: 5) {
+                Text(label).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textFaint)
+                Text(Timecode.string(t, fps: model.project.fps))
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Theme.text)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Go to \(label) (\(label == "In" ? "I" : "O") sets it)")
+    }
+
+    static func length(_ s: Double) -> String {
+        if s < 60 { return s < 10 ? String(format: "%.1fs", s) : "\(Int(s.rounded()))s" }
+        return Timecode.short(s)
     }
 }
 

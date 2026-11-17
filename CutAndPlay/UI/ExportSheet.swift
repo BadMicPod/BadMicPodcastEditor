@@ -111,6 +111,14 @@ struct ExportSheet: View {
             row("Location") {
                 FolderButton(folder: folder, height: h, action: chooseFolder)
             }
+            if let r = model.project.playRange {
+                row("Range") {
+                    SheetMenu(label: settings.rangeOnly ? "In to out · " + RangeReadout.length(r.end - r.start) : "Whole timeline", height: h) {
+                        Button("In to out · " + RangeReadout.length(r.end - r.start)) { settings.rangeOnly = true; player.load(model, project: settings.output(model.project)) }
+                        Button("Whole timeline") { settings.rangeOnly = false; player.load(model, project: model.project) }
+                    }
+                }
+            }
             row("Format") {
                 SheetMenu(label: isVideo ? "MP4 Video" : "WAV Audio", symbol: isVideo ? "film" : "waveform", height: h) {
                     Button("MP4 Video") { settings.format = .mp4 }
@@ -236,7 +244,7 @@ struct ExportSheet: View {
         } else {
             bits = 48000 * 24 * 2
         }
-        let megabytes = bits * p.duration / 8 / 1_000_000
+        let megabytes = bits * settings.output(p).duration / 8 / 1_000_000
         return megabytes >= 1000 ? String(format: "~%.1f GB", megabytes / 1000) : String(format: "~%.0f MB", max(1, megabytes))
     }
 
@@ -252,7 +260,8 @@ struct ExportSheet: View {
                 ?? FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first ?? folder
         }
         model.pause()
-        player.load(model)
+        settings.rangeOnly = model.project.playRange != nil
+        player.load(model, project: settings.output(model.project))
         if CommandLine.arguments.contains("--export-vertical") { settings.shape = .vertical; settings.reframe = CGPoint(x: 0.3, y: 0.5) }
         if CommandLine.arguments.contains("--play-export-preview") { player.toggle() }
         // Don't open with the filename selected; it reads as an error state.
@@ -368,8 +377,10 @@ final class PreviewPlayer: ObservableObject {
     private var endObserver: NSObjectProtocol?
     private var timeObserver: Any?
 
-    func load(_ model: EditorModel) {
-        let p = model.project
+    func load(_ model: EditorModel, project p: Project) {
+        if let o = timeObserver { player.removeTimeObserver(o); timeObserver = nil }
+        if let o = endObserver { NotificationCenter.default.removeObserver(o); endObserver = nil }
+        if isPlaying { player.pause(); isPlaying = false }
         let scale = min(1, 960 / CGFloat(max(p.width, p.height)))
         let size = CGSize(width: max(2, (CGFloat(p.width) * scale / 2).rounded() * 2),
                           height: max(2, (CGFloat(p.height) * scale / 2).rounded() * 2))
@@ -381,7 +392,9 @@ final class PreviewPlayer: ObservableObject {
         player.actionAtItemEnd = .pause
         player.replaceCurrentItem(with: item)
         // Open on the frame under the playhead; playing from the very end starts over.
-        let t = min(max(0, model.playhead), max(0, built.duration - 1 / p.fps))
+        // (For an in/out export, the playhead is measured from the range's start.)
+        let from = p.duration == model.project.duration ? model.playhead : 0
+        let t = min(max(0, from), max(0, built.duration - 1 / p.fps))
         startTime = CompositionBuilder.time(t)
         player.seek(to: startTime, toleranceBefore: .zero, toleranceAfter: .zero)
         duration = built.duration

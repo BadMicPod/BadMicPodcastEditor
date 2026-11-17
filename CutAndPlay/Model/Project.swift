@@ -288,6 +288,32 @@ struct Project: Codable, Equatable {
     /// Remembered so repeat exports don't ask again.
     var exportName: String?
     var exportDir: String?
+    /// Named points on the timeline (optional so older projects open).
+    var markers: [Marker]?
+    /// The in/out range, set with I and O. Either can be set alone.
+    var inPoint: Double?
+    var outPoint: Double?
+}
+
+struct Marker: Codable, Hashable, Identifiable {
+    enum Tint: String, Codable, CaseIterable {
+        case white, yellow, green, blue, purple, red
+        var hex: UInt32 {
+            switch self {
+            case .white: 0xEDEDEA
+            case .yellow: 0xF2B33D
+            case .green: 0x6CC08B
+            case .blue: 0x5B9BF0
+            case .purple: 0xB07CF0
+            case .red: 0xF0503C
+            }
+        }
+    }
+
+    var id = UUID()
+    var time: Double
+    var name: String
+    var tint: Tint = .yellow
 }
 
 extension Project {
@@ -352,8 +378,38 @@ extension Project {
     }
 
     /// Every clip edge (plus zero) that things can snap to.
+    var markerList: [Marker] { (markers ?? []).sorted { $0.time < $1.time } }
+
+    /// The in/out range, if one is set and longer than a frame. With only an in point it runs to
+    /// the end; with only an out point it starts at zero.
+    var playRange: (start: Double, end: Double)? {
+        guard inPoint != nil || outPoint != nil else { return nil }
+        let a = inPoint ?? 0, b = outPoint ?? duration
+        let lo = min(a, b), hi = max(a, b)
+        return hi - lo >= 1 / fps ? (lo, hi) : nil
+    }
+
+    /// Just the in/out range, moved to start at zero: clips are cut at its edges and anything
+    /// outside goes.
+    func cropped(to range: (start: Double, end: Double)) -> Project {
+        var p = self
+        let all = Set(p.clips.map(\.id))
+        _ = p.split(ids: all, at: range.start)
+        _ = p.split(ids: Set(p.clips.map(\.id)), at: range.end)
+        p.clips.removeAll { $0.end <= range.start + 1e-6 || $0.start >= range.end - 1e-6 }
+        for i in p.clips.indices { p.clips[i].start -= range.start }
+        p.markers = p.markers?.filter { $0.time >= range.start && $0.time <= range.end }
+            .map { var m = $0; m.time -= range.start; return m }
+        p.inPoint = nil
+        p.outPoint = nil
+        return p
+    }
+
     func snapTargets(excluding ids: Set<UUID>) -> [Double] {
         var out: [Double] = [0]
+        out += (markers ?? []).map(\.time)
+        if let i = inPoint { out.append(i) }
+        if let o = outPoint { out.append(o) }
         for c in clips where !ids.contains(c.id) {
             out.append(c.start)
             out.append(c.end)
@@ -365,6 +421,7 @@ extension Project {
     var editPoints: [Double] {
         var set = Set<Double>([0])
         for c in clips { set.insert(c.start); set.insert(c.end) }
+        for m in markers ?? [] { set.insert(m.time) }
         return set.sorted()
     }
 

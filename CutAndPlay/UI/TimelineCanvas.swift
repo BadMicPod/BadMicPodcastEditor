@@ -73,6 +73,10 @@ final class TimelineCanvas: NSView {
         case fade(id: UUID, fadeIn: Bool)
         case gain(id: UUID, startY: CGFloat, startNorm: CGFloat, height: CGFloat)
         case marquee(origin: CGPoint, base: Set<UUID>)
+        /// A marker's flag: a click opens its panel, a drag moves it.
+        case marker(id: UUID, startX: CGFloat, moved: Bool)
+        /// One end of the in/out range.
+        case rangeEdge(isIn: Bool)
     }
 
     private var drag = Drag.none
@@ -119,6 +123,7 @@ final class TimelineCanvas: NSView {
         registerForDraggedTypes([.fileURL, .string])
 
         model.objectWillChange.sink { [weak self] _ in self?.needsDisplay = true }.store(in: &bag)
+        model.$editingMarker.receive(on: DispatchQueue.main).sink { [weak self] id in self?.showMarkerPanel(id) }.store(in: &bag)
         model.view.objectWillChange.sink { [weak self] _ in self?.needsDisplay = true }.store(in: &bag)
         model.media.onVisualUpdate = { [weak self] in self?.needsDisplay = true }
         model.tickHandlers.append { [weak self] in self?.tick() }
@@ -354,6 +359,14 @@ final class TimelineCanvas: NSView {
         let extend = event.modifierFlags.contains(.shift)
 
         if p.y < TimelineLayout.ruler {
+            if let id = markerHit(at: p) {
+                drag = .marker(id: id, startX: p.x, moved: false)
+                return
+            }
+            if let isIn = rangeEdgeHit(at: p) {
+                drag = .rangeEdge(isIn: isIn)
+                return
+            }
             drag = .scrub
             scrub(to: p)
             return
@@ -453,6 +466,23 @@ final class TimelineCanvas: NSView {
             }
             bubble = (formatDB(value), CGPoint(x: p.x + 12, y: p.y - 22))
             needsDisplay = true
+        case .marker(let id, let startX, var moved):
+            if !moved, abs(p.x - startX) < 3 { return }
+            if !moved { moved = true; drag = .marker(id: id, startX: startX, moved: true) }
+            var t = max(0, time(atX: p.x))
+            let others = model.project.snapTargets(excluding: []).filter { abs($0 - (model.project.markers?.first { $0.id == id }?.time ?? -1)) > 1e-9 } + [model.playhead]
+            if let s = snap([t], to: others, pixels: 6) { t += s.delta }
+            let snapped = model.project.snapFrame(t)
+            model.updateMarkerLive(id) { $0.time = snapped }
+            scrubReadout = snapped
+            needsDisplay = true
+        case .rangeEdge(let isIn):
+            var t = max(0, time(atX: p.x))
+            if let s = snap([t], to: model.project.snapTargets(excluding: []) + [model.playhead], pixels: 6) { t += s.delta }
+            let snapped = model.project.snapFrame(t)
+            model.setRangeEdgeLive(isIn: isIn, to: snapped)
+            scrubReadout = snapped
+            needsDisplay = true
         case .marquee(let origin, let base):
             let current = CGPoint(x: p.x + view.scrollX, y: p.y + view.scrollY)
             let content = CGRect(x: min(origin.x, current.x), y: min(origin.y, current.y),
@@ -496,6 +526,12 @@ final class TimelineCanvas: NSView {
                     proj.resolveOverlaps(keeping: Set(moved.keys))
                 }
             }
+        case .marker(let id, _, let moved):
+            scrubReadout = nil
+            if moved { model.commitLive() } else { model.editingMarker = id }
+        case .rangeEdge:
+            scrubReadout = nil
+            model.commitLive()
         case .fade, .gain:
             model.commitLive()
         default:
@@ -1106,6 +1142,20 @@ final class TimelineCanvas: NSView {
             ctx.stroke(m.insetBy(dx: 0.5, dy: 0.5))
         }
 
+        // Outside the in/out range is dimmed; markers run a faint line down through the tracks.
+        if let r = project.playRange {
+            ctx.setFillColor(NSColor(white: 0, alpha: 0.32).cgColor)
+            let a = x(r.start), b = x(r.end)
+            if a > 0 { ctx.fill(CGRect(x: 0, y: ruler, width: a, height: bounds.height - ruler)) }
+            if b < bounds.width { ctx.fill(CGRect(x: b, y: ruler, width: bounds.width - b, height: bounds.height - ruler)) }
+        }
+        for m in project.markerList {
+            let mx = x(m.time).rounded()
+            guard mx > -1, mx < bounds.width + 1 else { continue }
+            ctx.setFillColor(NSColor(hex: m.tint.hex).withAlphaComponent(0.45).cgColor)
+            ctx.fill(CGRect(x: mx, y: ruler, width: 1, height: bounds.height - ruler))
+        }
+
         drawRuler(ctx, project: project)
 
         // Value bubble
@@ -1188,6 +1238,105 @@ final class TimelineCanvas: NSView {
             }
             k += 1
         }
+
+        // Markers: a coloured flag with the name beside it.
+        for m in project.markerList {
+            let mx = x(m.time).rounded()
+            let label = markerLabel(m)
+            guard mx + 12 + label.size().width > 0, mx < bounds.width + 1 else { continue }
+            let color = NSColor(hex: m.tint.hex)
+            let size = label.size()
+            ctx.setFillColor(Theme.NS.panel.cgColor)
+            ctx.fill(CGRect(x: mx + 1, y: 3, width: size.width + 14, height: ruler - 5))
+            ctx.setFillColor(color.cgColor)
+            ctx.fill(CGRect(x: mx, y: 4, width: 1, height: ruler - 5))
+            let flag = CGMutablePath()
+            flag.move(to: CGPoint(x: mx, y: 4))
+            flag.addLine(to: CGPoint(x: mx + 8, y: 4))
+            flag.addLine(to: CGPoint(x: mx + 6, y: 8))
+            flag.addLine(to: CGPoint(x: mx + 8, y: 12))
+            flag.addLine(to: CGPoint(x: mx, y: 12))
+            flag.closeSubpath()
+            ctx.addPath(flag)
+            ctx.fillPath()
+            label.draw(at: CGPoint(x: mx + 11, y: 5))
+        }
+
+        // In/out: the stretch between is lit, with a white bracket at each end.
+        if project.inPoint != nil || project.outPoint != nil {
+            let a = project.inPoint.map { x($0) }, b = project.outPoint.map { x($0) }
+            if let r = project.playRange {
+                ctx.setFillColor(NSColor(white: 1, alpha: 0.06).cgColor)
+                ctx.fill(CGRect(x: x(r.start), y: 0, width: x(r.end) - x(r.start), height: ruler - 1))
+            }
+            ctx.setFillColor(NSColor.white.cgColor)
+            for (edge, inward) in [(a, CGFloat(1)), (b, CGFloat(-1))] {
+                guard let ex = edge?.rounded() else { continue }
+                ctx.fill(CGRect(x: ex - 1, y: 2, width: 2, height: ruler - 3))
+                ctx.fill(CGRect(x: inward > 0 ? ex - 1 : ex - 5, y: 2, width: 6, height: 2))
+                ctx.fill(CGRect(x: inward > 0 ? ex - 1 : ex - 5, y: ruler - 3, width: 6, height: 2))
+            }
+        }
+    }
+
+    private static let markerAttrs: [NSAttributedString.Key: Any] = [
+        .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .medium),
+        .foregroundColor: NSColor(white: 1, alpha: 0.92),
+    ]
+
+    private func markerLabel(_ m: Marker) -> NSAttributedString {
+        NSAttributedString(string: m.name, attributes: Self.markerAttrs)
+    }
+
+    /// The marker whose flag or name is under a point on the ruler (the last drawn wins).
+    private func markerHit(at p: CGPoint) -> UUID? {
+        for m in model.project.markerList.reversed() {
+            let mx = x(m.time)
+            if p.x >= mx - 4, p.x <= mx + 12 + markerLabel(m).size().width { return m.id }
+        }
+        return nil
+    }
+
+    private func rangeEdgeHit(at p: CGPoint) -> Bool? {
+        let project = model.project
+        if let i = project.inPoint, abs(p.x - x(i)) < 5 { return true }
+        if let o = project.outPoint, abs(p.x - x(o)) < 5 { return false }
+        return nil
+    }
+
+    // MARK: Marker panel
+
+    private var markerPopover: NSPopover?
+
+    private func showMarkerPanel(_ id: UUID?) {
+        guard let id else {
+            markerPopover?.close()
+            return
+        }
+        guard let m = model.project.markers?.first(where: { $0.id == id }), window != nil else { return }
+        if let open = markerPopover, open.isShown {
+            (open.contentViewController as? NSHostingController<MarkerPanel>)?.rootView = MarkerPanel(model: model, id: id)
+            open.positioningRect = markerAnchor(m)
+            return
+        }
+        let pop = NSPopover()
+        pop.behavior = .semitransient
+        pop.animates = false
+        pop.appearance = NSAppearance(named: .darkAqua)
+        pop.contentViewController = NSHostingController(rootView: MarkerPanel(model: model, id: id))
+        pop.delegate = self
+        markerPopover = pop
+        pop.show(relativeTo: markerAnchor(m), of: self, preferredEdge: .maxY)
+    }
+
+    fileprivate func markerPopoverClosed() {
+        markerPopover = nil
+        if model.editingMarker != nil { model.editingMarker = nil }
+    }
+
+    private func markerAnchor(_ m: Marker) -> CGRect {
+        let mx = min(max(4, x(m.time)), bounds.width - 4)
+        return CGRect(x: mx, y: 0, width: 8, height: TimelineLayout.ruler)
     }
 
     private func drawClip(_ c: Clip, ctx: CGContext, alpha: CGFloat) {
@@ -1380,26 +1529,37 @@ final class TimelineCanvas: NSView {
         ctx.restoreGState()
     }
 
+    /// The sound as a row of thin bars, each the loudest moment in its stretch, so nothing is lost
+    /// between them. Silence still shows as a dotted line, so pauses are easy to find and cut on.
+    /// Bars sit on a grid tied to the source, so they don't shimmer while scrolling or trimming.
     private func drawWaveform(_ c: Clip, in r: CGRect, visible: CGRect, ctx: CGContext) {
         guard let wf = model.media.waveform(c), visible.width > 0, !wf.peaks.isEmpty else { return }
         let top = r.minY + 16, bottom = r.maxY - 3
         guard bottom - top > 6 else { return }
         let mid = (top + bottom) / 2, half = (bottom - top) / 2
         let gain = dbToLinear(c.gainDB)
+        let pitch: CGFloat = 3, bar: CGFloat = 1.5
         let secPerPx = Double(1 / pps) * c.speed
-        var points: [(CGFloat, CGFloat)] = []
-        points.reserveCapacity(Int(visible.width) + 2)
-        var px = floor(visible.minX)
+        // Where source time zero would sit, so bar k always covers the same stretch of sound.
+        let origin = r.minX - CGFloat(c.sourceStart / secPerPx)
+        var k = Int(floor((visible.minX - origin) / pitch))
         let count = wf.peaks.count
-        while px <= visible.maxX {
-            let t0 = c.sourceStart + Double(px - r.minX) * secPerPx
+        let rects = CGMutablePath()
+        let scale = window?.backingScaleFactor ?? 2
+        while true {
+            // Snapped to whole device pixels so each bar is crisp.
+            let bx = (( origin + CGFloat(k) * pitch) * scale).rounded() / scale
+            if bx > visible.maxX { break }
+            k += 1
+            guard bx + bar > visible.minX else { continue }
+            let t0 = Double(bx - origin) * secPerPx
             let i0 = Int(t0 * wf.peaksPerSecond)
-            let i1 = Int((t0 + secPerPx) * wf.peaksPerSecond)
+            let i1 = Int((t0 + Double(pitch) * secPerPx) * wf.peaksPerSecond)
             var peak: Float = 0
             if i0 < count, i1 >= 0 {
-                let a = max(0, i0), b = min(count - 1, max(i0, i1))
+                let a = max(0, i0), b = min(count - 1, max(i0, i1 - 1))
                 if a <= b {
-                    let stride = max(1, (b - a) / 24)
+                    let stride = max(1, (b - a) / 32)
                     var i = a
                     while i <= b {
                         if wf.peaks[i] > peak { peak = wf.peaks[i] }
@@ -1407,17 +1567,126 @@ final class TimelineCanvas: NSView {
                     }
                 }
             }
-            points.append((px, CGFloat(min(1, Double(peak) * gain)) * half))
-            px += 1
+            let h = max(1, (CGFloat(min(1, Double(peak) * gain)) * half * 2).rounded())
+            let x0 = max(bx, visible.minX), x1 = min(bx + bar, visible.maxX)
+            guard x1 > x0 else { continue }
+            rects.addRect(CGRect(x: x0, y: (mid - h / 2), width: x1 - x0, height: h))
         }
-        guard points.count > 1 else { return }
-        let path = CGMutablePath()
-        path.move(to: CGPoint(x: points[0].0, y: mid - max(0.5, points[0].1)))
-        for p in points.dropFirst() { path.addLine(to: CGPoint(x: p.0, y: mid - max(0.5, p.1))) }
-        for p in points.reversed() { path.addLine(to: CGPoint(x: p.0, y: mid + max(0.5, p.1))) }
-        path.closeSubpath()
-        ctx.addPath(path)
-        ctx.setFillColor(Theme.NS.wave.withAlphaComponent(0.85).cgColor)
+        ctx.addPath(rects)
+        ctx.setFillColor(Theme.NS.wave.withAlphaComponent(0.9).cgColor)
         ctx.fillPath()
+    }
+
+}
+
+extension TimelineCanvas: NSPopoverDelegate {
+    func popoverDidClose(_ notification: Notification) {
+        markerPopoverClosed()
+    }
+}
+
+/// The panel a marker's flag opens: its name and colour, and every marker to jump to.
+struct MarkerPanel: View {
+    @ObservedObject var model: EditorModel
+    let id: UUID
+    @State private var name = ""
+    @FocusState private var nameFocused: Bool
+
+    private var marker: Marker? { model.project.markers?.first { $0.id == id } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("MARKER").font(Theme.label()).tracking(1.2).foregroundStyle(Theme.textFaint)
+                Spacer()
+                if let m = marker {
+                    Text(Timecode.string(m.time, fps: model.project.fps))
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Theme.textFaint)
+                }
+            }
+            TextField("Name", text: $name)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(Theme.text)
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.bg))
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(nameFocused ? Color.white.opacity(0.85) : Theme.stroke, lineWidth: 1))
+                .focused($nameFocused)
+                .onSubmit { model.editingMarker = nil }
+                .onChange(of: name) { _, new in
+                    guard new != marker?.name else { return }
+                    model.renameMarker(id, to: new)
+                }
+            HStack(spacing: 9) {
+                ForEach(Marker.Tint.allCases, id: \.self) { tint in
+                    let on = marker?.tint == tint
+                    Button { model.updateMarker(id) { $0.tint = tint } } label: {
+                        Circle().fill(Color(hex: tint.hex))
+                            .frame(width: 15, height: 15)
+                            .padding(3)
+                            .overlay(Circle().strokeBorder(Color.white.opacity(on ? 0.9 : 0), lineWidth: 1.5))
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(tint.rawValue.capitalized)
+                }
+                Spacer()
+                Button { model.deleteMarker(id) } label: {
+                    Glyph(symbol: "trash", size: 12).foregroundStyle(Theme.textDim).frame(width: 22, height: 22).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Delete Marker")
+            }
+            let all = model.project.markerList
+            if all.count > 1 {
+                Rectangle().fill(Theme.stroke).frame(height: 1)
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(all) { m in
+                            MarkerRow(marker: m, fps: model.project.fps, current: m.id == id) {
+                                model.seek(to: m.time)
+                                model.editingMarker = m.id
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: min(CGFloat(all.count) * 28, 196))
+            }
+        }
+        .padding(14)
+        .frame(width: 270)
+        .background(Theme.panel)
+        .onAppear { name = marker?.name ?? ""; nameFocused = true }
+        .onChange(of: id) { _, _ in name = marker?.name ?? "" }
+    }
+}
+
+private struct MarkerRow: View {
+    let marker: Marker
+    let fps: Double
+    let current: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Circle().fill(Color(hex: marker.tint.hex)).frame(width: 7, height: 7)
+                Text(marker.name).font(.system(size: 12)).foregroundStyle(current ? Theme.text : Theme.textDim).lineLimit(1)
+                Spacer()
+                Text(Timecode.string(marker.time, fps: fps))
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(Theme.textFaint)
+            }
+            .padding(.horizontal, 6)
+            .frame(height: 26)
+            .background(RoundedRectangle(cornerRadius: 5).fill(hovering || current ? Theme.hover : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
