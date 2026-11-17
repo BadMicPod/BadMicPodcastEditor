@@ -530,20 +530,38 @@ struct LetterToggle: View {
     }
 }
 
-/// A vertical level meter: green, then yellow from -12 dB, red from -3 dB. Pass no track for the output.
+/// A vertical level meter. The colour scale is fixed to the meter's height (green, yellow from about
+/// -12 dB, red over the last few dB) and the level uncovers it, so the top of the bar shows exactly
+/// how hot the signal is. Pass no track for the output.
 struct LevelMeter: View {
     @ObservedObject var meters: MeterState
     var track: UUID?
 
+    /// Where a level sits on the meter, 0 at the floor and 1 at 0 dB.
+    private static func position(_ db: Double) -> Double {
+        ((db - MeterState.floor) / -MeterState.floor).clamped(to: 0...1)
+    }
+
+    private static let scale = LinearGradient(stops: [
+        .init(color: Color(red: 0.12, green: 0.66, blue: 0.42), location: 0),
+        .init(color: Color(red: 0.2, green: 0.85, blue: 0.4), location: position(-18)),
+        .init(color: Color(red: 1, green: 0.85, blue: 0.25), location: position(-9)),
+        .init(color: Color(red: 1, green: 0.55, blue: 0.2), location: position(-4)),
+        .init(color: Color(red: 1, green: 0.27, blue: 0.24), location: position(-1.5)),
+        .init(color: Color(red: 1, green: 0.27, blue: 0.24), location: 1),
+    ], startPoint: .bottom, endPoint: .top)
+
     var body: some View {
         let db = track.map { meters.tracks[$0] ?? MeterState.floor } ?? meters.master
         GeometryReader { g in
-            let fill = CGFloat(((db - MeterState.floor) / -MeterState.floor).clamped(to: 0...1))
+            let fill = CGFloat(Self.position(db))
             ZStack(alignment: .bottom) {
                 RoundedRectangle(cornerRadius: 1.5).fill(Color.white.opacity(0.07))
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(db > -3 ? Color(red: 1, green: 0.32, blue: 0.27) : db > -12 ? Color(nsColor: Theme.NS.snap) : Color(nsColor: Theme.NS.audio))
-                    .frame(height: g.size.height * fill)
+                Self.scale
+                    .clipShape(RoundedRectangle(cornerRadius: 1.5))
+                    .mask(alignment: .bottom) {
+                        Rectangle().frame(height: g.size.height * fill)
+                    }
             }
         }
     }

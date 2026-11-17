@@ -25,6 +25,11 @@ final class PreviewSurface: NSView {
         link?.invalidate()
         link = nil
         guard window != nil else { return }
+        // A viewer that has just appeared (full screen, say) starts on the frame already showing.
+        if current == nil, let last = model.engine.lastFrame {
+            current = last
+            layer?.contents = CVPixelBufferGetIOSurface(last)?.takeUnretainedValue()
+        }
         let l = displayLink(target: self, selector: #selector(step(_:)))
         l.add(to: .main, forMode: .common)
         link = l

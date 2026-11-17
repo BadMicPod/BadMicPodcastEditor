@@ -529,8 +529,8 @@ private struct ParamRow: View {
     let onChange: (Double) -> Void
     var trailing: AnyView?
 
-    @State private var editing = false
     @State private var text = ""
+    @State private var cancelled = false
     @FocusState private var focused: Bool
 
     private var normalised: Double {
@@ -554,45 +554,46 @@ private struct ParamRow: View {
                 .foregroundStyle(Theme.text)
                 .frame(width: 52, alignment: .leading)
             ThinSlider(value: normalised, onEditing: onEditing) { onChange(denormalise($0)) }
-            Group {
-                if editing {
-                    TextField("", text: $text)
-                        .textFieldStyle(.plain)
-                        .multilineTextAlignment(.trailing)
-                        .focused($focused)
-                        .onSubmit(commit)
-                        .onExitCommand { editing = false }
-                        .onChange(of: focused) { _, isFocused in
-                            if !isFocused, editing { commit() }
-                        }
-                } else {
-                    Text(format(value))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
+            // Always a text field, so Tab moves to the next row's value like any form. Return or leaving the
+            // field applies what was typed; Esc puts the value back.
+            TextField("", text: $text)
+                .textFieldStyle(.plain)
+                .multilineTextAlignment(.trailing)
+                .focused($focused)
+                .onSubmit { focused = false }
+                .onExitCommand {
+                    cancelled = true
+                    focused = false
                 }
-            }
+                .onChange(of: focused) { _, isFocused in
+                    if isFocused {
+                        cancelled = false
+                    } else {
+                        if !cancelled { commit() }
+                        text = format(value)
+                    }
+                }
+                .onChange(of: value) { _, v in
+                    if !focused { text = format(v) }
+                }
+                .onAppear { text = format(value) }
             .font(Theme.mono(10.5))
             .foregroundStyle(Theme.text)
             .padding(.horizontal, 5)
             .frame(width: 60, height: 26)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
-            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Theme.accent.opacity(editing ? 0.9 : 0)))
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Theme.accent.opacity(focused ? 0.9 : 0)))
             // The whole box is the click target, not just the digits.
             .contentShape(Rectangle())
-            .onTapGesture {
-                if !editing {
-                    text = String(format: "%g", (value * 100).rounded() / 100)
-                    editing = true
-                }
-                focused = true
-            }
+            .simultaneousGesture(TapGesture().onEnded { focused = true })
             if let trailing { trailing }
         }
         .frame(height: 28)
     }
 
+    /// Reads the number out of whatever is in the field ("100%", "0.50s", "−18.8 dB" all work).
     private func commit() {
+        guard text != format(value) else { return }
         let cleaned = text.replacingOccurrences(of: ",", with: ".").replacingOccurrences(of: "−", with: "-")
             .filter { "0123456789.-".contains($0) }
         if let v = Double(cleaned) {
@@ -600,7 +601,6 @@ private struct ParamRow: View {
             onChange(min(max(v, range.lowerBound), range.upperBound))
             onEditing(false)
         }
-        editing = false
     }
 }
 

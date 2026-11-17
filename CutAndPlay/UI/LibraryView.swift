@@ -6,9 +6,6 @@ struct LibraryView: View {
     @ObservedObject var media: MediaStore
     @State private var dropTargeted = false
     @State private var search = ""
-    @AppStorage("libraryList") private var listMode = false
-
-    private let columns = [GridItem(.adaptive(minimum: 104, maximum: 180), spacing: 10)]
 
     private var shown: [MediaAsset] {
         let q = search.trimmingCharacters(in: .whitespaces)
@@ -43,24 +40,10 @@ struct LibraryView: View {
                     if model.project.assets.isEmpty {
                         EmptyLibrary(targeted: dropTargeted) { model.showImportPanel() }
                     } else {
-                        HStack(spacing: 4) {
-                            SearchField(text: $search)
-                            IconButton(symbol: "square.grid.2x2", active: !listMode, size: 26, help: "Grid") { listMode = false }
-                            IconButton(symbol: "list.bullet", active: listMode, size: 26, help: "List") { listMode = true }
-                        }
-                        if listMode {
-                            VStack(spacing: 2) {
-                                ForEach(shown) { asset in
-                                    AssetRow(model: model, media: media, asset: asset, offline: media.isOffline(asset), marked: inSelection.contains(asset.id))
-                                }
-                                if search.isEmpty { ImportRow { model.showImportPanel() } }
-                            }
-                        } else {
-                            LazyVGrid(columns: columns, spacing: 12) {
-                                ForEach(shown) { asset in
-                                    AssetTile(model: model, media: media, asset: asset, offline: media.isOffline(asset), marked: inSelection.contains(asset.id))
-                                }
-                                if search.isEmpty { ImportTile { model.showImportPanel() } }
+                        SearchField(text: $search)
+                        VStack(spacing: 3) {
+                            ForEach(shown) { asset in
+                                AssetRow(model: model, media: media, asset: asset, offline: media.isOffline(asset), selected: inSelection.contains(asset.id))
                             }
                         }
                         if shown.isEmpty {
@@ -123,7 +106,6 @@ private struct MediaThumb: View {
     @ObservedObject var media: MediaStore
     let asset: MediaAsset
     let offline: Bool
-    let marked: Bool
     var compact = false
     @State private var scrub: CGFloat?
     @State private var frame: CGImage?
@@ -152,14 +134,6 @@ private struct MediaThumb: View {
                 if let scrub {
                     Rectangle().fill(Color.white).frame(width: 1.5, height: g.size.height).offset(x: scrub - 0.75)
                 }
-                if marked {
-                    // Ringed in white so it shows on any picture.
-                    Circle().fill(Theme.accent)
-                        .overlay(Circle().strokeBorder(Color.white, lineWidth: 1.5))
-                        .shadow(color: .black.opacity(0.5), radius: 1.5)
-                        .frame(width: 9, height: 9)
-                        .padding(5)
-                }
             }
             .contentShape(Rectangle())
             .onContinuousHover { phase in
@@ -180,63 +154,6 @@ private struct MediaThumb: View {
                 }
             }
         }
-    }
-}
-
-private struct ImportTile: View {
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Button(action: action) {
-                Image(systemName: "plus")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(hovering ? Theme.text : Theme.textFaint)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity)
-            .aspectRatio(16.0 / 9.0, contentMode: .fit)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                    .foregroundStyle(hovering ? Theme.accent : Color.white.opacity(0.16))
-            )
-            Text("Import")
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(Theme.textFaint)
-        }
-        .onHover { hovering = $0 }
-        .help("Import media, or drop files anywhere in the window")
-    }
-}
-
-private struct ImportRow: View {
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: "plus").font(.system(size: 11, weight: .medium))
-                Text("Import media").font(.system(size: 11.5, weight: .medium))
-                Spacer()
-            }
-            .foregroundStyle(hovering ? Theme.text : Theme.textFaint)
-            .padding(.horizontal, 10)
-            .frame(height: 34)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                    .foregroundStyle(hovering ? Theme.accent : Color.white.opacity(0.16))
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .padding(.top, 6)
     }
 }
 
@@ -346,55 +263,13 @@ private struct AssetActions: ViewModifier {
     }
 }
 
-private struct AssetTile: View {
-    let model: EditorModel
-    let media: MediaStore
-    let asset: MediaAsset
-    let offline: Bool
-    let marked: Bool
-    @State private var hovering = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            MediaThumb(media: media, asset: asset, offline: offline, marked: marked)
-                .frame(maxWidth: .infinity)
-                .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .overlay(alignment: .bottomTrailing) {
-                    if asset.kind != .image {
-                        Text(Timecode.short(asset.duration))
-                            .font(Theme.mono(9.5))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(RoundedRectangle(cornerRadius: 4).fill(.black.opacity(0.65)))
-                            .padding(4)
-                            .allowsHitTesting(false)
-                    }
-                }
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .strokeBorder(hovering ? Color.white.opacity(0.75) : Color.white.opacity(0.06), lineWidth: hovering ? 1.5 : 1)
-                        .allowsHitTesting(false)
-                )
-            Text(asset.name)
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(hovering ? Theme.text : Theme.textDim)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .modifier(AssetActions(model: model, asset: asset, offline: offline))
-    }
-}
-
 private struct AssetRow: View {
     let model: EditorModel
     let media: MediaStore
     let asset: MediaAsset
     let offline: Bool
-    let marked: Bool
+    /// Used by a clip selected on the timeline.
+    let selected: Bool
     @State private var hovering = false
 
     private var detail: String {
@@ -407,13 +282,13 @@ private struct AssetRow: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            MediaThumb(media: media, asset: asset, offline: offline, marked: marked, compact: true)
+            MediaThumb(media: media, asset: asset, offline: offline, compact: true)
                 .frame(width: 64, height: 36)
                 .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
                 Text(asset.name)
                     .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(hovering ? Theme.text : Theme.textDim)
+                    .foregroundStyle(hovering || selected ? Theme.text : Theme.textDim)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(detail)
@@ -425,6 +300,7 @@ private struct AssetRow: View {
         }
         .padding(4)
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hovering ? Theme.hover : .clear))
+        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color.white.opacity(selected ? 0.85 : 0), lineWidth: 1.5))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .modifier(AssetActions(model: model, asset: asset, offline: offline))

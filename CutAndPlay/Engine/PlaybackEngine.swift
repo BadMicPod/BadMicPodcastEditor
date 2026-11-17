@@ -124,6 +124,11 @@ final class PlaybackEngine {
         guard let output = videoOutput else { return nil }
         let t = output.itemTime(forHostTime: CACurrentMediaTime())
         guard output.hasNewPixelBuffer(forItemTime: t) else { return nil }
-        return output.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil)
+        let frame = output.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil)
+        if frame != nil { lastFrame = frame }
+        return frame
     }
+
+    /// The most recent frame handed out, so a viewer that appears later can show it straight away.
+    private(set) var lastFrame: CVPixelBuffer?
 }

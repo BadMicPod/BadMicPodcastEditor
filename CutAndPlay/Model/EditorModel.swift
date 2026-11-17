@@ -100,9 +100,13 @@ final class EditorModel: ObservableObject {
             self.isPlaying = false
             self.playhead = self.project.duration
         }
-        NotificationCenter.default.addObserver(forName: NSWindow.didExitFullScreenNotification, object: nil, queue: .main) { [weak self] _ in
+        NotificationCenter.default.addObserver(forName: NSWindow.didExitFullScreenNotification, object: nil, queue: .main) { [weak self] note in
             MainActor.assumeIsolated {
-                if self?.viewerOnly == true { self?.viewerOnly = false }
+                // Leaving macOS full screen while the viewer had it: back to the editor.
+                if self?.viewerOnly == true, let window = note.object as? NSWindow {
+                    self?.viewerOnly = false
+                    ViewerScreen.exit(window)
+                }
             }
         }
         media.onStillLoaded = { [weak self] in self?.setNeedsRebuild() }
@@ -122,6 +126,10 @@ final class EditorModel: ObservableObject {
                 }
                 if args.contains("--show-export") { self.showExport = true }
                 if args.contains("--play") { self.play() }
+                if args.contains("--viewer-fullscreen") {
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    self.toggleViewerFullScreen()
+                }
             }
         }
     }
@@ -254,11 +262,9 @@ final class EditorModel: ObservableObject {
 
     /// Shows just the viewer, full screen, or goes back to the editor.
     func toggleViewerFullScreen() {
+        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) else { return }
         viewerOnly.toggle()
-        if let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }),
-           window.styleMask.contains(.fullScreen) != viewerOnly {
-            window.toggleFullScreen(nil)
-        }
+        if viewerOnly { ViewerScreen.enter(window) } else { ViewerScreen.exit(window) }
         // The viewer is rebuilt in its new place; give it a frame to show while paused.
         if !isPlaying {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
