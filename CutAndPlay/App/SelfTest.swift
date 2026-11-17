@@ -545,6 +545,38 @@ enum SelfTest {
             log("FREEZE \(shape && held ? "OK" : "FAIL") shape=\(shape) held=\(held) d=\(diff(f1, f2)) vs \(diff(f1, moving))")
             ok = ok && shape && held
         }
+        // Reverse: the reversed file's first frame is the source's last frame of the range, and its
+        // last frame the first; length matches.
+        if let video = project.assets.first(where: { $0.kind == .video && $0.duration >= 6 }) {
+            let out = outDir.appendingPathComponent("reversed.mov")
+            do {
+                try await Reverser.render(source: video.url, start: 1, duration: 3, to: out) { _ in }
+                let rev = AVURLAsset(url: out), src = AVURLAsset(url: video.url)
+                let length = (try? await rev.load(.duration).seconds) ?? 0
+                func frame(_ a: AVAsset, _ t: Double) async -> [UInt8] {
+                    let g = AVAssetImageGenerator(asset: a)
+                    g.requestedTimeToleranceBefore = .zero; g.requestedTimeToleranceAfter = .zero
+                    g.maximumSize = CGSize(width: 160, height: 90)
+                    guard let cg = try? await g.image(at: CMTime(seconds: t, preferredTimescale: 600)).image,
+                          let d = cg.dataProvider?.data as Data? else { return [] }
+                    return Array(d)
+                }
+                func diff(_ a: [UInt8], _ b: [UInt8]) -> Double {
+                    guard !a.isEmpty, a.count == b.count else { return 999 }
+                    var s = 0; for i in 0..<a.count { s += abs(Int(a[i]) - Int(b[i])) }; return Double(s) / Double(a.count)
+                }
+                let startMatch = diff(await frame(rev, 0.02), await frame(src, 3.97))
+                let endMatch = diff(await frame(rev, 2.95), await frame(src, 1.02))
+                let wrongWay = diff(await frame(rev, 0.02), await frame(src, 1.02))
+                let audio = ((try? await rev.loadTracks(withMediaType: .audio))?.count ?? 0) == ((try? await src.loadTracks(withMediaType: .audio))?.count ?? 0)
+                let good = abs(length - 3) < 0.1 && startMatch < 6 && endMatch < 6 && wrongWay > startMatch && audio
+                log("REVERSE \(good ? "OK" : "FAIL") length=\(length) start=\(startMatch) end=\(endMatch) forwards=\(wrongWay) audio=\(audio)")
+                ok = ok && good
+            } catch {
+                log("REVERSE FAIL \(error)")
+                ok = false
+            }
+        }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")
     }
 }

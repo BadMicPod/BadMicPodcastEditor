@@ -770,6 +770,10 @@ final class TimelineCanvas: NSView {
             let t = model.playhead
             menu.addItem(ActionItem("Split at Playhead", enabled: t > h.clip.start && t < h.clip.end) { model.splitAtPlayhead() })
             menu.addItem(ActionItem("Detach Audio", enabled: model.selectionIsLinked) { model.detachAudio() })
+            if h.clip.kind.usesSource {
+                menu.addItem(ActionItem("Freeze Frame at Playhead", enabled: h.clip.kind == .video && !h.clip.isFreeze && t >= h.clip.start && t < h.clip.end) { model.freezeFrame() })
+                menu.addItem(ActionItem(h.clip.reversedFrom == nil ? "Reverse" : "Play Forwards", enabled: !h.clip.isFreeze) { model.reverseSelection() })
+            }
             if h.clip.playsSource {
                 let speed = NSMenuItem(title: "Speed", action: nil, keyEquivalent: "")
                 let sub = NSMenu()

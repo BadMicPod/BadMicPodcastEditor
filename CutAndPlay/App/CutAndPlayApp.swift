@@ -123,6 +123,7 @@ struct CutAndPlayApp: App {
                 Button("Detach Audio") { model.detachAudio() }.keyboardShortcut("l", modifiers: [.command, .shift])
                 Button("Duplicate") { model.duplicateSelection() }.keyboardShortcut("d", modifiers: [.command, .shift])
                 Button("Freeze Frame") { model.freezeFrame() }.keyboardShortcut("f", modifiers: [.option])
+                Button("Reverse") { model.reverseSelection() }.keyboardShortcut("r", modifiers: [.option])
                 Divider()
                 Button("Delete") { model.deleteSelection() }
                 Button("Ripple Delete") { model.deleteSelection(ripple: true) }

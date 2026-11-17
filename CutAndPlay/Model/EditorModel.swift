@@ -802,6 +802,61 @@ final class EditorModel: ObservableObject {
         if let made { selection = [made] }
     }
 
+    // MARK: Reverse
+
+    /// Plays the selected clip (and its linked audio) backwards. The first time, the stretch it uses is
+    /// rendered reversed into a new file in the background; reversing again switches straight back.
+    func reverseSelection() {
+        guard let c = project.clips.first(where: { selection.contains($0.id) && $0.playsSource && !project.isLocked($0.trackID) }) else { return }
+        let group = project.unlocked(project.linked([c.id]))
+
+        if let back = c.reversedFrom {
+            // Already reversed: point back at the original footage.
+            mutate { p in
+                for i in p.clips.indices where group.contains(p.clips[i].id) {
+                    guard let from = p.clips[i].reversedFrom else { continue }
+                    p.clips[i].assetID = from.assetID
+                    p.clips[i].sourceStart = from.sourceStart
+                    p.clips[i].reversedFrom = nil
+                }
+            }
+            _ = back
+            return
+        }
+
+        guard let asset = project.asset(c.assetID) else { return }
+        let members = project.clips.filter { group.contains($0.id) && $0.assetID == c.assetID && $0.playsSource }
+        // One rendered stretch covering every member's source range.
+        let lo = members.map(\.sourceStart).min() ?? c.sourceStart
+        let hi = members.map { $0.sourceStart + $0.duration * $0.speed }.max() ?? (c.sourceStart + c.duration * c.speed)
+        let name = asset.name + " (reversed)"
+        let out = Reverser.folder.appendingPathComponent("\(asset.name)-\(UUID().uuidString.prefix(8)).mov")
+        let ids = Set(members.map(\.id))
+        importCount += 1
+        Task {
+            defer { importCount -= 1 }
+            do {
+                try await Reverser.render(source: asset.url, start: lo, duration: hi - lo, to: out) { _ in }
+                guard var fresh = await media.importFile(out) else { throw Reverser.Failure(message: "Couldn't open the reversed clip.") }
+                fresh.name = name
+                let added = fresh
+                mutate { p in
+                    p.assets.append(added)
+                    for i in p.clips.indices where ids.contains(p.clips[i].id) {
+                        let m = p.clips[i]
+                        p.clips[i].reversedFrom = ReverseSource(assetID: asset.id, sourceStart: m.sourceStart)
+                        p.clips[i].assetID = added.id
+                        // Source time s in the original is hi - s in the reversed file.
+                        p.clips[i].sourceStart = max(0, hi - (m.sourceStart + m.duration * m.speed))
+                    }
+                }
+            } catch is CancellationError {
+            } catch {
+                importError = "Couldn't reverse “\(asset.name)”: \(error.localizedDescription)"
+            }
+        }
+    }
+
     // MARK: Gaps
 
     func deleteGap(on track: UUID, at t: Double) {
