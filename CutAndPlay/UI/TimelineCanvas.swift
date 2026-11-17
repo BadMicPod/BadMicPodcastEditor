@@ -269,9 +269,17 @@ final class TimelineCanvas: NSView {
             guard let r = rect(for: c), r.contains(p) else { continue }
             let showHandles = r.width > 36
             if showHandles, p.y < r.minY + 17 {
-                let di = abs(p.x - fadeHandleX(c, r, fadeIn: true))
-                let dout = abs(p.x - fadeHandleX(c, r, fadeIn: false))
-                if min(di, dout) <= 7 { return Hit(clip: c, zone: di <= dout ? .fadeIn : .fadeOut, rect: r) }
+                let hi = fadeHandleX(c, r, fadeIn: true), ho = fadeHandleX(c, r, fadeIn: false)
+                let di = abs(p.x - hi), dout = abs(p.x - ho)
+                if min(di, dout) <= 7 {
+                    var takeIn = di <= dout
+                    // Overlapping dots: the one with the longer fade (the one dragged there) is on
+                    // top and takes the click; with equal fades, the side clicked decides.
+                    if abs(hi - ho) < 8 {
+                        takeIn = c.fadeIn != c.fadeOut ? c.fadeIn > c.fadeOut : p.x < hi
+                    }
+                    return Hit(clip: c, zone: takeIn ? .fadeIn : .fadeOut, rect: r)
+                }
             }
             let edge = min(7, max(2, r.width / 4))
             if p.x - r.minX <= edge { return Hit(clip: c, zone: .left, rect: r) }
@@ -1500,7 +1508,8 @@ final class TimelineCanvas: NSView {
 
         // Fade handles
         if r.width > 36, alpha == 1, hovered || selected || c.fadeIn > 0 || c.fadeOut > 0 {
-            for isIn in [true, false] {
+            // The longer fade's dot is drawn last, on top, matching which one takes the click.
+            for isIn in c.fadeIn > c.fadeOut ? [false, true] : [true, false] {
                 let active = (isIn ? c.fadeIn : c.fadeOut) > 0
                 guard hovered || selected || active else { continue }
                 let hot = zone == (isIn ? .fadeIn : .fadeOut)
