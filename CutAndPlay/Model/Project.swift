@@ -385,7 +385,19 @@ extension Project {
     /// Changes playback speed of the given clips, keeping each one's source span.
     /// Changed clips on a track stay butted together (later ones slide by however much earlier ones
     /// grew or shrank), and anything that would be overlapped is pushed later instead.
-    mutating func setSpeed(ids: Set<UUID>, speed: Double) {
+    mutating func setSpeed(ids: Set<UUID>, speed: Double, sticky: Bool = false) {
+        if sticky {
+            // Work out the changed clips as usual, then let whatever touched them follow.
+            var plain = self
+            plain.setSpeed(ids: ids, speed: speed)
+            var edited: [UUID: Clip] = [:]
+            for c in plain.clips where ids.contains(c.id) { edited[c.id] = c }
+            let carried = carried(by: edited)
+            for i in clips.indices {
+                if let c = edited[clips[i].id] ?? carried[clips[i].id] { clips[i] = c }
+            }
+            return
+        }
         let speed = min(max(speed, 0.05), 100)
         for track in videoTracks + audioTracks {
             let order = clips.indices.filter { clips[$0].trackID == track.id }.sorted { clips[$0].start < clips[$1].start }
@@ -409,6 +421,55 @@ extension Project {
                 clips[i] = c
             }
         }
+    }
+
+    /// Sticky edges: when edited clips' ends move, clips touching those ends ride along, and so does
+    /// anything touching them in turn, with linked partners kept in sync. A clip that a growing edit
+    /// runs into joins in too. `edited` holds the edited clips' new states; the result holds the new
+    /// state of every clip carried along.
+    func carried(by edited: [UUID: Clip]) -> [UUID: Clip] {
+        let touch = 0.5 / fps
+        var out: [UUID: Clip] = [:]
+        var queue: [(track: UUID, oldEnd: Double, newEnd: Double)] = []
+        for (id, e) in edited {
+            if let o = clip(id) { queue.append((o.trackID, o.end, e.end)) }
+        }
+        while !queue.isEmpty {
+            let q = queue.removeFirst()
+            let shift = q.newEnd - q.oldEnd
+            guard abs(shift) > 1e-9 else { continue }
+            // Only the next clip along can be touching or run into; ones further on are reached through it.
+            let after = clips.filter { $0.trackID == q.track && edited[$0.id] == nil && $0.start >= q.oldEnd - touch }
+            guard let nearest = after.map(\.start).min() else { continue }
+            for c in after where c.start <= nearest + 1e-9 && out[c.id] == nil {
+                let touching = abs(c.start - q.oldEnd) <= touch
+                let runInto = shift > 0 && c.start < q.newEnd - 1e-9
+                guard touching || runInto else { continue }
+                let s = q.newEnd - c.start
+                for id in linked([c.id]) where edited[id] == nil && out[id] == nil {
+                    guard var m = clip(id) else { continue }
+                    let oldEnd = m.end
+                    m.start += s
+                    out[id] = m
+                    queue.append((m.trackID, oldEnd, m.end))
+                }
+            }
+        }
+        return out
+    }
+
+    /// True when applying `changed` leaves nothing before zero and no two clips on a track overlapping.
+    func fits(_ changed: [UUID: Clip]) -> Bool {
+        if changed.values.contains(where: { $0.start < -1e-9 }) { return false }
+        let all = clips.map { changed[$0.id] ?? $0 }
+        for (track, group) in Dictionary(grouping: all, by: \.trackID) {
+            _ = track
+            let sorted = group.sorted { $0.start < $1.start }
+            for (a, b) in zip(sorted, sorted.dropFirst()) where changed[a.id] != nil || changed[b.id] != nil {
+                if a.end > b.start + 1e-6 { return false }
+            }
+        }
+        return true
     }
 
     /// Breaks the link between the given clips and their partners.

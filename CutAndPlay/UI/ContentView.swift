@@ -102,6 +102,7 @@ enum KeyCommands {
             case "v": model.tool = .move
             case "c": model.tool = .cut
             case "s": model.snapping.toggle()
+            case "r": model.sticky.toggle()
             case "z" where shift, "\\": model.zoomToFit()
             case "=", "+": model.zoom(by: 1.4)
             case "-": model.zoom(by: 1 / 1.4)

@@ -266,6 +266,40 @@ enum SelfTest {
             log("RELINK \(relative && swept ? "OK" : "FAIL") relative=\(relative) swept=\(swept) missingBefore=\(missingBefore)")
             ok = ok && relative && swept
         }
+        // Sticky edges: three butted clips; shortening the first pulls the other two back, and a
+        // linked partner follows its clip.
+        do {
+            var p = Project()
+            let v = p.videoTracks[0].id, a = p.audioTracks[0].id
+            let link = UUID()
+            let c1 = Clip(trackID: v, kind: .solid, start: 0, duration: 4)
+            let c2 = Clip(trackID: v, kind: .solid, start: 4, duration: 2, linkID: link)
+            let c3 = Clip(trackID: v, kind: .solid, start: 6, duration: 1)
+            let c2a = Clip(trackID: a, kind: .solid, start: 4, duration: 2, linkID: link)
+            let far = Clip(trackID: v, kind: .solid, start: 9, duration: 1)
+            p.clips = [c1, c2, c3, c2a, far]
+            var short = c1
+            short.trimTail(to: 3)
+            let carried = p.carried(by: [c1.id: short])
+            let pulled = carried[c2.id]?.start == 3 && carried[c3.id]?.start == 5 && carried[c2a.id]?.start == 3 && carried[far.id] == nil
+            // Growing it by 3 pushes the chain into the far clip, which joins in.
+            var long = c1
+            long.trimTail(to: 7)
+            let pushed = p.carried(by: [c1.id: long])
+            let grew = pushed[c3.id]?.start == 9 && pushed[far.id]?.start == 10 && p.fits(pushed.merging([c1.id: long]) { a, _ in a })
+            // Doubling the speed of a 4s video clip halves it, and the touching clip follows it back.
+            var q = Project()
+            let qv = q.videoTracks[0].id
+            let fastClip = Clip(trackID: qv, kind: .video, start: 0, duration: 4)
+            let next = Clip(trackID: qv, kind: .solid, start: 4, duration: 2)
+            q.clips = [fastClip, next]
+            var plain = q
+            plain.setSpeed(ids: [fastClip.id], speed: 2)
+            q.setSpeed(ids: [fastClip.id], speed: 2, sticky: true)
+            let sped = q.clip(fastClip.id)?.duration == 2 && q.clip(next.id)?.start == 2 && plain.clip(next.id)?.start == 4
+            log("STICKY \(pulled && grew && sped ? "OK" : "FAIL") pulled=\(pulled) grew=\(grew) speed=\(sped)")
+            ok = ok && pulled && grew && sped
+        }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")
     }
 }

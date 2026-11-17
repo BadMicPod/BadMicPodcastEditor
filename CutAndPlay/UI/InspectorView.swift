@@ -171,7 +171,7 @@ struct InspectorView: View {
         // Always derive from the clips as they were when the drag began, so rounding never accumulates.
         model.live(autoCommit: false) { p in
             p.clips = origin
-            p.setSpeed(ids: p.linked(ids), speed: speed)
+            p.setSpeed(ids: p.linked(ids), speed: speed, sticky: model.sticky)
         }
     }
 

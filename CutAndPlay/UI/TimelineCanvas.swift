@@ -531,6 +531,7 @@ final class TimelineCanvas: NSView {
     }
 
     private func updateTrim(grabbed: Clip, left: Bool, startTime: Double, originals: [Clip], p: CGPoint) {
+        if model.sticky { return updateStickyTrim(grabbed: grabbed, left: left, startTime: startTime, originals: originals, p: p) }
         let project = model.project
         let ids = Set(originals.map(\.id))
         let edge = left ? grabbed.start : grabbed.end
@@ -557,6 +558,68 @@ final class TimelineCanvas: NSView {
         for var c in originals {
             if left { c.trimHead(to: c.start + d) } else { c.trimTail(to: c.end + d) }
             out[c.id] = c
+        }
+        overrides = out
+        if let g = out[grabbed.id] {
+            bubble = (Timecode.string(g.duration, fps: project.fps), CGPoint(x: p.x, y: p.y - 22))
+        }
+        needsDisplay = true
+    }
+
+    /// Trimming with sticky edges: the clip keeps its start (trimming the head takes content off the
+    /// front instead of moving the clip), and everything touching its end follows the new end.
+    private func updateStickyTrim(grabbed: Clip, left: Bool, startTime: Double, originals: [Clip], p: CGPoint) {
+        let project = model.project
+        let ids = Set(originals.map(\.id))
+        let edge = left ? grabbed.start : grabbed.end
+        var d = time(atX: p.x) - startTime
+        snapLine = nil
+        var snapTarget: Double?
+        if let s = snap([edge + d], to: project.snapTargets(excluding: ids) + [model.playhead]) {
+            d += s.delta
+            snapTarget = s.target
+        } else {
+            d = project.snapFrame(edge + d) - edge
+        }
+        // Only the clip's own length and source limit what's possible; neighbours move out of the way.
+        let minDur = max(Project.minClip, 1 / project.fps)
+        var lo = -Double.infinity, hi = Double.infinity
+        for c in originals {
+            if left {
+                if c.kind.usesSource { lo = max(lo, -c.sourceStart / c.speed) }
+                hi = min(hi, c.duration - minDur)
+            } else {
+                lo = max(lo, minDur - c.duration)
+                if let limit = project.sourceLimit(c) { hi = min(hi, (limit - c.sourceStart) / c.speed - c.duration) }
+            }
+        }
+        let clamped = min(max(d, lo), max(lo, hi))
+        if clamped == d { snapLine = snapTarget }
+
+        func result(_ d: Double) -> [UUID: Clip] {
+            var edited: [UUID: Clip] = [:]
+            for var c in originals {
+                if left {
+                    let start = c.start
+                    c.trimHead(to: c.start + d)
+                    c.start = start
+                } else {
+                    c.trimTail(to: c.end + d)
+                }
+                edited[c.id] = c
+            }
+            return edited.merging(project.carried(by: edited)) { a, _ in a }
+        }
+        var out = result(clamped)
+        if !project.fits(out) {
+            // Something carried along would hit a clip that isn't moving: go as far as fits.
+            snapLine = nil
+            var ok = 0.0, bad = clamped
+            for _ in 0..<24 {
+                let mid = (ok + bad) / 2
+                if project.fits(result(mid)) { ok = mid } else { bad = mid }
+            }
+            out = result(ok)
         }
         overrides = out
         if let g = out[grabbed.id] {

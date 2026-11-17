@@ -51,6 +51,11 @@ final class EditorModel: ObservableObject {
     @Published var selection: Set<UUID> = []
     @Published var tool: Tool = .move
     @Published var snapping = true
+    /// Sticky edges: clips touching a clip that changes length move with it, closing or opening up
+    /// the space instead of leaving a gap or overlapping.
+    @Published var sticky = UserDefaults.standard.bool(forKey: "stickyEdges") {
+        didSet { UserDefaults.standard.set(sticky, forKey: "stickyEdges") }
+    }
     @Published private(set) var isPlaying = false
     @Published private(set) var fileURL: URL?
     @Published private(set) var isDirty = false
@@ -556,7 +561,8 @@ final class EditorModel: ObservableObject {
 
     func setSpeed(_ speed: Double) {
         let ids = project.linked(selection)
-        mutate { $0.setSpeed(ids: ids, speed: speed) }
+        let sticky = self.sticky
+        mutate { $0.setSpeed(ids: ids, speed: speed, sticky: sticky) }
     }
 
     func addTrack(_ kind: TrackKind) {

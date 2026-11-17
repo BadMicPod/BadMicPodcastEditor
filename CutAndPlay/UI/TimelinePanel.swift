@@ -41,6 +41,7 @@ struct TimelineToolbar: View {
             IconButton(symbol: "scissors", active: model.tool == .cut, help: "Cut (C)") { model.tool = .cut }
             divider
             SnapButton(active: model.snapping) { model.snapping.toggle() }
+            StickyButton(active: model.sticky) { model.sticky.toggle() }
             divider
             IconButton(symbol: "square.split.2x1", help: "Split at Playhead (⌘K)") { model.splitAtPlayhead() }
             IconButton(symbol: "trash", help: "Delete (⌫)") { model.deleteSelection() }
@@ -79,6 +80,37 @@ struct SnapButton: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help("Snapping (S)")
+    }
+}
+
+/// Sticky edges toggle: two clips butted together.
+struct StickyButton: View {
+    let active: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        let color = active ? Theme.accent : (hovering ? Theme.text : Theme.textDim)
+        Button(action: action) {
+            Canvas { ctx, size in
+                let h = size.height * 0.62, y = (size.height - h) / 2
+                let w = (size.width - 1.5) / 2
+                for x in [0, w + 1.5] {
+                    let r = CGRect(x: x, y: y, width: w, height: h)
+                    ctx.fill(Path(roundedRect: r, cornerRadius: 2), with: .color(color))
+                }
+            }
+            .frame(width: 15, height: 14)
+            .frame(width: 28, height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(active ? Theme.accent.opacity(0.16) : (hovering ? Theme.hover : .clear))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("Sticky Edges (R): clips touching a clip that changes length move with it")
     }
 }
 
