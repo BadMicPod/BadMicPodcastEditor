@@ -79,6 +79,7 @@ struct ToolKey: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .help(help)
     }
 }
@@ -103,6 +104,7 @@ struct ToggleChip: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .help(help)
     }
 }
@@ -128,6 +130,7 @@ struct TextAction: View {
         .buttonStyle(.plain)
         .opacity(enabled ? 1 : 0.4)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .help(help)
     }
 }
@@ -434,6 +437,7 @@ struct AddTrackButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .help("Add \(label) Track")
     }
 }
@@ -538,6 +542,7 @@ struct MiniKey: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .help(help)
     }
 }
@@ -563,6 +568,7 @@ struct LetterToggle: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .help(help)
     }
 }
@@ -645,6 +651,7 @@ struct GainPill: View {
         .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.text.opacity(editing ? 0.85 : 0)))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .gesture(
             DragGesture(minimumDistance: 3)
                 .onChanged { v in

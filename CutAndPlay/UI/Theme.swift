@@ -110,6 +110,7 @@ struct IconButton: View {
         .buttonStyle(.plain)
         .opacity(enabled ? 1 : 0.35)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .help(help)
     }
 }

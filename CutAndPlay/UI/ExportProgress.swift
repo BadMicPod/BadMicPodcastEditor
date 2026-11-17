@@ -12,6 +12,7 @@ struct ExportProgressPill: View {
             Button { open.toggle() } label: { label }
                 .buttonStyle(.plain)
                 .onHover { hovering = $0 }
+                .animation(.easeOut(duration: 0.12), value: hovering)
                 .popover(isPresented: $open, arrowEdge: .bottom) { ExportList(queue: queue) }
                 .onChange(of: open) { _, isOpen in queue.holdOpen = isOpen }
                 .padding(.trailing, 6)

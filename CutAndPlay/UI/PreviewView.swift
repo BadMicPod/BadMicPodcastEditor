@@ -264,6 +264,7 @@ private struct TimecodeField: View {
         .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.text.opacity(editing ? 0.85 : 0)))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .onTapGesture {
             guard !editing else { return }
             text = Timecode.string(time, fps: fps)
@@ -302,6 +303,7 @@ private struct PlayButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .help("Play / Pause (Space)")
     }
 }

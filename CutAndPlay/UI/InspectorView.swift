@@ -483,7 +483,7 @@ private struct InspectorSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                Button { collapsed.toggle() } label: {
+                Button { withAnimation(.easeOut(duration: 0.12)) { collapsed.toggle() } } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 7.5, weight: .bold))
@@ -503,11 +503,14 @@ private struct InspectorSection<Content: View>: View {
                 }
                 .buttonStyle(.plain)
                 .onHover { hovering = $0 }
+                .animation(.easeOut(duration: 0.12), value: hovering)
                 if let action, !collapsed {
                     TextLink(title: action.0, action: action.1)
                 }
             }
-            if !collapsed { content }
+            if !collapsed {
+                content.transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
     }
 }
@@ -526,6 +529,7 @@ private struct TextLink: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 
@@ -556,6 +560,7 @@ struct ThinSlider: View {
             .frame(height: geo.size.height)
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: hovering)
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { v in
@@ -712,6 +717,7 @@ struct CurveMenu: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .help(selection.label)
     }
 
@@ -803,6 +809,7 @@ private struct Chip: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 
@@ -836,6 +843,7 @@ struct MenuField<Content: View>: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 
@@ -866,6 +874,7 @@ private struct FontPicker: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .popover(isPresented: $open, arrowEdge: .leading) {
             FontList(selection: selection) { family in
                 onPick(family)
@@ -948,6 +957,7 @@ private struct FontRow: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 
@@ -1054,6 +1064,7 @@ private struct ColorWheel: View {
             .frame(width: s, height: s)
             .contentShape(Circle())
             .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: hovering)
             .gesture(
                 DragGesture(minimumDistance: 2)
                     .onChanged { v in

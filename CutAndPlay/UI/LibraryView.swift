@@ -199,6 +199,7 @@ private struct EmptyLibrary: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 
@@ -217,6 +218,7 @@ private struct AddButton: View {
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hovering ? Theme.hover : .clear))
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: hovering)
             .onTapGesture { model.addAtPlayhead(payload) }
             .onDrag {
                 model.dragPayload = payload
@@ -292,6 +294,7 @@ private struct AssetRow: View {
         .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color(hex: 0x3A3A3A).opacity(selected ? 1 : 0), lineWidth: 1))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .modifier(AssetActions(model: model, asset: asset, offline: offline))
     }
 }

@@ -328,6 +328,7 @@ private struct FolderButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .help("Choose where exports are saved")
     }
 }
@@ -471,6 +472,7 @@ private struct PreviewPlayerBox: View {
         .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .onTapGesture { player.toggle() }
         .help("Play preview")
     }
@@ -497,6 +499,7 @@ private struct ScrubBar: View {
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: hovering)
             .highPriorityGesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { v in
@@ -539,6 +542,7 @@ struct PillButton: View {
         .keyboardShortcut(shortcut)
         .opacity(enabled ? 1 : 0.4)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 
@@ -581,6 +585,7 @@ private struct SheetMenu<Content: View>: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 
@@ -603,6 +608,7 @@ private struct AccentSwitch: View {
         .animation(.easeOut(duration: 0.14), value: isOn)
         .contentShape(Capsule())
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .onTapGesture { isOn.toggle() }
     }
 }
