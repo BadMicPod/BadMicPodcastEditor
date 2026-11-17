@@ -228,10 +228,13 @@ struct ExportSheet: View {
         if let dir = model.project.exportDir, FileManager.default.fileExists(atPath: dir) {
             folder = URL(fileURLWithPath: dir)
         } else {
-            folder = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first ?? folder
+            // Next to the project file, or the Desktop for a project that hasn't been saved.
+            folder = model.fileURL?.deletingLastPathComponent()
+                ?? FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first ?? folder
         }
         model.pause()
         player.load(model)
+        if CommandLine.arguments.contains("--play-export-preview") { player.toggle() }
         // Don't open with the filename selected; it reads as an error state.
         DispatchQueue.main.async { nameFocused = false }
     }
@@ -337,8 +340,12 @@ final class PreviewPlayer: ObservableObject {
     let player = AVPlayer()
     @Published private(set) var isPlaying = false
     @Published private(set) var isReady = false
+    /// Where playback is, 0...1 of the timeline.
+    @Published private(set) var progress = 0.0
+    private(set) var duration = 0.0
     private var startTime = CMTime.zero
     private var endObserver: NSObjectProtocol?
+    private var timeObserver: Any?
 
     func load(_ model: EditorModel) {
         let p = model.project
@@ -356,6 +363,14 @@ final class PreviewPlayer: ObservableObject {
         let t = min(max(0, model.playhead), max(0, built.duration - 1 / p.fps))
         startTime = CompositionBuilder.time(t)
         player.seek(to: startTime, toleranceBefore: .zero, toleranceAfter: .zero)
+        duration = built.duration
+        progress = built.duration > 0 ? t / built.duration : 0
+        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 30), queue: .main) { [weak self] time in
+            MainActor.assumeIsolated {
+                guard let self, self.duration > 0, time.seconds.isFinite else { return }
+                self.progress = min(1, max(0, time.seconds / self.duration))
+            }
+        }
         isReady = true
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -381,8 +396,18 @@ final class PreviewPlayer: ObservableObject {
         isPlaying = false
     }
 
+    /// Jumps to a point (0...1 of the timeline), carrying on playing if it was.
+    func seek(fraction: Double) {
+        guard isReady, duration > 0 else { return }
+        let f = min(1, max(0, fraction))
+        progress = f
+        player.seek(to: CompositionBuilder.time(f * duration), toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
     func stop() {
         pause()
+        if let timeObserver { player.removeTimeObserver(timeObserver) }
+        timeObserver = nil
         player.replaceCurrentItem(with: nil)
         isReady = false
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
@@ -421,6 +446,17 @@ private struct PreviewPlayerBox: View {
                     .font(.system(size: 30, weight: .light))
                     .foregroundStyle(Theme.textFaint)
             }
+            // Scrub bar along the bottom while playing or under the mouse: drag it to move through.
+            if player.isPlaying || hovering {
+                VStack(spacing: 0) {
+                    Spacer()
+                    ScrubBar(progress: player.progress) { player.seek(fraction: $0) }
+                        .frame(height: 22)
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 6)
+                        .background(LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom).allowsHitTesting(false))
+                }
+            }
             if !player.isPlaying || hovering {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 26, weight: .bold))
@@ -437,6 +473,39 @@ private struct PreviewPlayerBox: View {
         .onHover { hovering = $0 }
         .onTapGesture { player.toggle() }
         .help("Play preview")
+    }
+}
+
+/// A thin progress track with a playhead, for the export preview. Click or drag to scrub.
+private struct ScrubBar: View {
+    let progress: Double
+    let onSeek: (Double) -> Void
+    @State private var hovering = false
+    @State private var dragging = false
+
+    var body: some View {
+        GeometryReader { g in
+            let x = g.size.width * CGFloat(progress)
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.25)).frame(height: hovering || dragging ? 4 : 3)
+                Capsule().fill(Color.white).frame(width: max(0, x), height: hovering || dragging ? 4 : 3)
+                Capsule()
+                    .fill(Theme.accent)
+                    .frame(width: 2, height: hovering || dragging ? 12 : 9)
+                    .offset(x: x - 1)
+            }
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { v in
+                        dragging = true
+                        onSeek(Double(v.location.x / max(1, g.size.width)))
+                    }
+                    .onEnded { _ in dragging = false }
+            )
+        }
     }
 }
 
