@@ -97,6 +97,14 @@ struct CutAndPlayApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("New") { model.newProject() }.keyboardShortcut("n")
                 Button("Open…") { model.openProject() }.keyboardShortcut("o")
+                Menu("Open Recent") {
+                    ForEach(model.recentProjects, id: \.self) { url in
+                        Button(url.deletingPathExtension().lastPathComponent) { model.openRecent(url) }
+                    }
+                    if !model.recentProjects.isEmpty { Divider() }
+                    Button("Clear Menu") { model.clearRecents() }
+                        .disabled(model.recentProjects.isEmpty)
+                }
                 Divider()
                 Button("Save") { model.save() }.keyboardShortcut("s")
                 Button("Save As…") { model.saveAs() }.keyboardShortcut("s", modifiers: [.command, .shift])

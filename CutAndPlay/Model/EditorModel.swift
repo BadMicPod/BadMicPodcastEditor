@@ -237,6 +237,7 @@ final class EditorModel: ObservableObject {
             var doc = try JSONDecoder().decode(SavedDocument.self, from: Data(contentsOf: url))
             doc.project.resolveMovedMedia(projectDir: url.deletingLastPathComponent())
             load(doc.project, url: url, offerLocate: true)
+            noteRecent(url)
             // Test launches (`--open`, `--selftest`) don't change what opens next time.
             if !CommandLine.arguments.contains("--selftest"), !CommandLine.arguments.contains("--open") { lastSession = url.path }
         } catch {
@@ -846,6 +847,33 @@ final class EditorModel: ObservableObject {
         lastSession = nil
     }
 
+    // MARK: Recent projects
+
+    /// Projects opened or saved recently, newest first, as macOS keeps them for this app.
+    @Published private(set) var recentProjects: [URL] = NSDocumentController.shared.recentDocumentURLs
+
+    /// Adds a project to Open Recent. Test launches leave the list alone.
+    private func noteRecent(_ url: URL) {
+        let args = CommandLine.arguments
+        guard !args.contains("--selftest"), !args.contains("--open") else { return }
+        NSDocumentController.shared.noteNewRecentDocumentURL(url)
+        recentProjects = NSDocumentController.shared.recentDocumentURLs
+    }
+
+    func openRecent(_ url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            importError = "“\(url.lastPathComponent)” can't be found. It may have been moved or deleted."
+            return
+        }
+        guard confirmDiscard() else { return }
+        open(url: url)
+    }
+
+    func clearRecents() {
+        NSDocumentController.shared.clearRecentDocuments(nil)
+        recentProjects = []
+    }
+
     func openProject() {
         guard confirmDiscard() else { return }
         let panel = NSOpenPanel()
@@ -857,6 +885,7 @@ final class EditorModel: ObservableObject {
     func save() {
         guard let url = fileURL else { return saveAs() }
         write(to: url)
+        noteRecent(url)
     }
 
     func saveAs() {
@@ -865,6 +894,7 @@ final class EditorModel: ObservableObject {
         panel.nameFieldStringValue = title + ".cutplay"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         write(to: url)
+        noteRecent(url)
     }
 
     private func write(to url: URL) {
