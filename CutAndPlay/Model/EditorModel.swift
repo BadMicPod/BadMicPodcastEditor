@@ -47,7 +47,9 @@ struct SavedDocument: Codable {
 
 @MainActor
 final class EditorModel: ObservableObject {
-    @Published private(set) var project = Project()
+    @Published private(set) var project = Project() {
+        didSet { lastEdit = Date() }
+    }
     @Published var selection: Set<UUID> = []
     @Published var tool: Tool = .move
     @Published var snapping = true
@@ -130,7 +132,78 @@ final class EditorModel: ObservableObject {
                     try? await Task.sleep(nanoseconds: 300_000_000)
                     self.toggleViewerFullScreen()
                 }
+            } else if !args.contains("--selftest") {
+                self.restoreLastSession()
             }
+        }
+        if !CommandLine.arguments.contains("--selftest") {
+            autosaveTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.autosaveIfIdle() }
+            }
+        }
+    }
+
+    // MARK: Autosave and recovery
+
+    private var autosaveTimer: Timer?
+    private var lastEdit = Date.distantPast
+    private var lastRecovered: Project?
+
+    /// Unsaved work on an untitled project is kept here, and reopened on the next launch.
+    static var recoveryURL: URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("CutAndPlay/Recovery", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("Untitled.cutplay")
+    }
+
+    /// What to reopen at launch: a project file's path, or "untitled" for the recovery copy.
+    private var lastSession: String? {
+        get { UserDefaults.standard.string(forKey: "lastSession") }
+        set {
+            guard !CommandLine.arguments.contains("--open") else { return }
+            UserDefaults.standard.set(newValue, forKey: "lastSession")
+        }
+    }
+
+    /// Two seconds after the last change, and never in the middle of a drag: a saved project is
+    /// saved in place, and untitled work goes to the recovery copy.
+    private func autosaveIfIdle() {
+        guard isDirty, liveSnapshot == nil, Date().timeIntervalSince(lastEdit) > 2 else { return }
+        autosaveNow()
+    }
+
+    func autosaveNow() {
+        commitLive()
+        if let url = fileURL {
+            guard isDirty else { return }
+            write(to: url)
+            lastSession = url.path
+        } else if project.clips.isEmpty && project.assets.isEmpty {
+            try? FileManager.default.removeItem(at: Self.recoveryURL)
+            if lastSession == "untitled" { lastSession = nil }
+        } else if lastRecovered != project {
+            let encoder = JSONEncoder()
+            if let data = try? encoder.encode(SavedDocument(project: project)) {
+                try? data.write(to: Self.recoveryURL, options: .atomic)
+                lastRecovered = project
+                lastSession = "untitled"
+            }
+        }
+    }
+
+    /// Opens whatever was being worked on last time: the project file, or untitled work from the
+    /// recovery copy. Nothing to reopen leaves the empty project that's already there.
+    private func restoreLastSession() {
+        guard let last = lastSession else { return }
+        if last == "untitled" {
+            guard let data = try? Data(contentsOf: Self.recoveryURL),
+                  let doc = try? JSONDecoder().decode(SavedDocument.self, from: data) else { return }
+            load(doc.project, url: nil, offerLocate: true)
+            lastRecovered = doc.project
+            isDirty = true
+        } else if FileManager.default.fileExists(atPath: last) {
+            open(url: URL(fileURLWithPath: last))
         }
     }
 
@@ -139,6 +212,8 @@ final class EditorModel: ObservableObject {
             var doc = try JSONDecoder().decode(SavedDocument.self, from: Data(contentsOf: url))
             doc.project.resolveMovedMedia(projectDir: url.deletingLastPathComponent())
             load(doc.project, url: url, offerLocate: true)
+            // Test launches (`--open`, `--selftest`) don't change what opens next time.
+            if !CommandLine.arguments.contains("--selftest"), !CommandLine.arguments.contains("--open") { lastSession = url.path }
         } catch {
             importError = "Couldn't open \(url.lastPathComponent)."
         }
@@ -666,6 +741,8 @@ final class EditorModel: ObservableObject {
     func newProject() {
         guard confirmDiscard() else { return }
         load(Project(), url: nil)
+        try? FileManager.default.removeItem(at: Self.recoveryURL)
+        lastSession = nil
     }
 
     func openProject() {
@@ -697,8 +774,10 @@ final class EditorModel: ObservableObject {
             var saved = project
             saved.stampRelativePaths(projectDir: url.deletingLastPathComponent())
             try encoder.encode(SavedDocument(project: saved)).write(to: url, options: .atomic)
+            if fileURL == nil { try? FileManager.default.removeItem(at: Self.recoveryURL) }
             fileURL = url
             isDirty = false
+            lastSession = url.path
         } catch {
             importError = "Couldn't save to \(url.lastPathComponent)."
         }
