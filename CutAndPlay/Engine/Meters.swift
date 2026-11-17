@@ -1,19 +1,45 @@
 import Foundation
+import QuartzCore
+
+/// One meter's state: the level (with a falling release), the recent peak, and whether it has hit 0 dB.
+struct MeterReading: Equatable {
+    var level = MeterState.floor
+    var peak = MeterState.floor
+    /// Stays on once the signal reaches 0 dB, until the meter is clicked.
+    var clipped = false
+
+    func differs(from other: MeterReading) -> Bool {
+        abs(level - other.level) > 0.2 || abs(peak - other.peak) > 0.2 || clipped != other.clipped
+    }
+}
 
 /// Audio levels for the track and output meters, read from the waveform peaks at the playhead so
-/// they need no hook into the audio itself. Values are dBFS as shown, with a falling release.
+/// they need no hook into the audio itself. Values are dBFS.
 @MainActor
 final class MeterState: ObservableObject {
     static let floor = -60.0
 
-    @Published private(set) var tracks: [UUID: Double] = [:]
-    @Published private(set) var master = MeterState.floor
+    @Published private(set) var tracks: [UUID: MeterReading] = [:]
+    @Published private(set) var master = MeterReading()
 
-    /// How far a reading may drop per display frame.
+    /// How far the level may drop per display frame.
     private let release = 0.9
+    /// How long a peak holds before it starts to fall, and how fast it falls after.
+    private let peakHold = 1.2
+    private let peakFall = 0.45
+    private var holdUntil: [UUID?: Double] = [:]
+
+    func resetClip(_ track: UUID?) {
+        if let track {
+            tracks[track]?.clipped = false
+        } else {
+            master.clipped = false
+        }
+    }
 
     func update(project: Project, media: MediaStore, time t: Double, playing: Bool) {
-        var next: [UUID: Double] = [:]
+        let now = CACurrentMediaTime()
+        var next: [UUID: MeterReading] = [:]
         var power = 0.0
         for track in project.audioTracks {
             var level = 0.0
@@ -32,21 +58,30 @@ final class MeterState: ObservableObject {
                 level *= dbToLinear(track.gainDB)
             }
             power += level * level
-            next[track.id] = settle(tracks[track.id] ?? Self.floor, toward: Self.db(level))
+            next[track.id] = advance(tracks[track.id] ?? MeterReading(), reading: Self.db(level), key: track.id, now: now)
         }
-        let out = settle(master, toward: power > 0 ? 10 * log10(power) : Self.floor)
+        let out = advance(master, reading: power > 0 ? 10 * log10(power) : Self.floor, key: nil, now: now)
         // Skip publishing tiny changes so idle meters don't redraw every frame.
-        if next.contains(where: { abs($0.value - (tracks[$0.key] ?? Self.floor)) > 0.2 }) || next.count != tracks.count {
+        if next.count != tracks.count || next.contains(where: { $0.value.differs(from: tracks[$0.key] ?? MeterReading()) }) {
             tracks = next
         }
-        if abs(out - master) > 0.2 { master = out }
+        if out.differs(from: master) { master = out }
+    }
+
+    private func advance(_ old: MeterReading, reading: Double, key: UUID?, now: Double) -> MeterReading {
+        var r = old
+        r.level = max(reading, max(Self.floor, old.level - release))
+        if reading >= old.peak {
+            r.peak = reading
+            holdUntil[key] = now + peakHold
+        } else if now > holdUntil[key] ?? 0 {
+            r.peak = max(Self.floor, old.peak - peakFall)
+        }
+        if reading >= -0.1 { r.clipped = true }
+        return r
     }
 
     private static func db(_ linear: Double) -> Double {
         linear > 0 ? max(floor, 20 * log10(linear)) : floor
-    }
-
-    private func settle(_ shown: Double, toward reading: Double) -> Double {
-        max(reading, max(Self.floor, shown - release))
     }
 }

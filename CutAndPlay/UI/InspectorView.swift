@@ -615,13 +615,12 @@ private struct CurveMenu: View {
     var body: some View {
         Menu {
             ForEach(FadeCurve.allCases, id: \.self) { curve in
-                Button {
-                    onPick(curve)
-                } label: {
-                    if curve == selection {
-                        Label(curve.label, systemImage: "checkmark")
-                    } else {
+                // A toggle so the current one gets the menu's checkmark; the drawing shows the shape.
+                Toggle(isOn: Binding(get: { curve == selection }, set: { _ in onPick(curve) })) {
+                    Label {
                         Text(curve.label)
+                    } icon: {
+                        Image(nsImage: Self.glyph(curve, rising: rising))
                     }
                 }
             }
@@ -643,6 +642,28 @@ private struct CurveMenu: View {
         .fixedSize()
         .onHover { hovering = $0 }
         .help(selection.label)
+    }
+
+    /// The curve drawn as a small template image, for the menu items.
+    static func glyph(_ curve: FadeCurve, rising: Bool) -> NSImage {
+        let size = NSSize(width: 22, height: 13)
+        let image = NSImage(size: size, flipped: false) { r in
+            let path = NSBezierPath()
+            for i in 0...24 {
+                let x = Double(i) / 24
+                let y = curve.apply(rising ? x : 1 - x)
+                let pt = NSPoint(x: 1.5 + CGFloat(x) * (r.width - 3), y: 1.5 + CGFloat(y) * (r.height - 3))
+                if i == 0 { path.move(to: pt) } else { path.line(to: pt) }
+            }
+            path.lineWidth = 1.5
+            path.lineCapStyle = .round
+            path.lineJoinStyle = .round
+            NSColor.black.setStroke()
+            path.stroke()
+            return true
+        }
+        image.isTemplate = true
+        return image
     }
 }
 
