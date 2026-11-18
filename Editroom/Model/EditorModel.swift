@@ -98,6 +98,7 @@ final class EditorModel: ObservableObject {
     @Published private(set) var fileURL: URL?
     @Published private(set) var isDirty = false
     @Published var showExport = false
+    @Published var showAgents = false
     /// Playback starts over from the beginning when it reaches the end.
     @Published var loop = UserDefaults.standard.bool(forKey: "loopPlayback") {
         didSet { UserDefaults.standard.set(loop, forKey: "loopPlayback") }
@@ -176,6 +177,7 @@ final class EditorModel: ObservableObject {
                     self.editingMarker = m.id
                 }
                 if args.contains("--show-export") { self.showExport = true }
+                if args.contains("--show-agents") { self.showAgents = true }
                 if args.contains("--play") { self.play() }
                 if args.contains("--magic") {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -715,7 +717,8 @@ final class EditorModel: ObservableObject {
         importFiles(panel.urls)
     }
 
-    func importFiles(_ urls: [URL], then completion: (([MediaAsset]) -> Void)? = nil) {
+    /// `offerMatch` asks about matching the sequence to the first video; off for imports by an agent.
+    func importFiles(_ urls: [URL], offerMatch offer: Bool = true, then completion: (([MediaAsset]) -> Void)? = nil) {
         guard !urls.isEmpty else { return }
         importCount += urls.count
         Task {
@@ -728,7 +731,7 @@ final class EditorModel: ObservableObject {
                     project.assets.append(asset)
                     isDirty = true
                     imported.append(asset)
-                    offerMatch(asset)
+                    if offer { offerMatch(asset) }
                 } else {
                     failed.append(url.lastPathComponent)
                 }
@@ -770,7 +773,7 @@ final class EditorModel: ObservableObject {
     }
 
     /// Renders the frame under the playhead, for previews.
-    func snapshot() async -> NSImage? {
+    func snapshot(at time: Double? = nil) async -> NSImage? {
         let p = project
         let scale = min(1, 640 / CGFloat(max(p.width, p.height)))
         let size = CGSize(width: max(2, (CGFloat(p.width) * scale / 2).rounded() * 2),
@@ -780,7 +783,7 @@ final class EditorModel: ObservableObject {
         generator.videoComposition = built.videoComposition
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
-        let t = min(max(0, playhead), max(0, built.duration - 1 / p.fps))
+        let t = min(max(0, time ?? playhead), max(0, built.duration - 1 / p.fps))
         guard let cg = try? await generator.image(at: CompositionBuilder.time(t)).image else { return nil }
         return NSImage(cgImage: cg, size: .zero)
     }

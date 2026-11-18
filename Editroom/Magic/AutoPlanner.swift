@@ -43,28 +43,9 @@ enum AutoPlanner {
         let usable = clips.filter { !$0.1.samples.isEmpty }
         guard !usable.isEmpty else { return nil }
 
-        // Scores, with focus, motion and colour measured against all the footage.
         let all = usable.flatMap(\.1.samples)
-        func pct(_ v: [Double], _ p: Double) -> Double {
-            let s = v.sorted()
-            return s.isEmpty ? 0 : s[min(s.count - 1, Int(Double(s.count - 1) * p))]
-        }
-        let sharpLog = all.map { log1p($0.sharpness) }
-        let s10 = pct(sharpLog, 0.1), s90 = max(pct(sharpLog, 0.9), s10 + 1e-6)
-        let m90 = max(pct(all.map(\.motion), 0.9), 0.02)
-        let c90 = max(pct(all.map(\.color), 0.9), 0.05)
-        func score(_ s: ClipAnalysis.Sample) -> Double {
-            let sharp = min(1, max(0, (log1p(s.sharpness) - s10) / (s90 - s10)))
-            let exposure = 1 - min(1, abs(s.luma - 0.45) / 0.38)
-            let color = min(1, s.color / c90)
-            let motion = s.motion / m90
-            var q = 0.36 * sharp + 0.2 * exposure + 0.14 * color
-            q += s.faces > 0 ? 0.16 : 0
-            q += s.aesthetic.map { 0.26 * ($0 + 1) / 2 } ?? 0.12
-            if s.utility == true { q -= 0.35 }
-            if motion > 1.1 { q -= min(0.3, (motion - 1.1) * 0.3) }
-            return q
-        }
+        let score = scorer(all)
+        func pct(_ v: [Double], _ p: Double) -> Double { percentile(v, p) }
 
         struct Source {
             var asset: MediaAsset
@@ -247,6 +228,58 @@ enum AutoPlanner {
             decision.shots[i].source = max(0, min(s.source, s.asset.duration - s.duration - 0.02))
         }
         return decision
+    }
+
+    static func percentile(_ v: [Double], _ p: Double) -> Double {
+        let s = v.sorted()
+        return s.isEmpty ? 0 : s[min(s.count - 1, Int(Double(s.count - 1) * p))]
+    }
+
+    /// How good each frame sample is, with focus, motion and colour measured against `all` the
+    /// footage being considered.
+    static func scorer(_ all: [ClipAnalysis.Sample]) -> (ClipAnalysis.Sample) -> Double {
+        let sharpLog = all.map { log1p($0.sharpness) }
+        let s10 = percentile(sharpLog, 0.1), s90 = max(percentile(sharpLog, 0.9), s10 + 1e-6)
+        let m90 = max(percentile(all.map(\.motion), 0.9), 0.02)
+        let c90 = max(percentile(all.map(\.color), 0.9), 0.05)
+        return { s in
+            let sharp = min(1, max(0, (log1p(s.sharpness) - s10) / (s90 - s10)))
+            let exposure = 1 - min(1, abs(s.luma - 0.45) / 0.38)
+            let color = min(1, s.color / c90)
+            let motion = s.motion / m90
+            var q = 0.36 * sharp + 0.2 * exposure + 0.14 * color
+            q += s.faces > 0 ? 0.16 : 0
+            q += s.aesthetic.map { 0.26 * ($0 + 1) / 2 } ?? 0.12
+            if s.utility == true { q -= 0.35 }
+            if motion > 1.1 { q -= min(0.3, (motion - 1.1) * 0.3) }
+            return q
+        }
+    }
+
+    /// A clip's best moments of about `length` seconds, best first, not overlapping.
+    static func moments(_ a: ClipAnalysis, limit: Double, length: Double = 2, count: Int = 5,
+                        score: (ClipAnalysis.Sample) -> Double) -> [(start: Double, end: Double, score: Double, faces: Int)] {
+        let scores = a.samples.map(score)
+        var windows: [(Double, Double, Int)] = []
+        var start = 0.0
+        let end = min(a.duration, limit)
+        let len = min(length, end)
+        while start + len <= end + 1e-6 {
+            let inside = a.samples.indices.filter { a.samples[$0].time >= start && a.samples[$0].time <= start + len }
+            if !inside.isEmpty {
+                let vals = inside.map { scores[$0] }
+                let v = vals.reduce(0, +) / Double(vals.count) * 0.75 + (vals.min() ?? 0) * 0.25
+                windows.append((start, v, inside.map { a.samples[$0].faces }.max() ?? 0))
+            }
+            start += 0.25
+        }
+        var picked: [(start: Double, end: Double, score: Double, faces: Int)] = []
+        for w in windows.sorted(by: { $0.1 > $1.1 }) where picked.count < count {
+            if picked.allSatisfy({ w.0 + len <= $0.start || w.0 >= $0.end }) {
+                picked.append((w.0, w.0 + len, w.1, w.2))
+            }
+        }
+        return picked
     }
 
     /// The title: when it was filmed. "November 14, 2026", "November 2026" or "October – November 2026".

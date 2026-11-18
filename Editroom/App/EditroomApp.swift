@@ -7,7 +7,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pending: [URL] = []
 
     @MainActor weak var model: EditorModel? {
-        didSet { flush() }
+        didSet {
+            flush()
+            if let model { MCPServer.shared.attach(model) }
+        }
     }
 
     override init() {
@@ -111,6 +114,8 @@ struct EditroomApp: App {
     @StateObject private var model = EditorModel()
 
     init() {
+        // `--mcp`: a go-between for an AI agent, with no window. Never returns.
+        MCPBridge.runIfRequested()
         Self.carryOverFromCutAndPlay()
         SelfTest.runIfRequested()
         FormatCheck.runIfRequested()
@@ -144,6 +149,9 @@ struct EditroomApp: App {
         .defaultSize(width: 1480, height: 940)
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("AI Agents…") { model.showAgents = true }
+            }
             CommandGroup(replacing: .newItem) {
                 Button("New") { model.newProject() }.keyboardShortcut("n")
                 Button("Open…") { model.openProject() }.keyboardShortcut("o")

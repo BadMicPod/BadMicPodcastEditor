@@ -49,7 +49,9 @@ enum MagicEdit {
     case move([UUID], from: Double, to: Double, tracks: [UUID: UUID])
     /// Cuts clips in two with the blade; the right-hand pieces get the given ids.
     case blade([UUID], at: Double, pieces: [UUID: UUID], link: UUID?)
-    case remove([UUID])
+    case remove([UUID], ripple: Bool = false)
+    /// Any other change, made with a click on the clip (or nowhere, for the sequence).
+    case change(UUID?, String, (inout Project) -> Void)
     /// Types a title's text.
     case type(UUID, String)
     case gain(UUID, from: Double, to: Double)
@@ -72,6 +74,7 @@ enum MagicEdit {
         case .move: return "Move"
         case .blade: return "✂ Cut"
         case .remove: return "Delete"
+        case .change(_, let label, _): return label
         case .type(_, let text):
             let n = Int((Double(text.count) * min(1, max(0, p))).rounded(.down))
             return String(text.prefix(n)) + (n < text.count ? "|" : "")
@@ -94,6 +97,7 @@ enum MagicEdit {
         case .move: return 0.42
         case .blade: return 0.16
         case .remove: return 0.14
+        case .change: return 0.16
         case .type(_, let text): return 0.12 + Double(text.count) * 0.045
         case .gain: return 0.24
         case .fadeIn, .fadeOut: return 0.22
@@ -111,7 +115,8 @@ enum MagicEdit {
         switch self {
         case .place(let clips, _): return clips.map(\.id)
         case .trimHead(let ids, _, _), .trimTail(let ids, _, _), .move(let ids, _, _, _), .blade(let ids, _, _, _),
-             .remove(let ids): return ids
+             .remove(let ids, _): return ids
+        case .change(let id, _, _): return id.map { [$0] } ?? []
         case .type(let id, _), .gain(let id, _, _), .fadeIn(let id, _), .fadeOut(let id, _), .look(let id, _),
              .grade(let id, _, _), .transition(let id, _): return [id]
         }
@@ -134,18 +139,23 @@ enum MagicEdit {
         case .place(let clips, _):
             guard p >= 1 else { return }
             project.clips.append(contentsOf: clips)
+            // Dropped on something: it overwrites it, as on the timeline.
+            project.resolveOverlaps(keeping: Set(clips.map(\.id)))
         case .trimHead(let ids, let from, let to):
             let t = project.snapFrame(from + (to - from) * e)
             each(ids) { $0.trimHead(to: t) }
+            if p >= 1 { project.resolveOverlaps(keeping: Set(ids)) }
         case .trimTail(let ids, let from, let to):
             let t = project.snapFrame(from + (to - from) * e)
             each(ids) { $0.trimTail(to: t) }
+            if p >= 1 { project.resolveOverlaps(keeping: Set(ids)) }
         case .move(let ids, let from, let to, let tracks):
             let delta = project.snapFrame(from + (to - from) * e) - from
             each(ids) { c in
                 c.start += delta
                 if e >= 0.5, let t = tracks[c.id] { c.trackID = t }
             }
+            if p >= 1 { project.resolveOverlaps(keeping: Set(ids)) }
         case .blade(let ids, let at, let pieces, let link):
             guard p >= 1 else { return }
             for id in ids {
@@ -160,9 +170,12 @@ enum MagicEdit {
                 project.clips[i].trimTail(to: at)
                 project.clips.append(right)
             }
-        case .remove(let ids):
+        case .remove(let ids, let ripple):
             guard p >= 1 else { return }
-            project.clips.removeAll { ids.contains($0.id) }
+            project.remove(ids: Set(ids), ripple: ripple)
+        case .change(_, _, let body):
+            guard p >= 1 else { return }
+            body(&project)
         case .type(let id, let text):
             let n = Int((Double(text.count) * min(1, max(0, p))).rounded(.down))
             each([id]) { $0.text.string = String(text.prefix(n)) }

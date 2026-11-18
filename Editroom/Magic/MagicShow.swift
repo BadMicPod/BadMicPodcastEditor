@@ -59,6 +59,38 @@ final class MagicShow: NSObject {
     static private(set) var current: MagicShow?
     static var isRunning: Bool { current != nil }
 
+    /// Someone outside the app (an AI agent connected over MCP) whose edits are played by one named
+    /// cursor that stays where it stops.
+    struct Performer {
+        let name: String
+        let color: NSColor
+        /// Where its cursor was left last time; nil starts from the Magic button.
+        let start: CGPoint?
+        let done: (CGPoint?) -> Void
+    }
+
+    /// Plays some edits, one after another, with one agent's cursor. Calls `done` with where the
+    /// cursor ended up. Waits for any other show to finish first.
+    static func perform(model: EditorModel, edits: [MagicEdit], as performer: Performer) async {
+        while current != nil || MagicState.shared.busy { try? await Task.sleep(nanoseconds: 50_000_000) }
+        guard !edits.isEmpty else {
+            performer.done(performer.start)
+            return
+        }
+        // No timeline on screen to show it on: just make the change.
+        guard let canvas = TimelineCanvas.current, let window = canvas.window, window.isVisible else {
+            model.mutate { p in for e in edits { e.apply(&p, 1) } }
+            performer.done(performer.start)
+            return
+        }
+        var tasks: [MagicTask] = []
+        for (i, e) in edits.enumerated() { tasks.append(MagicTask(edit: e, after: i > 0 ? [i - 1] : [])) }
+        let show = MagicShow(model: model, plan: MagicPlan(base: model.project, tasks: tasks), window: window, canvas: canvas,
+                             click: nil, performer: performer)
+        current = show
+        show.begin()
+    }
+
     /// Looks at the media, plans a cut, and plays it. `fromMouse` spawns the cursors from where the
     /// mouse was when this was called; otherwise from the Magic button.
     static func start(model: EditorModel, fromMouse: Bool) {
@@ -98,7 +130,7 @@ final class MagicShow: NSObject {
             }
             // Spawn from the click if it was quick; after a wait, from the button.
             let fromClick = CACurrentMediaTime() - started < 1.5 ? click : nil
-            let show = MagicShow(model: model, plan: plan, window: window, canvas: canvas, click: fromClick)
+            let show = MagicShow(model: model, plan: plan, window: window, canvas: canvas, click: fromClick, performer: nil)
             current = show
             state.status = nil
             show.begin()
@@ -252,7 +284,11 @@ final class MagicShow: NSObject {
     static let menuItem = CGPoint(x: 62, y: 20)
     static let menuItems = ["Dissolve", "Dip to Black", "Wipe"]
 
-    private init(model: EditorModel, plan: MagicPlan, window: NSWindow, canvas: TimelineCanvas, click: NSPoint?) {
+    private let performer: Performer?
+    private var agentMode: Bool { performer != nil }
+
+    private init(model: EditorModel, plan: MagicPlan, window: NSWindow, canvas: TimelineCanvas, click: NSPoint?, performer: Performer?) {
+        self.performer = performer
         self.model = model
         self.plan = plan
         self.window = window
@@ -269,8 +305,20 @@ final class MagicShow: NSObject {
         model.selection = []
         model.rebuildSuspended = true
 
-        // Lay the timeline out for the finished cut before anything lands on it.
+        // Lay the timeline out for the finished cut before anything lands on it. An agent's edits
+        // happen on the timeline as the person left it.
         model.live(autoCommit: false) { $0 = plan.base }
+        if !agentMode { fitTimeline() }
+
+        spawn = performer?.start ?? spawnPoint()
+        schedule()
+        // Make the grades' colour cubes now, not mid-show.
+        for g in Set(finalProject.clips.compactMap(\.grade)) { _ = GradeBaker.cube(for: g) }
+        buildOverlay()
+        startShow()
+    }
+
+    private func fitTimeline() {
         let total = plan.tasks.compactMap { task -> Double? in
             if case .place(let clips, _) = task.edit { return clips.map(\.end).max() }
             return nil
@@ -281,13 +329,9 @@ final class MagicShow: NSObject {
         model.setView(pps: (model.view.viewWidth - 60) / CGFloat(total), scrollX: 0)
         model.centerRows()
         startPPS = model.view.pps
+    }
 
-        spawn = spawnPoint()
-        schedule()
-        // Make the grades' colour cubes now, not mid-show.
-        for g in Set(finalProject.clips.compactMap(\.grade)) { _ = GradeBaker.cube(for: g) }
-        buildOverlay()
-
+    private func startShow() {
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] e in
             MainActor.assumeIsolated {
                 guard let self, !self.done else { return e }
@@ -325,16 +369,17 @@ final class MagicShow: NSObject {
         var cardLast: [UUID: Double] = [:]
         for t in tasks where t.edit.isGradeCard { if let id = t.edit.clipID { cardLeft[id, default: 0] += 1 } }
 
-        let count = min(64, max(14, Int(Double(tasks.count) / 2.4)))
+        let count = agentMode ? 1 : min(64, max(14, Int(Double(tasks.count) / 2.4)))
         var rng = SeededRandom(seed: UInt64(tasks.count))
         for i in 0..<count {
             let hue = (Double(i) * 0.61803398875).truncatingRemainder(dividingBy: 1)
-            let a = Agent(color: NSColor(hue: hue, saturation: 0.68, brightness: 0.97, alpha: 1))
+            let a = Agent(color: performer?.color ?? NSColor(hue: hue, saturation: 0.68, brightness: 0.97, alpha: 1))
             // Out of the button one after another, slowly at first, then faster.
             // Out of the button one after another: slowly at first, then faster, never quite evenly.
             a.birth = max(0, 2.4 * pow(Double(i) / Double(count), 0.7) + (rng.next() - 0.5) * 0.12)
             a.angle = rng.next() * 2 * .pi
             a.speed = 0.65 + rng.next() * 0.7
+            if agentMode { a.birth = 0; a.speed = 1 }
             agents.append(a)
         }
         // Each edit gets a moment's thought before it starts, so cursors don't move in step. The
@@ -347,7 +392,7 @@ final class MagicShow: NSObject {
                 panelThought[id] = v
                 return v
             }
-            return pow(rng.next(), 1.5) * 0.45
+            return agentMode ? 0 : pow(rng.next(), 1.5) * 0.45
         }
         var free = agents.map(\.birth)
         var pos = Array(repeating: spawn, count: count)
@@ -358,7 +403,7 @@ final class MagicShow: NSObject {
 
         func travel(_ a: Int, _ from: CGPoint, _ to: CGPoint, at t: Double) -> Double {
             let d = Double(hypot(to.x - from.x, to.y - from.y))
-            return min(0.65, max(0.14, d / (2200 * agents[a].speed / Self.tempo(t))))
+            return min(0.65, max(0.14, d / (2200 * agents[a].speed / pace(at: t))))
         }
 
         while !remaining.isEmpty {
@@ -390,7 +435,7 @@ final class MagicShow: NSObject {
                 let better = start < pickStart - 1e-6 || (abs(start - pickStart) <= 1e-6 && used[a] && !used[pick])
                 if better { pick = a; pickStart = start; pickTravel = tr }
             }
-            let perform = edit.performTime * Self.tempo(pickStart) * (edit.isGradeCard ? 0.85 + rng.next() * 0.3 : 0.7 + rng.next() * 0.8)
+            let perform = edit.performTime * pace(at: pickStart) * (agentMode ? 1 : edit.isGradeCard ? 0.85 + rng.next() * 0.3 : 0.7 + rng.next() * 0.8)
             let finish = pickStart + perform
             slots.append(Slot(edit: edit, agent: pick, travelStart: pickStart - pickTravel, start: pickStart, end: finish))
             agents[pick].slots.append(slots.count - 1)
@@ -413,20 +458,24 @@ final class MagicShow: NSObject {
         order = slots.indices.sorted { slots[$0].start < slots[$1].start }
         workEnd = (slots.map(\.end).max() ?? 0) + 0.06
 
-        // Each cursor goes home once it has nothing left to do.
+        // Each cursor goes home once it has nothing left to do. An agent's cursor stays put.
         for a in agents {
             guard let last = a.slots.last else { continue }
             a.birth = slots[a.slots[0]].travelStart
-            a.home = slots[last].end + 0.08 + rng.next() * 0.12
-            a.gone = a.home + Self.homeTrip
+            a.home = agentMode ? .infinity : slots[last].end + 0.08 + rng.next() * 0.12
+            a.gone = agentMode ? .infinity : a.home + Self.homeTrip
         }
-        showEnd = max(workEnd, agents.map(\.gone).max() ?? workEnd) + 0.05
+        showEnd = agentMode ? workEnd + 0.05 : max(workEnd, agents.map(\.gone).max() ?? workEnd) + 0.05
 
         if let first = cards.values.map(\.appear).min(), let last = cards.values.map(\.vanish).max() {
             backdropSpan = (first - 0.15, last + 0.3)
         }
-        pace = max(1, Self.targetLength / showEnd)
+        pace = agentMode ? 1 : max(1, Self.targetLength / showEnd)
     }
+
+    /// How slow things are at a moment: the show starts unhurried and speeds up; an agent works at
+    /// a steady, quick pace.
+    private func pace(at t: Double) -> Double { agentMode ? 0.85 : Self.tempo(t) }
 
     // MARK: Overlay
 
@@ -576,7 +625,8 @@ final class MagicShow: NSObject {
         c.chipText.fontSize = 10
         c.chipText.foregroundColor = Theme.NS.textDim.cgColor
         c.chipText.frame = CGRect(x: 8, y: 2.5, width: c.chip.frame.width - 16, height: 13)
-        c.chipText.string = "None"
+        let before = plan.base.clip(c.clip)?.grade
+        c.chipText.string = before?.look == nil ? "None" : before!.lookLabel
         c.chip.addSublayer(c.chipText)
 
         for (i, key) in MagicGradeKey.allCases.enumerated() {
@@ -601,6 +651,11 @@ final class MagicShow: NSObject {
             let value = text("0", CGRect(x: size.width - 40, y: y - 7, width: 30, height: 13), size: 9.5, color: Theme.NS.textFaint, align: .right)
             value.font = NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .medium)
             c.knobs[key] = (fill, knob, value)
+            // Where it starts: the clip's grade as it is now.
+            let v = key.value(before), x = knobX(key, v), mid = knobX(key, 0)
+            knob.position = CGPoint(x: x, y: y)
+            fill.frame = CGRect(x: min(x, mid), y: y - 1, width: abs(x - mid), height: 2)
+            value.string = key == .exposure ? String(format: "%+.2f", v) : String(format: "%+.0f", v)
         }
     }
 
@@ -611,7 +666,7 @@ final class MagicShow: NSObject {
         return Self.trackX + CGFloat((v - r.lowerBound) / (r.upperBound - r.lowerBound)) * trackWidth
     }
 
-    private static func cursorImage(_ color: NSColor, scale: CGFloat) -> CGImage? {
+    static func cursorImage(_ color: NSColor, scale: CGFloat) -> CGImage? {
         let w = 18, h = 24
         guard let ctx = CGContext(data: nil, width: Int(CGFloat(w) * scale), height: Int(CGFloat(h) * scale), bitsPerComponent: 8,
                                   bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
@@ -782,11 +837,20 @@ final class MagicShow: NSObject {
                 grab = CGPoint(x: x(at), y: r.midY)
                 release = grab
             }
-        case .remove(let ids):
+        case .remove(let ids, _):
             if let id = ids.first, let r = clipRect(id) {
                 grab = CGPoint(x: r.midX, y: r.midY)
                 release = grab
             }
+        case .change(let id, _, _):
+            // A click on the clip, or for the sequence, on the inspector.
+            if let id, let r = clipRect(id) {
+                grab = CGPoint(x: r.minX + min(r.width / 2, 80), y: r.midY)
+            } else {
+                let insp = inspectorRect
+                grab = CGPoint(x: insp.midX, y: insp.minY + 60)
+            }
+            release = grab
         case .type(let id, _):
             if let r = clipRect(id) {
                 grab = CGPoint(x: r.minX + min(r.width / 2, 60), y: r.midY)
@@ -838,13 +902,13 @@ final class MagicShow: NSObject {
         }
         model.live(autoCommit: false) { $0 = p }
         canvas.magicMarks = marks(t)
-        if t > workEnd, finalProject.duration > 0 {
+        if !agentMode, t > workEnd, finalProject.duration > 0 {
             // Zoom out to fit the finished cut as the cursors head home.
             let u = CGFloat(MagicEase.inOut(min(1, (t - workEnd) / max(0.1, showEnd - workEnd - 0.05))))
             let fit = (model.view.viewWidth - 80) / CGFloat(finalProject.duration)
             model.setView(pps: startPPS + (fit - startPPS) * u, scrollX: 0)
         }
-        flashViewer(t)
+        if !agentMode { flashViewer(t) }
         let wall = CACurrentMediaTime()
         if frames > 0 { longestFrame = max(longestFrame, wall - lastFrame) }
         lastFrame = wall
@@ -870,7 +934,7 @@ final class MagicShow: NSObject {
                 continue
             }
             let work = min(t, a.home)
-            let pop = MagicEase.out((t - a.birth) / 0.12)
+            let pop = agentMode && performer?.start != nil ? 1 : MagicEase.out((t - a.birth) / 0.12)
             let out = t > a.home ? MagicEase.inOut(min(1, (t - a.home) / Self.homeTrip)) : 0
             let dir = CGPoint(x: cos(a.angle), y: sin(a.angle))
             let start = spawn
@@ -941,6 +1005,7 @@ final class MagicShow: NSObject {
                     }
                 }
             }
+            if let performer { label = label.isEmpty ? performer.name : performer.name + " · " + label }
             if out > 0 {
                 // Back into the button.
                 let ctrl = onScreen(CGPoint(x: (pos.x + spawn.x) / 2 + dir.x * 120, y: (pos.y + spawn.y) / 2 + dir.y * 120))
@@ -1034,13 +1099,15 @@ final class MagicShow: NSObject {
                 switch s.edit {
                 case .look(_, let name):
                     let picked = t >= s.end
-                    c.chipText.string = picked ? name : "None"
+                    let was = plan.base.clip(c.clip)?.grade
+                    c.chipText.string = picked ? (BuiltInLook.named(name) != nil ? name : URL(fileURLWithPath: name).deletingPathExtension().lastPathComponent)
+                        : (was?.look == nil ? "None" : was!.lookLabel)
                     c.chipText.foregroundColor = (picked ? Theme.NS.text : Theme.NS.textDim).cgColor
                     c.chip.borderColor = (t >= s.start && t < s.end + 0.1 ? NSColor.white.withAlphaComponent(0.5) : NSColor(white: 1, alpha: 0.08)).cgColor
                 case .grade(_, let key, let to):
                     guard let k = c.knobs[key] else { continue }
-                    let from = t >= s.end ? key.value(grade) : 0
-                    let v = t >= s.end ? from : to * u
+                    let start = key.value(plan.base.clip(c.clip)?.grade)
+                    let v = t >= s.end ? key.value(grade) : start + (to - start) * u
                     let x = knobX(key, v), mid = knobX(key, 0)
                     let y = Self.rowY(MagicGradeKey.allCases.firstIndex(of: key) ?? 0)
                     k.knob.position = CGPoint(x: x, y: y)
@@ -1077,7 +1144,7 @@ final class MagicShow: NSObject {
                 if live, u > 0.6, let id = ids.first { m.snaps.append(.init(time: to, clip: id)) }
             case .blade(let ids, let at, _, _):
                 if live { m.cuts += ids.map { .init(time: at, clip: $0) } }
-            case .remove(let ids):
+            case .remove(let ids, _):
                 m.selected.formUnion(ids)
             case .type(let id, _), .transition(let id, _):
                 m.selected.insert(id)
@@ -1090,6 +1157,8 @@ final class MagicShow: NSObject {
             case .fadeOut(let id, _):
                 m.selected.insert(id)
                 if live { m.fadeOut.insert(id) }
+            case .change(let id, _, _):
+                if let id { m.selected.insert(id) }
             case .look, .grade:
                 break
             }
@@ -1129,6 +1198,10 @@ final class MagicShow: NSObject {
     }
 
     private func drawStatus(_ t: Double, finished: Int) {
+        guard !agentMode else {
+            status.opacity = 0
+            return
+        }
         let out = agents.filter { !$0.slots.isEmpty && t >= $0.birth && t < $0.gone }.count
         let text = "✦  \(out) agent\(out == 1 ? "" : "s")  ·  \(finished) / \(slots.count) edits"
         statusText.string = text
@@ -1193,6 +1266,18 @@ final class MagicShow: NSObject {
         model.commitLive()
         model.sourcePreview.clear()
         canvas.magicMarks = MagicMarks()
+        if let performer {
+            // The agent's edits are done: one undo step, the timeline left as it was, and its cursor
+            // parked where it stopped until its next call.
+            window.removeChildWindow(overlay)
+            overlay.orderOut(nil)
+            model.rebuildSuspended = false
+            Self.current = nil
+            let end = agents.first?.slots.last.map { points($0).1 }
+            if let end { AgentPresence.shared.park(performer.name, color: performer.color, at: end, in: window) }
+            performer.done(end)
+            return
+        }
         model.zoomToFit()
         if CommandLine.arguments.contains("--magic") {
             FileHandle.standardError.write(String(format: "MAGIC agents %d edits %d work %.2fs frames %d longest %.0fms\n",

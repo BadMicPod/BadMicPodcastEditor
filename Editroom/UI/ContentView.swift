@@ -94,6 +94,9 @@ struct ContentView: View {
         .sheet(isPresented: $model.showExport) {
             ExportSheet(model: model)
         }
+        .sheet(isPresented: $model.showAgents) {
+            AgentsSheet(model: model)
+        }
         .alert("Import", isPresented: Binding(get: { model.importError != nil }, set: { if !$0 { model.importError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {

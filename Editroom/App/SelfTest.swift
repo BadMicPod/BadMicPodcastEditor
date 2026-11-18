@@ -829,6 +829,50 @@ enum SelfTest {
             log("AUTO PLAN \(good ? "OK" : "FAIL") \(detail)")
             ok = ok && good
         }
+        // MCP tools: an agent adds two clips, trims, splits, grades, adds a dissolve and deletes with
+        // ripple; each call is one undo step; bad input is a clear error, not a crash.
+        do {
+            let m = EditorModel()
+            var p = Project()
+            p.assets = project.assets.filter { $0.kind == .video }
+            m.load(p, url: nil)
+            func call(_ name: String, _ args: [String: Any]) async -> (Any?, String?) {
+                do {
+                    let out = try await MCPTools.call(name, args, model: m, client: nil)
+                    let text = out.first?["text"] as? String ?? ""
+                    return (try? JSONSerialization.jsonObject(with: Data(text.utf8)), nil)
+                } catch {
+                    return (nil, (error as? MCPToolError)?.message ?? "\(error)")
+                }
+            }
+            var good = false
+            var detail = ""
+            if let asset = p.assets.first(where: { $0.hasAudio && $0.duration >= 4 }) {
+                let (a, _) = await call("add_clip", ["asset_id": asset.id.uuidString, "duration": 3.0])
+                let (b, _) = await call("add_clip", ["asset_id": asset.id.uuidString, "source_start": 1.0, "duration": 2.0])
+                let first = ((a as? [String: Any])?["added"] as? [[String: Any]])?.first?["id"] as? String ?? ""
+                let second = ((b as? [String: Any])?["added"] as? [[String: Any]])?.first?["id"] as? String ?? ""
+                _ = await call("trim_clip", ["clip_id": first, "end": 2.5])
+                _ = await call("set_transition", ["clip_id": second, "kind": "dissolve", "duration": 0.4])
+                _ = await call("set_grade", ["clip_ids": [second], "look": "Mono", "exposure": 0.3])
+                let (split, _) = await call("split_clip", ["clip_id": second, "at": 4.0])
+                let right = ((split as? [String: Any])?["right"] as? [[String: Any]])?.first?["id"] as? String ?? ""
+                _ = await call("delete_clips", ["clip_ids": [right], "ripple": true])
+                let (_, bad) = await call("move_clip", ["clip_id": "nope", "start": 1.0])
+                let q = m.project
+                let v1 = q.clips.filter { $0.kind == .video }.sorted { $0.start < $1.start }
+                let shapeOK = v1.count == 2 && abs(v1[0].end - 2.5) < 1e-6 && abs(v1[1].start - 3) < 1e-6 && abs(v1[1].end - 4) < 1e-6
+                let gradeOK = v1.last?.grade?.look == "Mono" && abs((v1.last?.grade?.exposure ?? 0) - 0.3) < 1e-9
+                let audioOK = q.clips.filter { $0.kind == .audio }.count == 2
+                // Seven changes, seven undos back to empty.
+                for _ in 0..<7 { m.undo() }
+                let undoOK = m.project.clips.isEmpty
+                good = shapeOK && gradeOK && audioOK && undoOK && bad != nil
+                detail = "v1=\(v1.map { "\($0.start)-\($0.end)" }) grade=\(gradeOK) audio=\(audioOK) undo=\(undoOK) error=\(bad ?? "none")"
+            }
+            log("MCP TOOLS \(good ? "OK" : "FAIL") \(detail)")
+            ok = ok && good
+        }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")
     }
 }
