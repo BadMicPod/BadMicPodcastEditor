@@ -1,0 +1,29 @@
+#!/bin/sh
+# Stops a commit that would publish personal AI or API settings, keys or tokens.
+# Turned on for this clone with: git config core.hooksPath .githooks
+
+fail=0
+
+# Files that hold personal settings.
+bad_names=$(git diff --cached --name-only --diff-filter=ACMR | grep -iE '(^|/)(\.mcp\.json|\.env(\..*)?|claude_desktop_config\.json|settings\.local\.json)$|(^|/)\.(claude|codex)/|\.(pem|p12|key)$')
+if [ -n "$bad_names" ]; then
+  echo "Blocked: these files hold personal settings and shouldn't be committed:"
+  echo "$bad_names" | sed 's/^/  /'
+  fail=1
+fi
+
+# Keys and tokens in added lines.
+added=$(git diff --cached -U0 --diff-filter=ACMR | grep '^+' | grep -v '^+++')
+keys=$(printf '%s\n' "$added" | grep -nE 'sk-ant-[A-Za-z0-9_-]{10,}|sk-(proj-|svcacct-)?[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----')
+if [ -n "$keys" ]; then
+  echo "Blocked: this commit looks like it contains an API key or token."
+  fail=1
+fi
+
+# Your own home folder (paths that name you).
+if [ -n "$HOME" ] && printf '%s\n' "$added" | grep -qF "$HOME"; then
+  echo "Blocked: this commit contains a path inside your home folder ($HOME)."
+  fail=1
+fi
+
+[ $fail -eq 0 ] || { echo "Nothing was committed."; exit 1; }

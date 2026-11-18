@@ -4,3 +4,14 @@ DerivedData/
 build/
 *.xcuserstate
 .claude/
+
+# Never commit personal AI or API settings
+.mcp.json
+.codex/
+claude_desktop_config.json
+.env
+.env.*
+*.pem
+*.p12
+*.key
+secrets*
