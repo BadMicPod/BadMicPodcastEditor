@@ -385,29 +385,21 @@ private struct PromptForm: View {
     }
 }
 
-/// The prompt box. It's as tall as its text (three lines at least, or the height dragged with the
-/// corner grip) up to three times its starting height, then scrolls. Return sends; ⇧Return adds a line.
+/// The prompt box. It's as tall as its text, three lines at least, up to three times that; past that it
+/// scrolls. Return sends; ⇧Return adds a line.
 private struct PromptBox: View {
     @Binding var text: String
     let placeholder: String
     let focused: FocusState<Bool>.Binding
     let submit: () -> Void
 
-    /// The height the grip was dragged to (0: never), kept for next time. The box never gets shorter.
-    @AppStorage("magicPromptHeight") private var setHeight: Double = 0
     @State private var textHeight: Double = 0
-    /// While the grip is being dragged: the height it's at.
-    @State private var dragHeight: Double?
-    @State private var dragFrom: Double?
 
     static let baseHeight = 66.0
     static let maxHeight = baseHeight * 3
     private static let font = Font.system(size: 12.5)
 
-    private var height: Double {
-        if let dragHeight { return dragHeight }
-        return min(Self.maxHeight, max(setHeight > 0 ? setHeight : Self.baseHeight, textHeight))
-    }
+    private var height: Double { min(Self.maxHeight, max(Self.baseHeight, textHeight)) }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -454,63 +446,6 @@ private struct PromptBox: View {
         .transaction { $0.animation = nil }
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.field))
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.stroke))
-        .overlay(alignment: .bottomTrailing) {
-            ResizeGrip(dragging: dragHeight != nil)
-                .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                    .onChanged { v in
-                        ResizeGrip.cursor.set()
-                        let from = dragFrom ?? height
-                        dragFrom = from
-                        dragHeight = min(Self.maxHeight, max(Self.baseHeight, from + v.translation.height))
-                    }
-                    .onEnded { _ in
-                        if let dragHeight { setHeight = dragHeight }
-                        dragHeight = nil
-                        dragFrom = nil
-                    })
-                .onTapGesture(count: 2) { setHeight = 0 }
-                .help("Drag to make the box taller or shorter; double-click to reset")
-        }
-    }
-}
-
-/// The corner grip for resizing the prompt box, with the diagonal resize cursor.
-private struct ResizeGrip: View {
-    let dragging: Bool
-    @State private var hovering = false
-
-    static var cursor: NSCursor {
-        if #available(macOS 15, *) { return NSCursor.frameResize(position: .bottomRight, directions: .all) }
-        return NSCursor.resizeUpDown
-    }
-
-    var body: some View {
-        Canvas { ctx, size in
-            for i in 0..<2 {
-                let inset = CGFloat(i) * 4
-                var p = Path()
-                p.move(to: CGPoint(x: size.width - 3, y: 3 + inset))
-                p.addLine(to: CGPoint(x: 3 + inset, y: size.height - 3))
-                ctx.stroke(p, with: .color(Color.white.opacity(hovering || dragging ? 0.5 : 0.25)), lineWidth: 1.2)
-            }
-        }
-        .frame(width: 12, height: 12)
-        .padding(4)
-        .contentShape(Rectangle())
-        .onContinuousHover { phase in
-            switch phase {
-            case .active:
-                hovering = true
-                Self.cursor.set()
-            case .ended:
-                hovering = false
-                if !dragging { NSCursor.arrow.set() }
-            }
-        }
-        // Keep the resize cursor for the whole drag, even off the grip.
-        .onChange(of: dragging) { _, now in
-            if now { Self.cursor.set() } else if !hovering { NSCursor.arrow.set() }
-        }
     }
 }
 
