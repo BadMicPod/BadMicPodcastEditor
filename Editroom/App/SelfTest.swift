@@ -330,7 +330,11 @@ enum SelfTest {
         }
         // Missing media: a project folder moved as a whole finds its files by relative path, and
         // relinking one file finds the others beside it.
-        do {
+        // It needs two particular files in the media folder; without them it's skipped, not crashed.
+        let relinkFiles = ["a_main.mp4", "b_tone.wav"]
+        if !relinkFiles.allSatisfy({ FileManager.default.fileExists(atPath: mediaDir.appendingPathComponent($0).path) }) {
+            log("RELINK SKIP needs \(relinkFiles.joined(separator: " and ")) in the media folder")
+        } else {
             let fm = FileManager.default
             let work = outDir.appendingPathComponent("relink")
             try? fm.removeItem(at: work)
@@ -342,6 +346,10 @@ enum SelfTest {
                 try? fm.copyItem(at: mediaDir.appendingPathComponent(name), to: copy)
                 if let a = await media.importFile(copy) { p.assets.append(a) }
             }
+            if p.assets.count != relinkFiles.count {
+                log("RELINK FAIL imported \(p.assets.count) of \(relinkFiles.count) files")
+                ok = false
+            } else {
             p.stampRelativePaths(projectDir: first)
             let second = work.appendingPathComponent("second")
             try? fm.moveItem(at: first, to: second)
@@ -364,6 +372,7 @@ enum SelfTest {
                 && m.project.assets.allSatisfy { !m.media.isOffline($0) }
             log("RELINK \(relative && swept ? "OK" : "FAIL") relative=\(relative) swept=\(swept) missingBefore=\(missingBefore)")
             ok = ok && relative && swept
+            }
         }
         // Sticky edges: three butted clips; shortening the first pulls the other two back, and a
         // linked partner follows its clip.

@@ -150,9 +150,10 @@ struct ToggleChip: View {
 
     var body: some View {
         Button(action: action) {
-            // On is white text, off is dim; neither has a key behind it, only a faint one on hover.
+            // On is the same grey as the Split and Delete commands, off is that grey dimmed the way a
+            // disabled Delete is; neither has a key behind it, only a faint one on hover.
             Text(title).font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(on ? Theme.text : (hovering ? Theme.text.opacity(0.75) : Theme.textFaint))
+            .foregroundStyle(on ? (hovering ? Theme.text : Theme.textDim) : Theme.textDim.opacity(hovering ? 0.75 : 0.4))
             .padding(.horizontal, 10)
             .frame(height: 24)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hovering ? Theme.hover : .clear))
