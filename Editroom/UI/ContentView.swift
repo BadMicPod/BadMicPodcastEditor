@@ -122,12 +122,19 @@ enum KeyCommands {
     }
 
     private static func handle(_ e: NSEvent, _ model: EditorModel) -> Bool {
-        // Only the main editor window gets bare-key shortcuts; sheets and panels keep Return/Esc for themselves.
-        guard let window = NSApp.keyWindow, window.attachedSheet == nil, window.sheetParent == nil,
-              !(window is NSPanel) else { return false }
-        if let responder = window.firstResponder, responder is NSText { return false }
+        guard let window = NSApp.keyWindow else { return false }
         let flags = e.modifierFlags.intersection([.command, .option, .control])
-        guard flags.isEmpty else { return false }
+        if let responder = window.firstResponder, responder is NSText {
+            // Typing S, R or K goes into the text. Those keys are also View menu shortcuts, and macOS
+            // checks the menu before the text field sees a key, so hand it straight to the window.
+            if flags.isEmpty, let key = e.charactersIgnoringModifiers?.lowercased(), ["s", "r", "k"].contains(key) {
+                window.sendEvent(e)
+                return true
+            }
+            return false
+        }
+        // Only the main editor window gets bare-key shortcuts; sheets and panels keep Return/Esc for themselves.
+        guard window.attachedSheet == nil, window.sheetParent == nil, !(window is NSPanel), flags.isEmpty else { return false }
         let shift = e.modifierFlags.contains(.shift)
 
         switch e.keyCode {

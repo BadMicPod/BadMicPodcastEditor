@@ -81,6 +81,11 @@ enum MenuCleanup {
 
     static func removeExtras(in menu: NSMenu) {
         menu.items.filter(isExtra).forEach(menu.removeItem)
+        // macOS adds Enter Full Screen to the end of View; it gets a line of its own above it.
+        if let i = menu.items.firstIndex(where: { $0.action == #selector(NSWindow.toggleFullScreen(_:)) }),
+           i > 0, !menu.items[i - 1].isSeparatorItem {
+            menu.insertItem(.separator(), at: i)
+        }
         // No separator at either end of a menu, or two in a row.
         while menu.items.last?.isSeparatorItem == true { menu.removeItem(at: menu.items.count - 1) }
         while menu.items.first?.isSeparatorItem == true { menu.removeItem(at: 0) }
@@ -207,15 +212,14 @@ struct EditroomApp: App {
                 Button("Zoom Out") { model.zoom(by: 1 / 1.4) }.keyboardShortcut("-")
                 Button("Zoom to Fit") { model.zoomToFit() }.keyboardShortcut("0")
                 Divider()
-                // The timeline toolbar's toggles, in the same order, ticked when on. Their single-key
-                // shortcuts are handled by the window, so they're written into the title (as in Mark)
-                // rather than set as menu shortcuts that would take the key from text fields.
+                // The timeline toolbar's toggles, in the same order, ticked when on. Typing in a text
+                // field keeps these single keys (see KeyCommands); macOS puts Enter Full Screen after
+                // them, and MenuCleanup keeps a line above it.
                 Toggle("Filmstrips", isOn: $model.thumbnails)
-                Toggle("Snapping   S", isOn: $model.snapping)
-                Toggle("Sticky Edges   R", isOn: $model.sticky)
-                Toggle("Skimming   K", isOn: $model.skimming)
-                Toggle("Audio Scrubbing   ⇧S", isOn: $model.audioScrub)
-                Divider()
+                Toggle("Snapping", isOn: $model.snapping).keyboardShortcut("s", modifiers: [])
+                Toggle("Sticky Edges", isOn: $model.sticky).keyboardShortcut("r", modifiers: [])
+                Toggle("Skimming", isOn: $model.skimming).keyboardShortcut("k", modifiers: [])
+                Toggle("Audio Scrubbing", isOn: $model.audioScrub).keyboardShortcut("s", modifiers: .shift)
             }
         }
     }
