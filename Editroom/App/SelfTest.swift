@@ -873,6 +873,92 @@ enum SelfTest {
             log("MCP TOOLS \(good ? "OK" : "FAIL") \(detail)")
             ok = ok && good
         }
+        // Connect buttons, against a throwaway home folder: Codex's settings keep every other line,
+        // and the Claude extension holds a valid manifest and its launcher.
+        do {
+            let fm = FileManager.default
+            let fake = outDir.appendingPathComponent("connect-home", isDirectory: true)
+            try? fm.removeItem(at: fake)
+            try? fm.createDirectory(at: fake.appendingPathComponent(".codex"), withIntermediateDirectories: true)
+            let original = """
+            model = "x"
+
+            [mcp_servers.other]
+            command = "other"
+
+            [mcp_servers.editroom]
+            command = "old"
+
+            [mcp_servers.editroom.env]
+            A = "1"
+
+            [features]
+            js_repl = false
+            """
+            let config = fake.appendingPathComponent(".codex/config.toml")
+            try? original.write(to: config, atomically: true, encoding: .utf8)
+            let c = AgentConnect.shared
+            let realHome = c.home
+            c.home = fake
+            c.openInClaude = false
+            defer { c.home = realHome; c.openInClaude = true }
+            var good = true
+            var detail = ""
+            do {
+                try c.connectCodex()
+                let on = try String(contentsOf: config, encoding: .utf8)
+                let sections = on.components(separatedBy: "\n").filter { $0.hasPrefix("[") }
+                let codexOK = c.codexConnected && on.contains("command = \"other\"") && on.contains("js_repl = false")
+                    && !on.contains("\"old\"") && !on.contains("A = \"1\"")
+                    && sections == ["[mcp_servers.other]", "[features]", "[mcp_servers.editroom]"]
+                try c.disconnectCodex()
+                let off = try String(contentsOf: config, encoding: .utf8)
+                let offOK = !c.codexConnected && off.contains("[mcp_servers.other]") && off.contains("[features]")
+                let backupOK = fm.fileExists(atPath: fake.appendingPathComponent(".codex/config.toml.before-editroom").path)
+
+                let mcpb = try c.makeClaudeExtension()
+                let unzip = Process()
+                unzip.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+                let out = fake.appendingPathComponent("unzipped")
+                unzip.arguments = ["-qo", mcpb.path, "-d", out.path]
+                try unzip.run(); unzip.waitUntilExit()
+                let manifest = (try? Data(contentsOf: out.appendingPathComponent("manifest.json")))
+                    .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+                let server = manifest["server"] as? [String: Any]
+                let launcher = out.appendingPathComponent("server/editroom-mcp")
+                let script = (try? String(contentsOf: launcher, encoding: .utf8)) ?? ""
+                let claudeOK = manifest["name"] as? String == "editroom" && manifest["manifest_version"] as? String == "0.3"
+                    && server?["type"] as? String == "binary" && (manifest["tools"] as? [Any])?.count == MCPTools.definitions.count
+                    && script.contains("--mcp") && fm.isExecutableFile(atPath: launcher.path)
+                    && fm.fileExists(atPath: out.appendingPathComponent("icon.png").path)
+                // The launcher really reaches the server (which answers on this thread, so wait elsewhere).
+                MCPServer.shared.start()
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                let path = launcher.path
+                let reply: String = await Task.detached {
+                    let probe = Process()
+                    probe.executableURL = URL(fileURLWithPath: "/bin/sh")
+                    probe.arguments = [path]
+                    let input = Pipe(), output = Pipe()
+                    probe.standardInput = input
+                    probe.standardOutput = output
+                    do { try probe.run() } catch { return "" }
+                    input.fileHandleForWriting.write(Data(#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"name":"claude-ai"}}}"#.utf8 + [10]))
+                    try? input.fileHandleForWriting.close()
+                    let data = output.fileHandleForReading.readDataToEndOfFile()
+                    probe.waitUntilExit()
+                    return String(data: data, encoding: .utf8) ?? ""
+                }.value
+                let launchOK = reply.contains("\"editroom\"")
+                good = codexOK && offOK && backupOK && claudeOK && launchOK
+                detail = "codex=\(codexOK) off=\(offOK) backup=\(backupOK) claude=\(claudeOK) launcher=\(launchOK)"
+            } catch {
+                good = false
+                detail = error.localizedDescription
+            }
+            log("AGENT CONNECT \(good ? "OK" : "FAIL") \(detail)")
+            ok = ok && good
+        }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")
     }
 }
