@@ -309,7 +309,7 @@ enum ScriptedPlanner {
                 group.append(au)
             }
             var ids = group.map(\.id)
-            let place = add(.place(group, asset: s.asset.id), delay: Double(order) * 0.05)
+            let place = add(.place(group, asset: s.asset.id), delay: Double(order) * 0.09 + rng.next() * 0.25)
             var ready = [place]
             let headAt = r + s.head
             if s.head > 0.2, i % 3 == 1 {

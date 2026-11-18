@@ -245,10 +245,23 @@ final class MagicShow: NSObject {
             let hue = (Double(i) * 0.61803398875).truncatingRemainder(dividingBy: 1)
             let a = Agent(color: NSColor(hue: hue, saturation: 0.68, brightness: 0.97, alpha: 1))
             // Out of the button one after another, slowly at first, then faster.
-            a.birth = 1.5 * (Double(i) / Double(count)).squareRoot()
+            // Out of the button one after another: slowly at first, then faster, never quite evenly.
+            a.birth = max(0, 2.4 * pow(Double(i) / Double(count), 0.7) + (rng.next() - 0.5) * 0.12)
             a.angle = rng.next() * 2 * .pi
-            a.speed = 0.8 + rng.next() * 0.45
+            a.speed = 0.65 + rng.next() * 0.7
             agents.append(a)
+        }
+        // Each edit gets a moment's thought before it starts, so cursors don't move in step. The
+        // cursors on one grade panel think together and keep their tight stagger.
+        var panelThought: [UUID: Double] = [:]
+        let think = tasks.map { t -> Double in
+            if t.edit.isGradeCard, let id = t.edit.clipID {
+                if let v = panelThought[id] { return v }
+                let v = rng.next() * 0.35
+                panelThought[id] = v
+                return v
+            }
+            return pow(rng.next(), 1.5) * 0.45
         }
         var free = agents.map(\.birth)
         var pos = Array(repeating: spawn, count: count)
@@ -265,7 +278,7 @@ final class MagicShow: NSObject {
         while !remaining.isEmpty {
             var best: (task: Int, ready: Double)?
             for i in remaining where tasks[i].after.allSatisfy({ end[$0] >= 0 }) {
-                var ready = (tasks[i].after.map { end[$0] }.max() ?? 0) + tasks[i].delay
+                var ready = (tasks[i].after.map { end[$0] }.max() ?? 0) + tasks[i].delay + think[i]
                 if tasks[i].edit.isGradeCard, let id = tasks[i].edit.clipID {
                     // Waits for its panel to be in the inspector, or for a place to open up.
                     if let card = cards[id] { ready = max(ready, card.appear + 0.18 + tasks[i].delay) }
@@ -291,7 +304,7 @@ final class MagicShow: NSObject {
                 let better = start < pickStart - 1e-6 || (abs(start - pickStart) <= 1e-6 && used[a] && !used[pick])
                 if better { pick = a; pickStart = start; pickTravel = tr }
             }
-            let perform = edit.performTime * Self.tempo(pickStart) * (0.85 + rng.next() * 0.35)
+            let perform = edit.performTime * Self.tempo(pickStart) * (edit.isGradeCard ? 0.85 + rng.next() * 0.3 : 0.7 + rng.next() * 0.8)
             let finish = pickStart + perform
             slots.append(Slot(edit: edit, agent: pick, travelStart: pickStart - pickTravel, start: pickStart, end: finish))
             agents[pick].slots.append(slots.count - 1)
