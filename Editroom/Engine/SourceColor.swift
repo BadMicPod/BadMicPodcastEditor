@@ -13,8 +13,10 @@ enum SourceColor: Equatable {
     case hlg
     /// HDR10 / PQ.
     case pq
-    /// Apple Log (iPhone 15 Pro and later); Apple Log 2 is read the same way.
+    /// Apple Log (iPhone 15 Pro and 16 Pro), in Rec.2020 colours.
     case appleLog
+    /// Apple Log 2 (iPhone 17 Pro): the same curve, in Apple Wide Gamut colours.
+    case appleLog2
 
     var isStandard: Bool { self == .standard }
 
@@ -22,10 +24,11 @@ enum SourceColor: Equatable {
         guard let fd = track.formatDescriptions.first else { return .standard }
         let desc = fd as! CMFormatDescription
         let ext = CMFormatDescriptionGetExtensions(desc) as? [String: Any] ?? [:]
-        // "LogTransferFunction" is "com.apple.rec2020.apple-log" (or apple-log2). Spelled out, so it
-        // works on macOS versions older than the SDK's named constants.
-        if let log = ext["LogTransferFunction"] as? String, log.lowercased().contains("apple-log") {
-            return .appleLog
+        // "LogTransferFunction" is "com.apple.rec2020.apple-log" for Apple Log and
+        // "com.apple.apple-wide-gamut.apple-log" for Apple Log 2. Spelled out, so it works on macOS
+        // versions older than the SDK's named constants.
+        if let log = (ext["LogTransferFunction"] as? String)?.lowercased(), log.contains("apple-log") {
+            return log.contains("wide-gamut") || log.contains("apple-log2") ? .appleLog2 : .appleLog
         }
         let transfer = ext[kCMFormatDescriptionExtension_TransferFunction as String] as? String
         if transfer == kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG as String { return .hlg }
@@ -55,6 +58,7 @@ enum SourceColor: Equatable {
         case .hlg: key = "hlg"
         case .pq: key = "pq"
         case .appleLog: key = "log"
+        case .appleLog2: key = "log2"
         }
         Self.lock.lock(); defer { Self.lock.unlock() }
         if let hit = Self.cubes[key] { return hit }
@@ -74,16 +78,13 @@ enum SourceColor: Equatable {
         return data
     }
 
-    /// One encoded Rec.2020 colour to encoded Rec.709, with white (diffuse, not peak) at 1.
+    /// One encoded colour to encoded Rec.709, with white (diffuse, not peak) at 1.
     func convert(_ r: Double, _ g: Double, _ b: Double) -> (Double, Double, Double) {
         // Linear light, scaled so the format's reference white is 1.
         let lin = [r, g, b].map(decode)
-        // Rec.2020 primaries to Rec.709.
-        var c = [
-            1.6605 * lin[0] - 0.5876 * lin[1] - 0.0728 * lin[2],
-            -0.1246 * lin[0] + 1.1329 * lin[1] - 0.0083 * lin[2],
-            -0.0182 * lin[0] - 0.1006 * lin[1] + 1.1187 * lin[2],
-        ].map { max(0, $0) }
+        // The file's primaries to Rec.709.
+        let m = self == .appleLog2 ? Self.wideGamutTo709 : Self.rec2020To709
+        var c = (0..<3).map { i in max(0, m[i][0] * lin[0] + m[i][1] * lin[1] + m[i][2] * lin[2]) }
         // Brighter than white rolls off smoothly instead of clipping; scaling all three channels
         // together keeps the hue.
         let peak = c.max() ?? 0
@@ -97,6 +98,45 @@ enum SourceColor: Equatable {
     }
 
     private static let knee = 0.9
+
+    // MARK: Primaries
+
+    typealias Matrix = [[Double]]
+    private static let d65 = (0.3127, 0.3290)
+    private static let rec709Primaries = [(0.640, 0.330), (0.300, 0.600), (0.150, 0.060)]
+    private static let rec2020 = [(0.708, 0.292), (0.170, 0.797), (0.131, 0.046)]
+    /// Apple Wide Gamut, from Apple's Apple Log 2 white paper (blue's y really is negative).
+    private static let appleWideGamut = [(0.725, 0.301), (0.221, 0.814), (0.068, -0.076)]
+
+    static let rec2020To709 = convert(from: rec2020, to: rec709Primaries)
+    static let wideGamutTo709 = convert(from: appleWideGamut, to: rec709Primaries)
+
+    /// Linear RGB in one set of primaries to another. Both share the D65 white point, so no white
+    /// adaptation is needed.
+    private static func convert(from a: [(Double, Double)], to b: [(Double, Double)]) -> Matrix {
+        multiply(inverse(toXYZ(b)), toXYZ(a))
+    }
+
+    private static func toXYZ(_ p: [(Double, Double)]) -> Matrix {
+        let cols = p.map { [$0.0 / $0.1, 1, (1 - $0.0 - $0.1) / $0.1] }
+        let m: Matrix = (0..<3).map { r in (0..<3).map { c in cols[c][r] } }
+        let w = [d65.0 / d65.1, 1, (1 - d65.0 - d65.1) / d65.1]
+        let inv = inverse(m)
+        let s = (0..<3).map { r in inv[r][0] * w[0] + inv[r][1] * w[1] + inv[r][2] * w[2] }
+        return (0..<3).map { r in (0..<3).map { c in m[r][c] * s[c] } }
+    }
+
+    private static func multiply(_ a: Matrix, _ b: Matrix) -> Matrix {
+        (0..<3).map { r in (0..<3).map { c in (0..<3).reduce(0) { $0 + a[r][$1] * b[$1][c] } } }
+    }
+
+    private static func inverse(_ m: Matrix) -> Matrix {
+        let a = m[0][0], b = m[0][1], c = m[0][2], d = m[1][0], e = m[1][1], f = m[1][2], g = m[2][0], h = m[2][1], i = m[2][2]
+        let det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+        return [[(e * i - f * h) / det, (c * h - b * i) / det, (b * f - c * e) / det],
+                [(f * g - d * i) / det, (a * i - c * g) / det, (c * d - a * f) / det],
+                [(d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det]]
+    }
 
     private func decode(_ v: Double) -> Double {
         switch self {
@@ -113,8 +153,8 @@ enum SourceColor: Equatable {
             let p = pow(max(0, v), 1 / m2)
             let y = pow(max(0, p - c1) / (c2 - c3 * p), 1 / m1)
             return y * 10000 / 203
-        case .appleLog:
-            // Apple Log to scene light (18% grey = 0.18), from Apple's published curve.
+        case .appleLog, .appleLog2:
+            // Apple Log (and Log 2, which shares the curve) to scene light (18% grey = 0.18), from Apple's published curve.
             let R0 = -0.05641088, Rt = 0.01, c = 47.28711236, b = 0.00964052, g = 0.08550479, be = 0.69336945
             let Pt = c * (Rt - R0) * (Rt - R0)
             if v >= Pt { return pow(2, (v - be) / g) - b }

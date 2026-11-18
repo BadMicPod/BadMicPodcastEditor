@@ -18,6 +18,9 @@ enum FormatCheck {
         Task { @MainActor in
             await BaseVideo.load()
             try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+            let fmt = { (m: [[Double]]) in m.map { $0.map { String(format: "%.4f", $0) }.joined(separator: " ") }.joined(separator: " | ") }
+            log("FORMAT matrix Rec.2020 to 709: \(fmt(SourceColor.rec2020To709))")
+            log("FORMAT matrix Apple Wide Gamut to 709: \(fmt(SourceColor.wideGamutTo709))")
             var assets: [MediaAsset] = []
             for f in files { if let a = await check(f, out: out) { assets.append(a) } }
             // Every video clip in a row, to look at in the app.
@@ -53,9 +56,9 @@ enum FormatCheck {
             let code = String(bytes: [UInt8(id >> 24 & 255), UInt8(id >> 16 & 255), UInt8(id >> 8 & 255), UInt8(id & 255)], encoding: .ascii) ?? "?"
             return "\(code) \(asbd.mChannelsPerFrame)ch \(Int(asbd.mSampleRate))Hz"
         }()
-        log(String(format: "FORMAT %@: imported in %.2fs as %@ %dx%d %.3f fps %.2fs, audio %@%@", name, Date().timeIntervalSince(t0),
+        log(String(format: "FORMAT %@: imported in %.2fs as %@ %dx%d %.3f fps %.2fs, audio %@%@, colour %@", name, Date().timeIntervalSince(t0),
                    a.kind == .video ? "video" : "audio", a.width, a.height, a.fps, a.duration, audioDesc,
-                   a.playablePath != nil ? " (converted with ffmpeg)" : ""))
+                   a.playablePath != nil ? " (converted with ffmpeg)" : "", "\(rt?.sourceColor ?? .standard)"))
         guard a.kind == .video else { return a }
 
         var p = Project()
