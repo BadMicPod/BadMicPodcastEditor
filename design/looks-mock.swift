@@ -35,13 +35,15 @@ func fromHSV(_ h: Double, _ s: Double, _ v: Double) -> RGB {
     return (r + m, g + m, b + m)
 }
 /// Shifts hue and scales saturation for colours near `center`, fading out over `width` degrees.
-func hueBand(_ c: RGB, center: Double, width: Double, shift: Double, sat: Double) -> RGB {
+func hueBand(_ c: RGB, center: Double, width: Double, shift: Double, sat: Double, value: Double = 1) -> RGB {
     var (h, s, v) = toHSV(c)
     var d = abs(h - center); if d > 180 { d = 360 - d }
     guard d < width else { return c }
-    let w = 0.5 + 0.5 * cos(d / width * .pi)
+    // Weighted by how coloured the pixel already is, so greys and near-whites are left alone.
+    let w = (0.5 + 0.5 * cos(d / width * .pi)) * min(1, s * 2.5)
     h = (h + shift * w + 360).truncatingRemainder(dividingBy: 360)
     s = clamp(s * (1 + (sat - 1) * w))
+    v = clamp(v * (1 + (value - 1) * w))
     return fromHSV(h, s, v)
 }
 
@@ -59,14 +61,18 @@ func tealOrange(_ c: RGB) -> RGB {
 /// Warm skin, teal-olive shadows and greens, milky blacks, soft highlight roll-off.
 func cinematic(_ c: RGB) -> RGB {
     var c = add(c, (0.04, 0.015, -0.035))
-    c = hueBand(c, center: 25, width: 30, shift: 3, sat: 1.14)
+    // Skin (orange) richer; kept clear of true reds so faces don't go pink.
+    c = hueBand(c, center: 28, width: 22, shift: 2, sat: 1.12)
     c = hueBand(c, center: 110, width: 60, shift: 22, sat: 0.68)
     c = hueBand(c, center: 210, width: 45, shift: -12, sat: 0.82)
     c = split(c, shadows: (-0.06, 0.04, 0.065), highlights: (0.045, 0.024, -0.03))
     c = contrast(c, -0.1)
     c = map(c) { x in x <= 0.72 ? x : 0.72 + (1 - 0.72) * (1 - exp(-(x - 0.72) / (1 - 0.72) * 1.2)) / (1 - exp(-1.2)) }
     c = fade(c, 0.05)
-    return saturate(c, 0.88)
+    c = saturate(c, 0.88)
+    // Deep, rich reds, as print film gives: more saturated and a little darker, after the
+    // overall mute so they stand out against the quieter colours.
+    return hueBand(c, center: 356, width: 20, shift: 0, sat: 1.35, value: 0.93)
 }
 
 let looks: [(String, (RGB) -> RGB)] = [
