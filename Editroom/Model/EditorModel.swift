@@ -615,6 +615,26 @@ final class EditorModel: ObservableObject {
     var maxScrollY: CGFloat { rowsAbove + rowsWorld / 2 - rowsVisible }
     var centeredScrollY: CGFloat { rowsAbove - rowsVisible / 2 }
 
+    /// A point in the tracks split into fixed-height space above it (ruler zones, gaps, the divider)
+    /// and how many rows' worth of height lie above it, so it can be found again at another row height:
+    /// `fixed + rows * rowHeight`.
+    func rowAnchor(at y: CGFloat) -> (fixed: CGFloat, rows: CGFloat) {
+        let r = view.rowHeight
+        var segments: [(length: CGFloat, row: Bool)] = [(TimelineLayout.zone, false)]
+        for _ in project.videoTracks { segments += [(r, true), (TimelineLayout.gap, false)] }
+        segments.append((TimelineLayout.divider, false))
+        for _ in project.audioTracks { segments += [(r, true), (TimelineLayout.gap, false)] }
+        segments.append((TimelineLayout.zone, false))
+        var fixed = min(0, y), rows: CGFloat = 0, pos: CGFloat = 0
+        for s in segments {
+            let take = min(max(y - pos, 0), s.length)
+            if s.row { rows += take / r } else { fixed += take }
+            pos += s.length
+        }
+        fixed += max(0, y - pos)
+        return (fixed, rows)
+    }
+
     func centerRows() {
         setView(scrollY: centeredScrollY)
     }

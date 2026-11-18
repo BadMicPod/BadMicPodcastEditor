@@ -236,6 +236,8 @@ private final class BarDrag {
     var content: CGFloat = 0
     var start: CGFloat = 0
     var mirror: CGFloat = 1
+    /// What sat in the middle of the timeline when a row-zoom drag began.
+    var anchor: (fixed: CGFloat, rows: CGFloat) = (0, 0)
 }
 
 /// Where a thumb's two edges end up when one grip is dragged. The dragged edge follows the mouse
@@ -401,6 +403,7 @@ struct RowScaleBar: View {
                             d.length = model.rowWindow * h
                             d.content = world
                             d.start = (view.scrollY - model.minScrollY) / world * h
+                            d.anchor = model.rowAnchor(at: view.scrollY + model.rowsVisible / 2)
                             drag = d
                             hot = d.part
                         }
@@ -419,10 +422,10 @@ struct RowScaleBar: View {
                                 let off = abs(model.rowWindow(rowHeight: r) * h - (e.end - e.start))
                                 if off < miss { miss = off; best = r }
                             }
-                            model.setView(rowHeight: best)
-                            let actual = model.rowWindow * h
-                            let top = d.part == 2 ? e.end - actual : e.start
-                            model.setView(scrollY: model.minScrollY + top / h * model.rowsWorld)
+                            // Whatever was in the middle of the timeline stays there, so rows grow and shrink
+                            // around it instead of the view hopping as the thumb is re-fitted each step.
+                            let centre = d.anchor.fixed + d.anchor.rows * best
+                            model.setView(scrollY: centre - model.rowsVisible / 2, rowHeight: best)
                         }
                     }
                     .onEnded { _ in
