@@ -2,6 +2,7 @@ import AVFoundation
 import AppKit
 import UniformTypeIdentifiers
 import ImageIO
+import Accelerate
 
 /// Loaded AVFoundation objects for one imported file.
 final class MediaRuntime {
@@ -374,8 +375,14 @@ final class MediaStore: ObservableObject {
         guard let track = rt.audioTrack, !waveformJobs.contains(id) else { return }
         waveformJobs.insert(id)
         let asset = rt.asset
-        Task.detached(priority: .utility) {
-            let wf = WaveformReader.read(asset: asset, track: track)
+        Task.detached(priority: .userInitiated) {
+            // Made once per file and kept on disk, so reopening a project shows waveforms at once.
+            let cache = WaveformReader.cacheURL(for: asset.url)
+            var wf = WaveformReader.load(cache)
+            if wf == nil {
+                wf = WaveformReader.read(asset: asset, track: track)
+                if let wf { WaveformReader.save(wf, to: cache) }
+            }
             await MainActor.run { [weak self] in
                 self?.waveformJobs.remove(id)
                 if let wf { self?.waveforms[id] = wf; self?.reversedWaveforms[id] = nil }
@@ -388,12 +395,61 @@ final class MediaStore: ObservableObject {
 // MARK: - Waveform extraction
 
 enum WaveformReader {
+    static var folder: URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Editroom/Waveforms", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    static func cacheURL(for source: URL) -> URL {
+        folder.appendingPathComponent(ReverseAudio.cacheName(for: source) + ".wave")
+    }
+
+    // MARK: Cache file: "ERWF", version, peaks per second, count, then peaks, left, right, rms as Float32.
+
+    private static let magic: UInt32 = 0x4657_5245 // "ERWF"
+    private static let version: UInt32 = 1
+
+    static func save(_ wf: Waveform, to url: URL) {
+        var d = Data()
+        func put<T>(_ v: T) { withUnsafeBytes(of: v) { d.append(contentsOf: $0) } }
+        put(magic); put(version); put(wf.peaksPerSecond); put(UInt32(wf.peaks.count))
+        for arr in [wf.peaks, wf.left, wf.right, wf.rms] {
+            guard arr.count == wf.peaks.count else { return }
+            arr.withUnsafeBytes { d.append(contentsOf: $0) }
+        }
+        try? d.write(to: url, options: .atomic)
+    }
+
+    static func load(_ url: URL) -> Waveform? {
+        guard let d = try? Data(contentsOf: url), d.count >= 20 else { return nil }
+        return d.withUnsafeBytes { raw -> Waveform? in
+            guard raw.loadUnaligned(fromByteOffset: 0, as: UInt32.self) == magic,
+                  raw.loadUnaligned(fromByteOffset: 4, as: UInt32.self) == version else { return nil }
+            let pps = raw.loadUnaligned(fromByteOffset: 8, as: Double.self)
+            let n = Int(raw.loadUnaligned(fromByteOffset: 16, as: UInt32.self))
+            guard n > 0, d.count == 20 + n * 4 * 4 else { return nil }
+            func array(_ k: Int) -> [Float] {
+                [Float](unsafeUninitializedCapacity: n) { buf, count in
+                    _ = memcpy(buf.baseAddress!, raw.baseAddress! + 20 + k * n * 4, n * 4)
+                    count = n
+                }
+            }
+            return Waveform(peaksPerSecond: pps, peaks: array(0), left: array(1), right: array(2), rms: array(3))
+        }
+    }
+
+    // MARK: Reading
+
+    /// Decodes the sound once and sums it into short stretches. The sums use Accelerate's vector
+    /// routines, so they run at full speed whatever the build settings.
     static func read(asset: AVAsset, track: AVAssetTrack, peaksPerSecond: Double = 200) -> Waveform? {
         guard let reader = try? AVAssetReader(asset: asset) else { return nil }
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
-            AVLinearPCMBitDepthKey: 16,
-            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
             AVLinearPCMIsBigEndianKey: false,
             AVLinearPCMIsNonInterleaved: false,
         ]
@@ -403,53 +459,56 @@ enum WaveformReader {
         reader.add(output)
         guard reader.startReading() else { return nil }
 
-        var peaks: [Float] = []
-        var left: [Float] = [], right: [Float] = []
-        var bucketL: Int32 = 0, bucketR: Int32 = 0
-        var bucketPeak: Int32 = 0
-        var bucketSquares = 0.0
-        var rms: [Float] = []
-        var bucketFill = 0.0
-        var framesPerBucket = 0.0
-        var scratch = [Int16]()
+        var peaks: [Float] = [], left: [Float] = [], right: [Float] = [], rms: [Float] = []
+        // The stretch being filled, which can run across decoded buffers.
+        var peak: Float = 0, l: Float = 0, r: Float = 0, squares: Float = 0, fill = 0.0
+        var samples = [Float]()
+        var loudest = [Float]()
 
         while let sample = output.copyNextSampleBuffer() {
             guard let block = CMSampleBufferGetDataBuffer(sample),
                   let fmt = CMSampleBufferGetFormatDescription(sample),
                   let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(fmt)?.pointee else { continue }
             let channels = max(1, Int(asbd.mChannelsPerFrame))
-            framesPerBucket = asbd.mSampleRate / peaksPerSecond
-            let length = CMBlockBufferGetDataLength(block)
-            let count = length / MemoryLayout<Int16>.size
-            if scratch.count < count { scratch = [Int16](repeating: 0, count: count) }
-            scratch.withUnsafeMutableBytes { raw in
-                _ = CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: count * 2, destination: raw.baseAddress!)
+            let framesPerBucket = asbd.mSampleRate / peaksPerSecond
+            let count = CMBlockBufferGetDataLength(block) / MemoryLayout<Float>.size
+            let frames = count / channels
+            guard frames > 0 else { continue }
+            if samples.count < count { samples = [Float](repeating: 0, count: count) }
+            if loudest.count < frames { loudest = [Float](repeating: 0, count: frames) }
+            samples.withUnsafeMutableBytes { raw in
+                _ = CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: count * 4, destination: raw.baseAddress!)
             }
-            scratch.withUnsafeBufferPointer { buf in
-                var i = 0
-                while i + channels <= count {
-                    var m: Int32 = 0
-                    for ch in 0..<channels {
-                        let v = abs(Int32(buf[i + ch]))
-                        if v > m { m = v }
+            samples.withUnsafeBufferPointer { s in
+                loudest.withUnsafeMutableBufferPointer { m in
+                    let src = s.baseAddress!, dst = m.baseAddress!
+                    // Loudest channel of each frame.
+                    vDSP_vabs(src, vDSP_Stride(channels), dst, 1, vDSP_Length(frames))
+                    for ch in 1..<channels {
+                        vDSP_vmaxmg(src + ch, vDSP_Stride(channels), dst, 1, dst, 1, vDSP_Length(frames))
                     }
-                    if m > bucketPeak { bucketPeak = m }
-                    bucketSquares += Double(m) * Double(m)
-                    bucketL = max(bucketL, abs(Int32(buf[i])))
-                    bucketR = max(bucketR, abs(Int32(buf[i + min(1, channels - 1)])))
-                    bucketFill += 1
-                    if bucketFill >= framesPerBucket {
-                        peaks.append(Float(bucketPeak) / 32768)
-                        rms.append(Float((bucketSquares / max(1, bucketFill)).squareRoot() / 32768))
-                        bucketSquares = 0
-                        left.append(Float(bucketL) / 32768)
-                        right.append(Float(bucketR) / 32768)
-                        bucketPeak = 0
-                        bucketL = 0
-                        bucketR = 0
-                        bucketFill -= framesPerBucket
+                    let rightChannel = min(1, channels - 1)
+                    var pos = 0
+                    while pos < frames {
+                        let need = max(1, Int((framesPerBucket - fill).rounded(.up)))
+                        let take = min(need, frames - pos)
+                        let n = vDSP_Length(take)
+                        var v: Float = 0
+                        vDSP_maxv(dst + pos, 1, &v, n); peak = max(peak, v)
+                        vDSP_svesq(dst + pos, 1, &v, n); squares += v
+                        vDSP_maxmgv(src + pos * channels, vDSP_Stride(channels), &v, n); l = max(l, v)
+                        vDSP_maxmgv(src + pos * channels + rightChannel, vDSP_Stride(channels), &v, n); r = max(r, v)
+                        fill += Double(take)
+                        pos += take
+                        if fill >= framesPerBucket - 1e-6 {
+                            peaks.append(peak)
+                            rms.append((squares / Float(max(1, fill))).squareRoot())
+                            left.append(l)
+                            right.append(r)
+                            peak = 0; l = 0; r = 0; squares = 0
+                            fill -= framesPerBucket
+                        }
                     }
-                    i += channels
                 }
             }
         }

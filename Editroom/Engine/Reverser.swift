@@ -159,11 +159,16 @@ enum ReverseAudio {
     /// Where a file's reversed sound is kept: named from the file's path, size and date, so it's
     /// made once and reused, even after relaunching.
     static func cacheURL(for source: URL) -> URL {
+        Reverser.folder.appendingPathComponent(cacheName(for: source) + ".wav")
+    }
+
+    /// A file's name plus a hash of its path, size and date: changes whenever the file does.
+    static func cacheName(for source: URL) -> String {
         let attrs = try? FileManager.default.attributesOfItem(atPath: source.path)
         let stamp = "\(source.path)|\(attrs?[.size] ?? 0)|\(attrs?[.modificationDate] ?? Date.distantPast)"
         var hash: UInt64 = 0xcbf29ce484222325
         for byte in stamp.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100000001b3 }
-        return Reverser.folder.appendingPathComponent(source.deletingPathExtension().lastPathComponent + "-" + String(hash, radix: 36) + ".wav")
+        return source.deletingPathExtension().lastPathComponent + "-" + String(hash, radix: 36)
     }
 
     /// Writes the whole sound of a file backwards as 16-bit stereo WAV. The decoded sound goes to
