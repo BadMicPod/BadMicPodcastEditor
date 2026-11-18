@@ -1569,62 +1569,65 @@ final class TimelineCanvas: NSView {
         ctx.restoreGState()
     }
 
-    /// The sound as a row of thin rounded bars, each the average loudness of its stretch, which
-    /// shows beats and sections of dense music better than the very top of each peak. Silence
-    /// still shows as a dotted line, so pauses are easy to find and cut on.
-    /// Bars sit on a grid tied to the source, so they don't shimmer while scrolling or trimming.
+    /// The sound as one smooth filled shape of average loudness, mirrored around the middle. It
+    /// shows beats and sections of dense music better than the very top of each peak, and silence
+    /// drops to a thin line, so pauses are easy to find and cut on. Samples sit on a grid tied to
+    /// the source, so the shape doesn't shimmer while scrolling or trimming.
     private func drawWaveform(_ c: Clip, in r: CGRect, visible: CGRect, ctx: CGContext) {
         guard let wf = model.media.waveform(c), visible.width > 0, !wf.peaks.isEmpty else { return }
         let top = r.minY + 20, bottom = r.maxY - 3
         guard bottom - top > 6 else { return }
         let mid = (top + bottom) / 2, half = (bottom - top) / 2
         let gain = dbToLinear(c.gainDB)
-        let pitch: CGFloat = 4, bar: CGFloat = 2
         // Average loudness sits well under the peaks, so it's lifted to fill the lane, with headroom.
-        let lift = 2.6, headroom: CGFloat = 0.86
+        let lift = 2.0, headroom: CGFloat = 0.92
+        let step: CGFloat = 1
         let secPerPx = Double(1 / pps) * c.speed
-        // Where source time zero would sit, so bar k always covers the same stretch of sound.
         let origin = r.minX - CGFloat(c.sourceStart / secPerPx)
-        var k = Int(floor((visible.minX - origin) / pitch))
         let levels = wf.rms.isEmpty ? wf.peaks : wf.rms
         let count = levels.count
-        let rects = CGMutablePath()
-        let scale = window?.backingScaleFactor ?? 2
-        while true {
-            // Snapped to whole device pixels so each bar is crisp.
-            let bx = (( origin + CGFloat(k) * pitch) * scale).rounded() / scale
-            if bx > visible.maxX { break }
-            k += 1
-            guard bx + bar > visible.minX else { continue }
-            let t0 = Double(bx - origin) * secPerPx
+
+        func level(at k: Int) -> Double {
+            let t0 = Double(CGFloat(k) * step) * secPerPx
             let i0 = Int(t0 * wf.peaksPerSecond)
-            let i1 = Int((t0 + Double(pitch) * secPerPx) * wf.peaksPerSecond)
-            var level = 0.0
-            if i0 < count, i1 >= 0 {
-                let a = max(0, i0), b = min(count - 1, max(i0, i1 - 1))
-                if a <= b {
-                    let stride = max(1, (b - a) / 32)
-                    var sum = 0.0, n = 0
-                    var i = a
-                    while i <= b {
-                        let v = Double(levels[i])
-                        sum += v * v
-                        n += 1
-                        i += stride
-                    }
-                    level = (sum / Double(max(1, n))).squareRoot()
-                }
+            let i1 = Int((t0 + Double(step) * secPerPx) * wf.peaksPerSecond)
+            guard i0 < count, i1 >= 0 else { return 0 }
+            let a = max(0, i0), b = min(count - 1, max(i0, i1 - 1))
+            guard a <= b else { return 0 }
+            let stride = max(1, (b - a) / 32)
+            var sum = 0.0, n = 0, i = a
+            while i <= b {
+                let v = Double(levels[i])
+                sum += v * v
+                n += 1
+                i += stride
             }
-            if wf.rms.isEmpty { level /= lift }
-            let h = max(1.5, (CGFloat(min(1, level * lift * gain)) * half * 2 * headroom).rounded())
-            let x0 = max(bx, visible.minX), x1 = min(bx + bar, visible.maxX)
-            guard x1 > x0 else { continue }
-            let w = x1 - x0
-            rects.addRoundedRect(in: CGRect(x: x0, y: mid - h / 2, width: w, height: h),
-                                 cornerWidth: min(w, h) / 2, cornerHeight: min(w, h) / 2)
+            var v = (sum / Double(max(1, n))).squareRoot()
+            if wf.rms.isEmpty { v /= lift }
+            return v
         }
-        ctx.addPath(rects)
-        ctx.setFillColor(NSColor(srgbRed: 0.84, green: 0.84, blue: 0.82, alpha: 0.85).cgColor)
+
+        // A couple of extra samples each side, so the smoothing reaches past the visible edges.
+        let k0 = Int(floor((visible.minX - origin) / step)) - 2
+        let k1 = Int(ceil((visible.maxX - origin) / step)) + 2
+        guard k1 > k0 else { return }
+        let raw = (k0...k1).map { level(at: $0) }
+        var xs: [CGFloat] = [], hs: [CGFloat] = []
+        for j in 2..<(raw.count - 2) {
+            // Light smoothing over five samples keeps the edge soft without blurring beats.
+            let v = (raw[j - 2] + raw[j - 1] + raw[j] + raw[j + 1] + raw[j + 2]) / 5
+            let x = min(max(origin + CGFloat(k0 + j) * step, visible.minX), visible.maxX)
+            xs.append(x)
+            hs.append(max(0.5, CGFloat(min(1, v * lift * gain)) * half * headroom))
+        }
+        guard xs.count > 1 else { return }
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: xs[0], y: mid - hs[0]))
+        for i in 1..<xs.count { path.addLine(to: CGPoint(x: xs[i], y: mid - hs[i])) }
+        for i in stride(from: xs.count - 1, through: 0, by: -1) { path.addLine(to: CGPoint(x: xs[i], y: mid + hs[i])) }
+        path.closeSubpath()
+        ctx.addPath(path)
+        ctx.setFillColor(NSColor(srgbRed: 0.80, green: 0.80, blue: 0.78, alpha: 0.7).cgColor)
         ctx.fillPath()
     }
 
