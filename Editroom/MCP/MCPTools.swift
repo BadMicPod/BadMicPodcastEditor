@@ -44,6 +44,10 @@ enum MCPTools {
             tool("get_project", "Get project", "The sequence (size, frame rate, length), tracks, and every clip with its id, track, times, source, grade, sound and transition.", readOnly: true),
             tool("list_media", "List media", "Everything in the library: id, name, kind (video, audio, image), length, size, frame rate.", readOnly: true),
             tool("import_media", "Import media", "Adds files to the library.", ["paths": ["type": "array", "items": ["type": "string"], "description": "Absolute file paths."]], required: ["paths"]),
+            tool("download_media", "Download media", "Downloads one music or sound file you found online and adds it to the library, ready for add_clip. Give the direct link to the audio file (an .mp3, .m4a or .wav), not a web page. Only for music that's free to use; say where you found it and what its licence allows, which is noted beside the file.",
+                 ["url": str("https link to the audio file itself."), "name": str("What to call it, like the track and artist."),
+                  "source_page": str("The page you found it on."), "licence": str("What the licence says, for example \"Pixabay Content License: free to use, no attribution required\".")],
+                 required: ["url", "source_page", "licence"]),
             tool("analyze_media", "Analyze media", "For a video or photo: its best moments, scored for focus, exposure, colour, faces and steadiness. For music: tempo, beats and where bars start. Done on this Mac; cached.",
                  ["asset_id": str("A library item's id."), "moment_length": num("Length of moments to look for, in seconds (default 2).")], required: ["asset_id"], readOnly: true),
             tool("look_at_media", "Look at media", "Shows you a library item: a photo, or frames from across a video in a grid, each marked with its time in the file. Use it to see what's in each shot before choosing.",
@@ -117,6 +121,27 @@ enum MCPTools {
                 model.importFiles(urls, offerMatch: false) { cont.resume(returning: $0) }
             }
             return json(["imported": assets.map(assetJSON), "failed": urls.count - assets.count])
+
+        case "download_media":
+            guard let link = args["url"] as? String, let url = URL(string: link.trimmingCharacters(in: .whitespaces)) else {
+                throw MCPToolError("url is needed: the https link to the audio file.")
+            }
+            let folder = MediaDownload.folder(for: model.fileURL)
+            let file: URL
+            do {
+                file = try await MediaDownload.fetch(url, name: args["name"] as? String, sourcePage: args["source_page"] as? String,
+                                                     licence: args["licence"] as? String, into: folder)
+            } catch let e as MediaDownload.Failure {
+                throw MCPToolError(e.message)
+            }
+            let assets: [MediaAsset] = await withCheckedContinuation { cont in
+                model.importFiles([file], offerMatch: false) { cont.resume(returning: $0) }
+            }
+            guard let asset = assets.first else { throw MCPToolError("Downloaded it, but couldn't add it to the library.") }
+            draft?.addAsset(asset)
+            var out = assetJSON(asset)
+            out["saved_to"] = file.path
+            return json(["added": out, "note": "In the library now; add it with add_clip."])
 
         case "analyze_media":
             let asset = try assetArg(args, p)

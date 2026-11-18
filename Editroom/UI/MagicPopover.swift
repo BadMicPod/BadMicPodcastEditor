@@ -312,7 +312,7 @@ private struct PromptForm: View {
 
     private static let sound: [Idea] = [
         ("Find music", "magnifyingglass",
-         "Find royalty-free music I can download and use that suits this video, and tell me where to get it and what its licence allows."),
+         "Find music that suits this video and add it to the timeline. Make sure the music is royalty free and does not require attribution."),
         ("Music and levels", "music.note",
          "Pick the best music in my Media for this edit, cut so the music and pictures land together, keep voices clear over it, and fade in and out."),
     ]
@@ -490,7 +490,11 @@ struct MagicNoteView: View {
                     Text(note.detail).font(.system(size: 11)).foregroundStyle(Theme.textFaint)
                 }
             }
-            Text(note.text.isEmpty ? "Done." : note.text)
+            // AIs write links in Markdown ([CC0](https://…)): shown as links you can click.
+            Text((try? AttributedString(markdown: note.text.isEmpty ? "Done." : note.text,
+                                        options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+                 ?? AttributedString(note.text))
+                .tint(Color(hex: 0x8AB4FF))
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.text)
                 .lineSpacing(2)

@@ -10,7 +10,7 @@ final class MCPDraft {
     private static var open: [String: MCPDraft] = [:]
 
     let token = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-    let base: Project
+    private(set) var base: Project
     private(set) var project: Project
     /// One entry per tool call that changed something, so history can undo a whole call.
     private(set) var steps: [[MagicEdit]] = []
@@ -46,6 +46,13 @@ final class MCPDraft {
     var edits: [MagicEdit] { steps.flatMap { $0 } }
     var canUndo: Bool { !steps.isEmpty }
     var canRedo: Bool { !undone.isEmpty }
+
+    /// Something added to the library during the run (music it downloaded): in the draft, from the start.
+    func addAsset(_ asset: MediaAsset) {
+        guard !project.assets.contains(where: { $0.id == asset.id }) else { return }
+        base.assets.append(asset)
+        project.assets.append(asset)
+    }
 
     func apply(_ edits: [MagicEdit]) {
         guard !edits.isEmpty else { return }

@@ -210,10 +210,18 @@ final class MagicAgent: ObservableObject {
             lines.append("The timeline is empty: build the video from the library.")
         }
         lines.append("""
-        You can only use what's in the library (list_media) and Editroom's own titles, transitions, colour and sound \
-        levels. You can't add files, download anything, or make new sounds or music. If what they asked for needs \
-        something the library doesn't have (sound effects, music, a logo, more footage), do the best you can \
+        Use what's in the library (list_media) and Editroom's own titles, transitions, colour and sound levels. \
+        The one thing you can add is music or sound you find online, with download_media (see below). If what \
+        they asked for needs something else the library doesn't have (a logo, more footage), do the best you can \
         without it, and say what was missing at the end.
+
+        Finding music or sound: only when they ask for it, or the edit clearly needs music and the library has \
+        none. Search the web for tracks that are royalty-free and need no attribution (for example CC0, or a \
+        site licence that says no credit is required), and read the licence to make sure. Choose one that suits \
+        the footage's mood and pace. Then download_media the direct link to the audio file (not the web page), \
+        with the page you found it on and what the licence says, and use it like any other music. Never take \
+        music from a place that doesn't clearly allow it. At the end, name the track, where it's from and its \
+        licence.
 
         Your edits go into a draft that the person sees all at once, played onto their timeline, when you finish. \
         So take the time to get it right; if a step goes wrong, history undoes it.
@@ -384,15 +392,18 @@ final class MagicAgent: ObservableObject {
             p.arguments = [
                 "-p", "--output-format", "stream-json", "--verbose", "--no-session-persistence",
                 "--mcp-config", config, "--strict-mcp-config",
-                // Editroom's tools only: none of Claude Code's own (files, shell, web).
-                "--tools", "",
-                "--allowedTools", "mcp__editroom",
+                // Editroom's tools, and web search and reading pages (to find music). None of Claude
+                // Code's others: no files, no shell.
+                "--tools", "WebSearch,WebFetch",
+                "--allowedTools", "mcp__editroom", "WebSearch", "WebFetch",
                 "--disallowedTools", "mcp__editroom__auto_edit", "mcp__editroom__import_media", "mcp__editroom__save_project",
             ]
             if !model(for: kind).isEmpty { p.arguments! += ["--model", model(for: kind)] }
             if !effort(for: kind).isEmpty { p.arguments! += ["--effort", effort(for: kind)] }
         case .chatgpt:
             p.arguments = [
+                // Web search (to find music); the shell stays read-only and offline.
+                "--search",
                 "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config",
                 "-s", "read-only", "-C", folder.path,
                 "-c", "mcp_servers.editroom.url=\"\(url)\"",

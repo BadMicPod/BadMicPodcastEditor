@@ -1041,6 +1041,34 @@ enum SelfTest {
             log("AGENT CONNECT \(good ? "OK" : "FAIL") \(detail)")
             ok = ok && good
         }
+        // Downloading music for an agent: audio is kept (with its source noted), anything else refused.
+        do {
+            let folder = outDir.appendingPathComponent("download-test", isDirectory: true)
+            try? FileManager.default.removeItem(at: folder)
+            let song = project.assets.first { $0.kind == .audio }?.url ?? project.assets.first { $0.kind == .video && $0.hasAudio }?.url
+            let page = outDir.appendingPathComponent("page.html")
+            try? "<html>not audio</html>".write(to: page, atomically: true, encoding: .utf8)
+            var good = false
+            var detail = "no audio to test with"
+            if let song {
+                let kept = try? await MediaDownload.fetch(song, name: "Test: Track/One", sourcePage: "https://example.com/track",
+                                                          licence: "CC0, no attribution", into: folder, allowFiles: true)
+                var refusedPage = false
+                do { _ = try await MediaDownload.fetch(page, name: nil, sourcePage: nil, licence: nil, into: folder, allowFiles: true) }
+                catch { refusedPage = true }
+                var refusedHTTP = false
+                do { _ = try await MediaDownload.fetch(URL(string: "http://example.com/a.mp3")!, name: nil, sourcePage: nil, licence: nil, into: folder) }
+                catch { refusedHTTP = true }
+                let notes = (try? String(contentsOf: folder.appendingPathComponent("Sources.txt"), encoding: .utf8)) ?? ""
+                let keptOK = kept.map { FileManager.default.fileExists(atPath: $0.path) && $0.lastPathComponent.hasPrefix("Test  Track One") } ?? false
+                let notesOK = notes.contains("CC0, no attribution") && notes.contains("https://example.com/track")
+                let leftovers = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).filter { $0.hasPrefix("page") }
+                good = keptOK && notesOK && refusedPage && refusedHTTP && leftovers.isEmpty
+                detail = "kept=\(keptOK) notes=\(notesOK) refusedPage=\(refusedPage) refusedHTTP=\(refusedHTTP) leftovers=\(leftovers.count)"
+            }
+            log("DOWNLOAD \(good ? "OK" : "FAIL") \(detail)")
+            ok = ok && good
+        }
         // Shortcuts: key presses find their action; changing one takes it from whatever had it; resetting
         // brings the defaults back. The person's own shortcuts are put back afterwards.
         do {
