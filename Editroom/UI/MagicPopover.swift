@@ -411,18 +411,6 @@ private struct PromptBox: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            // The text laid out at this width, unseen, to measure how tall it wants to be.
-            Text(text.isEmpty ? placeholder : text + " ")
-                .font(Self.font)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 9)
-                .fixedSize(horizontal: false, vertical: true)
-                .hidden()
-                .background(GeometryReader { g in
-                    Color.clear
-                        .onAppear { textHeight = g.size.height }
-                        .onChange(of: g.size.height) { _, h in textHeight = h }
-                })
             if text.isEmpty {
                 Text(placeholder)
                     .font(Self.font)
@@ -446,7 +434,24 @@ private struct PromptBox: View {
                 }
         }
         .frame(height: height, alignment: .topLeading)
+        // The text laid out at this width, unseen and behind, to measure how tall it wants to be. (Behind,
+        // not in the box: in it, a tall text made the box's layout taller and the editor never scrolled.)
+        .background(alignment: .topLeading) {
+            Text(text.isEmpty ? placeholder : text + " ")
+                .font(Self.font)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 9)
+                .fixedSize(horizontal: false, vertical: true)
+                .hidden()
+                .background(GeometryReader { g in
+                    Color.clear
+                        .onAppear { textHeight = g.size.height }
+                        .onChange(of: g.size.height) { _, h in textHeight = h }
+                })
+                .allowsHitTesting(false)
+        }
         .clipped()
+        .transaction { $0.animation = nil }
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.field))
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.stroke))
         .overlay(alignment: .bottomTrailing) {

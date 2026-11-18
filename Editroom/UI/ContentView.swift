@@ -314,11 +314,16 @@ struct MagicButton: View {
         // One popover: what to make, or what the AI said when it finished.
         .popover(isPresented: Binding(get: { ai.asking || ai.note != nil },
                                       set: { if !$0 { ai.asking = false; ai.note = nil } }), arrowEdge: .bottom) {
-            if let note = ai.note {
-                MagicNoteView(note: note, model: model) { ai.note = nil }
-            } else {
-                MagicPopover(model: model, ai: ai) { ai.asking = false }
+            Group {
+                if let note = ai.note {
+                    MagicNoteView(note: note, model: model) { ai.note = nil }
+                } else {
+                    MagicPopover(model: model, ai: ai) { ai.asking = false }
+                }
             }
+            // The whole popover, arrow included, in the panel colour: otherwise its lighter system
+            // background flickers through at the top while it resizes.
+            .presentationBackground(Theme.panel)
         }
     }
 }
