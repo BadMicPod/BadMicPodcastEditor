@@ -208,7 +208,7 @@ struct EditroomApp: App {
                 Button("Zoom to Fit") { model.zoomToFit() }.keyboardShortcut("0")
                 Divider()
                 Button(model.snapping ? "Turn Snapping Off" : "Turn Snapping On") { model.snapping.toggle() }
-                Button(model.thumbnails ? "Hide Clip Thumbnails" : "Show Clip Thumbnails") { model.thumbnails.toggle() }
+                Button(model.thumbnails ? "Hide Filmstrips" : "Show Filmstrips") { model.thumbnails.toggle() }
                 Divider()
             }
         }
