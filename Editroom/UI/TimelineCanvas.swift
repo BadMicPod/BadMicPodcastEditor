@@ -1425,7 +1425,7 @@ final class TimelineCanvas: NSView {
         case .video:
             if let asset { drawFilmstrip(c, asset: asset, in: r, visible: visible, ctx: ctx) }
         case .image:
-            if let img = model.media.still(c.assetID) {
+            if let img = model.media.still(c.assetID).map({ graded($0, c.grade) }) {
                 let tileW = max(20, r.height * CGFloat(img.width) / CGFloat(max(1, img.height)))
                 var tx = r.minX + floor(max(0, visible.minX - r.minX) / tileW) * tileW
                 ctx.setAlpha(alpha * 0.85)
@@ -1459,6 +1459,13 @@ final class TimelineCanvas: NSView {
             ctx.saveGState()
             ctx.clip(to: CGRect(x: r.minX, y: r.minY, width: max(0, r.width - 16), height: 18))
             (label as NSString).draw(at: CGPoint(x: lx, y: r.minY + 2.5), withAttributes: Self.labelAttrs)
+            // A graded clip says so, and which Look: "● Warm film", or "● Graded" for adjustments only.
+            if let grade = c.grade, !grade.isNeutral, c.kind != .audio {
+                let x = lx + (label as NSString).size(withAttributes: Self.labelAttrs).width + 9
+                drawGradeWheel(center: CGPoint(x: x + 4.5, y: r.minY + 9.5), radius: 4.5, ctx: ctx)
+                let tag = grade.look != nil ? grade.lookLabel : "Graded"
+                (tag as NSString).draw(at: CGPoint(x: x + 13, y: r.minY + 2.5), withAttributes: Self.labelAttrs)
+            }
             ctx.restoreGState()
         }
 
@@ -1544,6 +1551,52 @@ final class TimelineCanvas: NSView {
         ctx.restoreGState()
     }
 
+    // MARK: Graded thumbnails
+
+    /// A small colour wheel: the mark for a graded clip.
+    private func drawGradeWheel(center: CGPoint, radius: CGFloat, ctx: CGContext) {
+        let hues: [(CGFloat, CGFloat, CGFloat)] = [(1, 0.35, 0.29), (1, 0.82, 0.29), (0.35, 0.86, 0.42), (0.29, 0.72, 1), (0.6, 0.42, 1), (1, 0.35, 0.6)]
+        ctx.saveGState()
+        ctx.setFillColor(NSColor(white: 0, alpha: 0.5).cgColor)
+        ctx.fillEllipse(in: CGRect(x: center.x - radius - 0.75, y: center.y - radius - 0.75, width: (radius + 0.75) * 2, height: (radius + 0.75) * 2))
+        for (i, h) in hues.enumerated() {
+            let a0 = CGFloat(i) / CGFloat(hues.count) * 2 * .pi - .pi / 2
+            let a1 = CGFloat(i + 1) / CGFloat(hues.count) * 2 * .pi - .pi / 2
+            ctx.move(to: center)
+            ctx.addArc(center: center, radius: radius, startAngle: a0, endAngle: a1 + 0.02, clockwise: false)
+            ctx.closePath()
+            ctx.setFillColor(NSColor(srgbRed: h.0, green: h.1, blue: h.2, alpha: 1).cgColor)
+            ctx.fillPath()
+        }
+        ctx.restoreGState()
+    }
+
+    private struct GradedKey: Hashable {
+        let image: ObjectIdentifier
+        let grade: ColorGrade
+    }
+
+    /// Thumbnails with their clip's grade applied, so the timeline shows clips as they'll look.
+    private var gradedThumbs: [GradedKey: (source: CGImage, graded: CGImage)] = [:]
+
+    /// A thumbnail with a grade applied: the same colour cube the viewer and export use.
+    private func graded(_ img: CGImage, _ grade: ColorGrade?) -> CGImage {
+        guard let grade, let cube = GradeBaker.cube(for: grade) else { return img }
+        let key = GradedKey(image: ObjectIdentifier(img), grade: grade)
+        if let hit = gradedThumbs[key], hit.source === img { return hit.graded }
+        let out = CIImage(cgImage: img).applyingFilter("CIColorCube", parameters: [
+            "inputCubeDimension": GradeCube.dimension,
+            "inputCubeData": cube,
+        ])
+        guard let result = TimelineCompositor.context.createCGImage(out, from: CGRect(x: 0, y: 0, width: img.width, height: img.height),
+                                                                    format: .RGBA8, colorSpace: img.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!)
+        else { return img }
+        // Dragging a grade slider makes a new grade every frame; old ones are let go in bulk.
+        if gradedThumbs.count > 600 { gradedThumbs.removeAll() }
+        gradedThumbs[key] = (img, result)
+        return result
+    }
+
     private func drawImage(_ img: CGImage, fill rect: CGRect, ctx: CGContext) {
         let iw = CGFloat(img.width), ih = CGFloat(img.height)
         guard iw > 0, ih > 0 else { return }
@@ -1577,7 +1630,7 @@ final class TimelineCanvas: NSView {
             let tx = r.minX + CGFloat((ts - c.sourceStart) / c.speed) * pps
             let shown = c.playsBackwards ? asset.duration - ts : ts
             let sample = c.isFreeze ? c.sourceStart : min(max(0, shown), max(0, asset.duration - 0.05))
-            if let img = model.media.thumbnail(asset: asset.id, time: sample) {
+            if let img = model.media.thumbnail(asset: asset.id, time: sample).map({ graded($0, c.grade) }) {
                 // Frames sit side by side with a 1pt dark gap, like a contact sheet.
                 drawImage(img, fill: CGRect(x: tx, y: r.minY, width: max(1, w - 1), height: r.height), ctx: ctx)
             }
