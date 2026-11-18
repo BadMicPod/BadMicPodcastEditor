@@ -107,6 +107,7 @@ struct EditroomApp: App {
     init() {
         Self.carryOverFromCutAndPlay()
         SelfTest.runIfRequested()
+        FormatCheck.runIfRequested()
     }
 
     /// The app used to be called Cut and Play. Its settings and its Application Support folder

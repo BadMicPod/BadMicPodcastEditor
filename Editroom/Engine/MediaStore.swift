@@ -13,32 +13,39 @@ final class MediaRuntime {
     var audioRange = CMTimeRange.zero
     var orientation = CGImagePropertyOrientation.up
     var naturalSize = CGSize.zero
+    /// How the picture is encoded: standard, HDR or Log.
+    var sourceColor = SourceColor.standard
     /// The file's sound played backwards, once it's been made.
     var reversedAudio: (asset: AVURLAsset, track: AVAssetTrack, range: CMTimeRange)?
     /// Frames for playing the picture backwards.
     lazy var reverseFrames: ReverseFrames? = videoTrack.map { ReverseFrames(asset: asset, track: $0, naturalSize: naturalSize) }
-    var generator: AVAssetImageGenerator?
+    var generator: FrameGrabber?
     /// Frames for hover-scrubbing a library tile: closer to the asked-for time than the filmstrip's.
-    lazy var scrubGenerator: AVAssetImageGenerator = {
-        let gen = AVAssetImageGenerator(asset: asset)
-        gen.appliesPreferredTrackTransform = true
-        gen.maximumSize = CGSize(width: 400, height: 240)
-        gen.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 10)
-        gen.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 10)
-        return gen
-    }()
+    lazy var scrubGenerator: FrameGrabber = makeGenerator(maximumSize: CGSize(width: 400, height: 240),
+                                                          tolerance: CMTime(value: 1, timescale: 10))
 
     /// Full-size frames for showing a library item in the main viewer while hover-scrubbing it.
-    lazy var viewerGenerator: AVAssetImageGenerator = {
-        let gen = AVAssetImageGenerator(asset: asset)
-        gen.appliesPreferredTrackTransform = true
-        gen.maximumSize = CGSize(width: 1920, height: 1920)
-        gen.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 30)
-        gen.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 30)
-        return gen
-    }()
+    lazy var viewerGenerator: FrameGrabber = makeGenerator(maximumSize: CGSize(width: 1920, height: 1920),
+                                                           tolerance: CMTime(value: 1, timescale: 30))
 
     init(asset: AVURLAsset) { self.asset = asset }
+
+    /// A frame grabber for this file. HDR and Log frames are converted the same way as in playback,
+    /// so library tiles, filmstrips and hover previews look like the timeline.
+    func makeGenerator(maximumSize: CGSize, tolerance: CMTime? = nil) -> FrameGrabber {
+        if !sourceColor.isStandard, let track = videoTrack {
+            return ColorFrameGrabber(asset: asset, track: track, naturalSize: naturalSize, orientation: orientation,
+                                     color: sourceColor, maximumSize: maximumSize)
+        }
+        let gen = AVAssetImageGenerator(asset: asset)
+        gen.appliesPreferredTrackTransform = true
+        gen.maximumSize = maximumSize
+        if let tolerance {
+            gen.requestedTimeToleranceBefore = tolerance
+            gen.requestedTimeToleranceAfter = tolerance
+        }
+        return gen
+    }
 }
 
 struct Waveform {
@@ -162,9 +169,7 @@ final class MediaStore: ObservableObject {
     private func adopt(_ rt: MediaRuntime, for asset: MediaAsset) {
         runtimes[asset.id] = rt
         if rt.videoTrack != nil {
-            let gen = AVAssetImageGenerator(asset: rt.asset)
-            gen.appliesPreferredTrackTransform = true
-            gen.maximumSize = CGSize(width: 320, height: 120)
+            let gen = rt.makeGenerator(maximumSize: CGSize(width: 320, height: 120))
             rt.generator = gen
             makePoster(asset, rt)
         }
@@ -192,6 +197,7 @@ final class MediaStore: ObservableObject {
                 info.height = Int(abs(rect.height).rounded())
                 info.fps = Double(rate)
                 rt.orientation = orientation(for: tf)
+                rt.sourceColor = SourceColor.of(t)
             } else if t.mediaType == .audio, rt.audioTrack == nil {
                 guard let (decodable, range) = try? await t.load(.isDecodable, .timeRange),
                       decodable, range.duration.seconds > 0 else { continue }
@@ -218,9 +224,7 @@ final class MediaStore: ObservableObject {
     // MARK: Posters & stills
 
     private func makePoster(_ asset: MediaAsset, _ rt: MediaRuntime) {
-        let gen = AVAssetImageGenerator(asset: rt.asset)
-        gen.appliesPreferredTrackTransform = true
-        gen.maximumSize = CGSize(width: 480, height: 480)
+        let gen = rt.makeGenerator(maximumSize: CGSize(width: 480, height: 480))
         let t = CMTime(seconds: min(1, asset.duration * 0.1), preferredTimescale: 600)
         let id = asset.id
         gen.generateCGImageAsynchronously(for: t) { [weak self] cg, _, _ in

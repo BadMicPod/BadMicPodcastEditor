@@ -410,6 +410,15 @@ final class ExportJob {
                             progress(min(1, p))
                         }
                     }
+                    // Frames are Rec.709 once composited, whatever the sources were. Without this
+                    // the encoder sees an HDR source's tags and converts the colours a second time.
+                    if let frame = CMSampleBufferGetImageBuffer(sample) {
+                        // Including any colour space or ICC profile describing the HDR source.
+                        CVBufferRemoveAllAttachments(frame)
+                        CVBufferSetAttachment(frame, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+                        CVBufferSetAttachment(frame, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+                        CVBufferSetAttachment(frame, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2, .shouldPropagate)
+                    }
                     if !input.append(sample) {
                         input.markAsFinished()
                         group.leave()

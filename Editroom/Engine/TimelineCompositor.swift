@@ -28,10 +28,13 @@ struct RenderLayer {
     let source: Source
     /// Baked colour cube for this clip's grade, if it has one.
     let cube: Data?
+    /// How the source file's picture is encoded; HDR and Log are converted to Rec.709 first.
+    let color: SourceColor
     let transform: ClipTransform?
 
-    init(clip: Clip, source: Source, cube: Data? = nil, plan: TransitionPlan = TransitionPlan()) {
+    init(clip: Clip, source: Source, cube: Data? = nil, color: SourceColor = .standard, plan: TransitionPlan = TransitionPlan()) {
         self.cube = cube
+        self.color = color
         transform = clip.transform.flatMap { $0.isIdentity ? nil : $0 }
         start = clip.start - plan.leadIn
         end = clip.end + plan.tailOut
@@ -119,6 +122,11 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
         kCVPixelBufferIOSurfacePropertiesKey as String: [String: any Sendable](),
     ]
 
+    // HDR and wide-colour frames arrive untouched; each layer converts its own (see SourceColor),
+    // which is far more accurate than the system's conversion.
+    let supportsWideColorSourceFrames = true
+    let supportsHDRSourceFrames = true
+
     let requiredPixelBufferAttributesForRenderContext: [String: any Sendable] = [
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
         kCVPixelBufferMetalCompatibilityKey as String: true,
@@ -153,6 +161,12 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
             let image = Self.compose(instruction, request: request)
             let size = request.renderContext.size
             Self.context.render(image, to: output, bounds: CGRect(origin: .zero, size: size), colorSpace: nil)
+            // Every layer is Rec.709 by now. Saying so stops the encoder or display from "converting"
+            // a frame again because it inherited an HDR source's tags.
+            CVBufferRemoveAllAttachments(output)
+            CVBufferSetAttachment(output, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+            CVBufferSetAttachment(output, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+            CVBufferSetAttachment(output, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2, .shouldPropagate)
             request.finish(withComposedVideoFrame: output)
         }
     }
@@ -187,6 +201,8 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
                 let tx = (size.width - e.width * s) / 2 - e.minX * s
                 let ty = (size.height - e.height * s) / 2 - e.minY * s
                 image = src.transformed(by: CGAffineTransform(a: s, b: 0, c: 0, d: s, tx: tx, ty: ty))
+                // After scaling, so a 4K source is converted at the output's size.
+                image = layer.color.toRec709(image)
             case .image(let img):
                 image = img
             case .color(let color):

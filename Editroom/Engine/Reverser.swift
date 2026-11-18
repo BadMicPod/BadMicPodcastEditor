@@ -136,6 +136,8 @@ final class ReverseFrames: @unchecked Sendable {
                                     [kCVPixelBufferIOSurfacePropertiesKey: [String: Any](),
                                      kCVPixelBufferMetalCompatibilityKey: true] as CFDictionary, &small)
                 if let small, VTPixelTransferSessionTransferImage(session, from: buffer, to: small) == noErr {
+                    // Keep the colour tags, so the frame is read with the right matrix and curve.
+                    CVBufferPropagateAttachments(buffer, small)
                     frames.append((pts, small))
                 }
             } else {

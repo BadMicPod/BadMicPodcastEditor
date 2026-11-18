@@ -107,7 +107,7 @@ enum CompositionBuilder {
                         let limit = Int(max(canvas.width, canvas.height).rounded())
                         layers.append(RenderLayer(clip: clip, source: .reversed(frames, rt.orientation, limit: limit, start: shown.start,
                                                                                 sourceStart: shown.sourceStart, speed: clip.speed, length: length),
-                                                  cube: GradeBaker.cube(for: clip.grade), plan: plan))
+                                                  cube: GradeBaker.cube(for: clip.grade), color: rt.sourceColor, plan: plan))
                     case .video:
                         guard let id = clip.assetID, let rt = media.runtimes[id], let src = rt.videoTrack else { continue }
                         let lane = index % 2
@@ -122,7 +122,7 @@ enum CompositionBuilder {
                         shown.duration += plan.leadIn + plan.tailOut
                         guard let ct = compTracks[lane], insert(shown, source: src, range: rt.videoRange, into: ct, cursor: &cursors[lane]) else { continue }
                         hash(shown, into: &hasher)
-                        layers.append(RenderLayer(clip: clip, source: .track(ct.trackID, rt.orientation), cube: GradeBaker.cube(for: clip.grade), plan: plan))
+                        layers.append(RenderLayer(clip: clip, source: .track(ct.trackID, rt.orientation), cube: GradeBaker.cube(for: clip.grade), color: rt.sourceColor, plan: plan))
                     case .image:
                         guard let cg = media.still(clip.assetID) else { continue }
                         let img = CIImage(cgImage: cg)
@@ -221,9 +221,9 @@ enum CompositionBuilder {
         vc.customVideoCompositorClass = TimelineCompositor.self
         vc.frameDuration = frameDuration(fps: project.fps)
         vc.renderSize = renderSize
-        vc.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
-        vc.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
-        vc.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
+        // No colour space is set on purpose: that would make AVFoundation convert HDR and Log sources
+        // itself (poorly) before the compositor sees them. The compositor converts each source to
+        // Rec.709 (SourceColor) and tags every frame it makes as Rec.709.
         let range = CMTimeRange(start: .zero, duration: CMTimeMaximum(comp.duration, time(total)))
         vc.instructions = [TimelineInstruction(timeRange: range, layers: layers, trackIDs: requiredTracks, canvas: canvas, offset: offset)]
 
