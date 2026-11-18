@@ -183,6 +183,17 @@ final class EditorModel: ObservableObject {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
                     MagicShow.start(model: self, fromMouse: false)
                 }
+                if args.contains("--magic-ask") {
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    MagicAgent.shared.asking = true
+                }
+                // `--magic-ai claude|chatgpt "request"` (testing): Magic with an AI, logged to stderr.
+                if let k = args.firstIndex(of: "--magic-ai"), args.count > k + 1,
+                   let kind = MagicAgent.Kind(rawValue: args[k + 1]) {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    let request = args.count > k + 2 && !args[k + 2].hasPrefix("--") ? args[k + 2] : ""
+                    MagicAgent.shared.start(request: request, with: kind, model: self)
+                }
                 if args.contains("--curve-menu") {
                     try? await Task.sleep(nanoseconds: 500_000_000)
                     let (menu, current) = CurveMenu.menu(selection: .easeIn, rising: true) { _ in }
@@ -774,7 +785,11 @@ final class EditorModel: ObservableObject {
 
     /// Renders the frame under the playhead, for previews.
     func snapshot(at time: Double? = nil) async -> NSImage? {
-        let p = project
+        await snapshot(of: project, at: time ?? playhead)
+    }
+
+    /// Renders a frame of any version of the project (an agent's Magic draft, say).
+    func snapshot(of p: Project, at time: Double) async -> NSImage? {
         let scale = min(1, 640 / CGFloat(max(p.width, p.height)))
         let size = CGSize(width: max(2, (CGFloat(p.width) * scale / 2).rounded() * 2),
                           height: max(2, (CGFloat(p.height) * scale / 2).rounded() * 2))
@@ -783,7 +798,7 @@ final class EditorModel: ObservableObject {
         generator.videoComposition = built.videoComposition
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
-        let t = min(max(0, time ?? playhead), max(0, built.duration - 1 / p.fps))
+        let t = min(max(0, time), max(0, built.duration - 1 / p.fps))
         guard let cg = try? await generator.image(at: CompositionBuilder.time(t)).image else { return nil }
         return NSImage(cgImage: cg, size: .zero)
     }

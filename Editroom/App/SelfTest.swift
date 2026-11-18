@@ -873,6 +873,85 @@ enum SelfTest {
             log("MCP TOOLS \(good ? "OK" : "FAIL") \(detail)")
             ok = ok && good
         }
+        // Magic with an AI: its calls edit a hidden draft and leave the timeline alone; its edits,
+        // played back in any order their dependencies allow, make exactly the draft.
+        do {
+            let m = EditorModel()
+            var p = Project()
+            p.assets = project.assets.filter { $0.kind == .video }
+            m.load(p, url: nil)
+            let before = m.project
+            let draft = MCPDraft.open(m.project)
+            defer { draft.close() }
+            func call(_ name: String, _ args: [String: Any]) async -> (Any?, String?) {
+                do {
+                    let out = try await MCPTools.call(name, args, model: m, client: nil, draft: draft)
+                    let text = out.first?["text"] as? String ?? ""
+                    return (try? JSONSerialization.jsonObject(with: Data(text.utf8)), nil)
+                } catch {
+                    return (nil, (error as? MCPToolError)?.message ?? "\(error)")
+                }
+            }
+            var good = false
+            var detail = "no video with sound"
+            if let asset = p.assets.first(where: { $0.hasAudio && $0.duration >= 4 }) {
+                func added(_ r: Any?) -> String { ((r as? [String: Any])?["added"] as? [[String: Any]])?.first?["id"] as? String ?? "" }
+                let a = added(await call("add_clip", ["asset_id": asset.id.uuidString, "duration": 3.0]).0)
+                let b = added(await call("add_clip", ["asset_id": asset.id.uuidString, "source_start": 1.0, "duration": 2.0]).0)
+                let c = added(await call("add_clip", ["asset_id": asset.id.uuidString, "source_start": 0.5, "duration": 1.5]).0)
+                _ = await call("trim_clip", ["clip_id": a, "start": 0.5])
+                _ = await call("set_grade", ["clip_ids": [b], "look": "Mono", "exposure": 0.2])
+                _ = await call("add_title", ["text": "Hello", "start": 0.0, "duration": 1.5])
+                _ = await call("set_transition", ["clip_id": b, "kind": "dissolve"])
+                _ = await call("move_clip", ["clip_id": c, "start": 8.0])
+                _ = await call("history", ["action": "undo"])   // takes back the move
+                _ = await call("set_audio", ["clip_id": c, "gain_db": -12.0, "fade_out": 0.5])
+                _ = await call("set_sequence", ["width": 1080, "height": 1920])
+                _ = await call("delete_clips", ["clip_ids": [a], "ripple": true])
+                let (_, refused) = await call("save_project", [:])
+                let (_, frameError) = await call("get_frame", ["time": 1.0])
+                let untouched = m.project == before
+                let target = draft.project
+                let plan = MCPDraft.plan(base: before, edits: draft.edits)
+                // Played in order, and in shuffled orders that respect the dependencies.
+                var orders: [[Int]] = [Array(plan.tasks.indices)]
+                var rng = SeededRandom(seed: 7)
+                for _ in 0..<20 {
+                    var done = Set<Int>(), order: [Int] = []
+                    while order.count < plan.tasks.count {
+                        let ready = plan.tasks.indices.filter { !done.contains($0) && plan.tasks[$0].after.allSatisfy(done.contains) }
+                        let pick = ready[Int(rng.next() * Double(ready.count)) % ready.count]
+                        order.append(pick)
+                        done.insert(pick)
+                    }
+                    orders.append(order)
+                }
+                // The order clips are listed in doesn't matter, only the clips.
+                func same(_ x: Project, _ y: Project) -> Bool {
+                    var x = x, y = y
+                    x.clips.sort { $0.id.uuidString < $1.id.uuidString }
+                    y.clips.sort { $0.id.uuidString < $1.id.uuidString }
+                    return x == y
+                }
+                let failing = orders.indices.filter { k in
+                    var q = before
+                    for i in orders[k] { plan.tasks[i].edit.apply(&q, 1) }
+                    if !same(q, target), k < 3 || CommandLine.arguments.contains("--verbose") {
+                        let diff = q.clips.filter { c in target.clip(c.id) != c }.map { c in "\(c.kind.rawValue)@\(c.start)-\(c.end) vs \(target.clip(c.id).map { "\($0.start)-\($0.end)" } ?? "gone")" }
+                        log("  order \(k) \(orders[k]) differs: \(diff) counts \(q.clips.count)/\(target.clips.count) after=\(plan.tasks.map(\.after)) labels=\(plan.tasks.map { $0.edit.label(1) })")
+                    }
+                    return !same(q, target)
+                }
+                let replayOK = failing.isEmpty
+                let parallel = plan.tasks.filter { $0.after.isEmpty }.count
+                let shapeOK = target.width == 1080 && target.clips.contains { $0.kind == .text && $0.text.string == "Hello" }
+                    && target.clip(UUID(uuidString: c)!)?.start ?? 0 < 8 && target.clip(UUID(uuidString: a)!) == nil
+                good = untouched && replayOK && shapeOK && refused != nil && frameError == nil && parallel > 1
+                detail = "untouched=\(untouched) replay=\(replayOK) failing=\(failing.count)/\(orders.count) shape=\(shapeOK) edits=\(plan.tasks.count) startFree=\(parallel) refused=\(refused != nil)"
+            }
+            log("MAGIC DRAFT \(good ? "OK" : "FAIL") \(detail)")
+            ok = ok && good
+        }
         // Connect buttons, against a throwaway home folder: Codex's settings keep every other line,
         // and the Claude extension holds a valid manifest and its launcher.
         do {

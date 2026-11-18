@@ -137,6 +137,20 @@ final class MagicShow: NSObject {
         }
     }
 
+    /// Plays a finished plan (an AI agent's Magic edit) with the swarm, as one undo step. Calls
+    /// `done` when the show is over. Returns false if there's no timeline to play it on.
+    @discardableResult
+    static func play(model: EditorModel, plan: MagicPlan, done: (() -> Void)? = nil) -> Bool {
+        guard current == nil, !plan.tasks.isEmpty, let canvas = TimelineCanvas.current, let window = canvas.window, window.isVisible else {
+            return false
+        }
+        let show = MagicShow(model: model, plan: plan, window: window, canvas: canvas, click: nil, performer: nil)
+        show.onFinish = done
+        current = show
+        show.begin()
+        return true
+    }
+
     /// Analyses the clips (a few at a time) and the song, reporting progress.
     private static func analyze(_ visuals: [MediaAsset], song: MediaAsset?,
                                 progress: @escaping @MainActor (Int, Int) -> Void) async
@@ -286,6 +300,8 @@ final class MagicShow: NSObject {
 
     private let performer: Performer?
     private var agentMode: Bool { performer != nil }
+    /// Called once a played plan's show is over.
+    private var onFinish: (() -> Void)?
 
     private init(model: EditorModel, plan: MagicPlan, window: NSWindow, canvas: TimelineCanvas, click: NSPoint?, performer: Performer?) {
         self.performer = performer
@@ -319,10 +335,13 @@ final class MagicShow: NSObject {
     }
 
     private func fitTimeline() {
-        let total = plan.tasks.compactMap { task -> Double? in
+        // The whole cut as it will be, and the rough cut on its way there.
+        var final = plan.base
+        for task in plan.tasks { task.edit.apply(&final, 1) }
+        let total = max(final.duration, plan.base.duration, plan.tasks.compactMap { task -> Double? in
             if case .place(let clips, _) = task.edit { return clips.map(\.end).max() }
             return nil
-        }.max() ?? 10
+        }.max() ?? 0, 4)
         let tracks = CGFloat(plan.base.videoTracks.count + plan.base.audioTracks.count)
         let fit = (model.rowsVisible - TimelineLayout.fixedHeight - 8) / tracks - TimelineLayout.gap
         model.setView(rowHeight: min(62, fit))
@@ -1289,6 +1308,9 @@ final class MagicShow: NSObject {
         model.seek(to: 0)
         Self.current = nil
         MagicState.shared.busy = false
+        let callback = onFinish
+        onFinish = nil
+        callback?()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [model] in model.play() }
         // `--magic-undo` (testing): check one undo takes the whole cut away.
         if CommandLine.arguments.contains("--magic-undo") {

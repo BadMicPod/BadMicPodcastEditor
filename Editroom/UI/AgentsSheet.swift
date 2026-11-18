@@ -8,29 +8,6 @@ struct AgentsSheet: View {
     @ObservedObject var server = MCPServer.shared
     @ObservedObject var connect = AgentConnect.shared
     @Environment(\.dismiss) private var dismiss
-    @State private var manual = false
-
-    private var binary: String { Bundle.main.executableURL?.path ?? "/Applications/Editroom.app/Contents/MacOS/Editroom" }
-    private var claudeCode: String { "claude mcp add --transport http editroom \(MCPServer.endpoint)" }
-    private var claudeDesktop: String {
-        """
-        {
-          "mcpServers": {
-            "editroom": {
-              "command": "\(binary)",
-              "args": ["--mcp"]
-            }
-          }
-        }
-        """
-    }
-    private var codex: String {
-        """
-        [mcp_servers.editroom]
-        command = "\(binary)"
-        args = ["--mcp"]
-        """
-    }
 
     private static let prompts = [
         "Make a 30-second cut of the clips in my Editroom project, with the music, cutting on the beat.",
@@ -38,9 +15,9 @@ struct AgentsSheet: View {
         "Give everything in my Editroom timeline a warm film look and fade the music out at the end.",
     ]
 
-    /// Apps worth showing: Claude Code only when it's on this Mac.
+    /// Apps worth showing, the two Claudes together: Claude Code only when it's on this Mac.
     private var apps: [AgentApp] {
-        AgentApp.allCases.filter { $0 != .claudeCode || connect.states[$0] != .missing }
+        [.claude, .claudeCode, .chatgpt].filter { $0 != .claudeCode || connect.states[$0] != .missing }
     }
 
     private var anyConnected: Bool { connect.states.values.contains(.connected) }
@@ -88,30 +65,21 @@ struct AgentsSheet: View {
                 }
             }
 
-            if !server.clients.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("WORKING NOW").font(Theme.label()).kerning(1.4).foregroundStyle(Theme.textFaint)
-                    ForEach(server.clients.values.sorted { $0.lastSeen > $1.lastSeen }) { c in
-                        HStack(spacing: 8) {
-                            Circle().fill(Color(nsColor: MCPTools.color(for: c.name))).frame(width: 8, height: 8)
-                            Text(c.name).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.text)
-                            Text(c.lastSeen, style: .relative).font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+            // Only agents that have done something in the last minute.
+            TimelineView(.periodic(from: .now, by: 5)) { context in
+                let active = server.clients.values.filter { context.date.timeIntervalSince($0.lastSeen) < 60 }
+                if !active.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("WORKING NOW").font(Theme.label()).kerning(1.4).foregroundStyle(Theme.textFaint)
+                        ForEach(active.sorted { $0.lastSeen > $1.lastSeen }) { c in
+                            HStack(spacing: 8) {
+                                Circle().fill(Color(nsColor: MCPTools.color(for: c.name))).frame(width: 8, height: 8)
+                                Text(c.name).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.text)
+                                Text(c.lastSeen, style: .relative).font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+                            }
                         }
                     }
                 }
-            }
-
-            DisclosureGroup(isExpanded: $manual) {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("Editroom listens on this Mac only, at \(MCPServer.endpoint).")
-                        .font(.system(size: 11.5)).foregroundStyle(Theme.textDim).textSelection(.enabled)
-                    SetupBlock(title: "Claude Code", note: "Run in Terminal:", code: claudeCode)
-                    SetupBlock(title: "Claude app", note: "Add to Claude's claude_desktop_config.json (Settings > Developer > Edit Config), then restart Claude:", code: claudeDesktop)
-                    SetupBlock(title: "Codex", note: "Add to ~/.codex/config.toml:", code: codex)
-                }
-                .padding(.top, 10)
-            } label: {
-                Text("Set up by hand").font(.system(size: 11.5, weight: .medium)).foregroundStyle(Theme.textDim)
             }
 
             HStack {
@@ -235,38 +203,5 @@ private struct PromptRow: View {
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
-    }
-}
-
-private struct SetupBlock: View {
-    let title: String
-    let note: String
-    let code: String
-    @State private var copied = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(title).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.text)
-                Spacer()
-                Button(copied ? "Copied" : "Copy") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(code, forType: .string)
-                    copied = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(copied ? Theme.text : Theme.textDim)
-            }
-            Text(note).font(.system(size: 11.5)).foregroundStyle(Theme.textDim).fixedSize(horizontal: false, vertical: true)
-            Text(code)
-                .font(Theme.mono(11, .regular))
-                .foregroundStyle(Theme.text)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
-                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
-        }
     }
 }

@@ -198,44 +198,192 @@ extension ToolbarContent {
     }
 }
 
-/// Starts the magic edit: a swarm of cursors builds a cut from the library.
+
+/// Starts the magic edit. With Claude or ChatGPT on this Mac, it asks what to make first, the AI works
+/// it out in the background, and the swarm plays it onto the timeline. Without one, the swarm builds a
+/// cut on its own. While the AI works, a click stops it.
 struct MagicButton: View {
     @ObservedObject var model: EditorModel
     @ObservedObject var state = MagicState.shared
+    @ObservedObject var ai = MagicAgent.shared
     @State private var hovering = false
 
-    private var hasMedia: Bool { model.project.assets.contains { $0.kind != .audio } }
+    private var hasMedia: Bool { model.project.assets.contains { $0.kind != .audio } || !model.project.clips.isEmpty }
+    private var status: String? { ai.running ? (hovering ? "Stop" : ai.status) : ai.ready ?? state.status }
 
     var body: some View {
         Button {
-            MagicShow.start(model: model, fromMouse: true)
+            if ai.running { ai.stop() }
+            else if ai.choice != nil { ai.note = nil; ai.asking = true }
+            else { MagicShow.start(model: model, fromMouse: true) }
         } label: {
             HStack(spacing: 5) {
-                if state.status != nil {
+                if ai.running && hovering {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                } else if status != nil {
                     ProgressView().controlSize(.small).scaleEffect(0.55).frame(width: 12, height: 12)
                 } else {
                     Image(systemName: "wand.and.sparkles")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Theme.accent)
                 }
-                Text(state.status ?? "Magic")
+                Text(status ?? "Magic")
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(Theme.text)
                     .monospacedDigit()
             }
-            .padding(.horizontal, 13)
-            .frame(height: 28)
+            .padding(.horizontal, 11)
+            .frame(height: 26)
             .background(Capsule().fill(Color.white.opacity(hovering ? 0.14 : 0.08)))
             .overlay(Capsule().strokeBorder(Color.white.opacity(0.05)))
             .contentShape(Capsule())
-            .animation(.easeOut(duration: 0.15), value: state.status)
+            .animation(.easeOut(duration: 0.15), value: status)
         }
         .buttonStyle(.plain)
         .background(MagicAnchor(key: "magicButton"))
-        .disabled(!hasMedia || state.busy)
-        .opacity(hasMedia ? 1 : 0.4)
+        .disabled(!ai.running && (!hasMedia || state.busy || MagicShow.isRunning))
+        .opacity(hasMedia || ai.running ? 1 : 0.4)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
-        .help(hasMedia ? "Magic: build a cut from your media" : "Import some clips first")
+        .help(ai.running ? "Stop \(ai.agent?.name ?? "")" : !hasMedia ? "Import some clips first"
+              : ai.choice.map { "Magic: tell \($0.name) what to make" } ?? "Magic: build a cut from your media")
+        // One popover: what to make, or what the AI said when it finished.
+        .popover(isPresented: Binding(get: { ai.asking || ai.note != nil },
+                                      set: { if !$0 { ai.asking = false; ai.note = nil } }), arrowEdge: .bottom) {
+            if let note = ai.note {
+                MagicNote(note: note, model: model) { ai.note = nil }
+            } else {
+                MagicPrompt(model: model, ai: ai) { ai.asking = false }
+            }
+        }
+    }
+}
+
+/// What should the AI make? Typed, or picked from a few ideas. Empty makes the best cut it can.
+private struct MagicPrompt: View {
+    @ObservedObject var model: EditorModel
+    @ObservedObject var ai: MagicAgent
+    let close: () -> Void
+    @State private var request = ""
+    @FocusState private var focused: Bool
+
+    private var hasEdit: Bool { model.project.clips.contains { $0.kind != .audio } }
+    private var kind: MagicAgent.Kind { ai.choice ?? .claude }
+
+    private var ideas: [String] {
+        hasEdit
+            ? ["Make this shorter so people keep watching", "Cut it to the beat of the music", "Give it a warm film look"]
+            : ["A 30-second highlight reel cut to the music", "A calm, slow story of the day", "Fast and punchy, vertical for Reels"]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(hasEdit ? "What should change?" : "What should it make?")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                Spacer()
+                if ai.available.count > 1 {
+                    Picker("", selection: $ai.preferred) {
+                        ForEach(ai.available) { Text($0.name).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    .controlSize(.small)
+                }
+            }
+
+            TextField(hasEdit ? "Leave empty to make it better" : "Leave empty for the best cut", text: $request, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.text)
+                .lineLimit(3...6)
+                .focused($focused)
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.field))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.stroke))
+                .onSubmit(go)
+
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(ideas, id: \.self) { idea in
+                    Button {
+                        request = idea
+                        focused = true
+                    } label: {
+                        Text(idea)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textDim)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 5)
+                            .background(Capsule().fill(Color.white.opacity(0.06)))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            HStack {
+                Button("Quick Magic, no AI") {
+                    close()
+                    MagicShow.start(model: model, fromMouse: false)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Theme.textFaint)
+                .help("Build a cut from the library without asking an AI")
+                Spacer()
+                PillButton(title: "Make it with \(kind.name)", prominent: true, action: go)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 380)
+        .background(Theme.panel)
+        .onAppear { focused = true }
+    }
+
+    private func go() {
+        close()
+        ai.start(request: request, with: kind, model: model)
+    }
+}
+
+/// What the AI said when it finished: what it made, and anything it couldn't do.
+private struct MagicNote: View {
+    let note: MagicAgent.Note
+    @ObservedObject var model: EditorModel
+    let close: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Circle().fill(Color(nsColor: MCPTools.color(for: note.agent == .claude ? "Claude" : "ChatGPT"))).frame(width: 8, height: 8)
+                Text(note.agent.name).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text)
+            }
+            Text(note.text.isEmpty ? "Done." : note.text)
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+            HStack {
+                if note.changed {
+                    Button("Undo") {
+                        close()
+                        model.undo()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Theme.textDim)
+                }
+                Spacer()
+                PillButton(title: "OK", prominent: true, action: close)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 340)
+        .background(Theme.panel)
     }
 }

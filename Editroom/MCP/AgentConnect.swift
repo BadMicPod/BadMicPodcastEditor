@@ -365,6 +365,20 @@ final class AgentConnect: ObservableObject {
         return (json["mcpServers"] as? [String: Any])?["editroom"] != nil
     }
 
+    /// The `codex` program: the one the ChatGPT app ships, or one installed on its own.
+    var codexCLI: URL? {
+        let fm = FileManager.default
+        for id in Self.chatgptBundleIDs {
+            if let app = Self.appURL(id) {
+                let c = app.appendingPathComponent("Contents/Resources/codex-cli/bin/codex")
+                if fm.isExecutableFile(atPath: c.path) { return c }
+            }
+        }
+        let h = home.path
+        let known = ["\(h)/.local/bin/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex"]
+        return known.first(where: { fm.isExecutableFile(atPath: $0) }).map { URL(fileURLWithPath: $0) }
+    }
+
     /// The `claude` program: on the PATH people usually have, or the one inside the Claude app.
     var claudeCLI: URL? {
         let fm = FileManager.default

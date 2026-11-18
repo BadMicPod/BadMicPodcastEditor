@@ -30,14 +30,21 @@ final class MCPServer: ObservableObject {
 
     private var listener: NWListener?
     private(set) weak var model: EditorModel?
+    /// The port this copy is listening on: the usual one, or (when another copy of Editroom has it)
+    /// any free one, for this copy's own Magic runs.
+    private(set) var listeningPort: UInt16?
+    /// Where this copy's own Magic runs reach it.
+    var localEndpoint: String? { listeningPort.map { "http://127.0.0.1:\($0)/mcp" } }
 
     func attach(_ model: EditorModel) {
         self.model = model
         if enabled { start() }
     }
 
-    func start() {
-        guard listener == nil, let port = NWEndpoint.Port(rawValue: Self.port) else { return }
+    func start() { listen(on: Self.port) }
+
+    private func listen(on number: UInt16) {
+        guard listener == nil, let port = number == 0 ? NWEndpoint.Port.any : NWEndpoint.Port(rawValue: number) else { return }
         let params = NWParameters.tcp
         // This Mac only: never reachable from the network.
         params.requiredInterfaceType = .loopback
@@ -51,12 +58,22 @@ final class MCPServer: ObservableObject {
                 Task { @MainActor in
                     switch state {
                     case .ready:
-                        MCPServer.shared.running = true
-                        MCPServer.shared.problem = nil
+                        let s = MCPServer.shared
+                        s.running = true
+                        s.listeningPort = s.listener?.port?.rawValue
+                        s.problem = number == 0 ? "Another copy of Editroom is answering AI apps; this one only runs its own Magic." : nil
                     case .failed(let e):
-                        MCPServer.shared.running = false
-                        MCPServer.shared.problem = "Couldn't listen on port \(Self.port): \(e.localizedDescription)"
-                        MCPServer.shared.listener = nil
+                        let s = MCPServer.shared
+                        s.running = false
+                        s.listener?.cancel()
+                        s.listener = nil
+                        s.listeningPort = nil
+                        if number != 0, case .posix(let code) = e, code == .EADDRINUSE {
+                            // Someone else (another copy of Editroom) has the usual port.
+                            s.listen(on: 0)
+                        } else {
+                            s.problem = "Couldn't listen on port \(Self.port): \(e.localizedDescription)"
+                        }
                     case .cancelled:
                         MCPServer.shared.running = false
                     default: break
@@ -73,6 +90,7 @@ final class MCPServer: ObservableObject {
     func stop() {
         listener?.cancel()
         listener = nil
+        listeningPort = nil
         running = false
     }
 
@@ -114,6 +132,12 @@ final class MCPServer: ObservableObject {
             guard let u = URL(string: origin), ["127.0.0.1", "localhost"].contains(u.host ?? "") else { return send("403 Forbidden") }
         }
         guard req.path.hasPrefix("/mcp") else { return send("404 Not Found") }
+        // A Magic run's agent works on a hidden draft, named in its address.
+        let draftToken = URLComponents(string: req.path)?.queryItems?.first { $0.name == "draft" }?.value
+        // With AI Agents off, the connection is only open for this copy's own Magic runs.
+        guard enabled || draftToken.map({ MCPDraft.find($0) != nil }) == true else {
+            return send("403 Forbidden")
+        }
         switch req.method {
         case "POST": break
         case "DELETE":
@@ -131,14 +155,17 @@ final class MCPServer: ObservableObject {
         if method == "initialize" {
             session = UUID().uuidString
             let info = (json["params"] as? [String: Any])?["clientInfo"] as? [String: Any]
-            clients[session!] = Client(id: session!, name: Self.displayName(info?["name"] as? String ?? "Agent"), lastSeen: Date())
-        } else if let s = session {
+            // Magic's own agent isn't listed as a connected app.
+            if draftToken == nil {
+                clients[session!] = Client(id: session!, name: Self.displayName(info?["name"] as? String ?? "Agent"), lastSeen: Date())
+            }
+        } else if draftToken == nil, let s = session {
             if clients[s] == nil { clients[s] = Client(id: s, name: "Agent", lastSeen: Date()) }
             clients[s]?.lastSeen = Date()
         }
         // Notifications get no reply.
         guard json["id"] != nil else { return send("202 Accepted") }
-        let reply = await MCPHandler.handle(json, client: session.flatMap { clients[$0] })
+        let reply = await MCPHandler.handle(json, client: session.flatMap { clients[$0] }, draft: draftToken)
         let body = (try? JSONSerialization.data(withJSONObject: reply)) ?? Data()
         var headers = ["Content-Type": "application/json"]
         if let session { headers["Mcp-Session-Id"] = session }
@@ -194,7 +221,7 @@ struct HTTPRequest {
 enum MCPHandler {
     static let versions = ["2025-06-18", "2025-03-26", "2024-11-05"]
 
-    static func handle(_ req: [String: Any], client: MCPServer.Client?) async -> [String: Any] {
+    static func handle(_ req: [String: Any], client: MCPServer.Client?, draft token: String? = nil) async -> [String: Any] {
         let id = req["id"]
         let params = req["params"] as? [String: Any] ?? [:]
         func ok(_ result: [String: Any]) -> [String: Any] { ["jsonrpc": "2.0", "id": id ?? NSNull(), "result": result] }
@@ -214,11 +241,19 @@ enum MCPHandler {
         case "tools/call":
             let name = params["name"] as? String ?? ""
             let args = params["arguments"] as? [String: Any] ?? [:]
-            guard let model = MCPServer.shared.model else {
+            if CommandLine.arguments.contains("--magic-ai") {
+                FileHandle.standardError.write("MCP CALL \(name) \(token == nil ? "live" : "draft") from \(client?.name ?? "?")\n".data(using: .utf8)!)
+            }
+            var draft: MCPDraft?
+            if let token {
+                draft = MCPDraft.find(token)
+                guard draft != nil else { return ok(MCPTools.failure("This Magic edit was stopped or has finished. Stop now.")) }
+            }
+            guard let model = draft?.model ?? MCPServer.shared.model else {
                 return ok(MCPTools.failure("Editroom isn't ready yet."))
             }
             do {
-                let content = try await MCPTools.call(name, args, model: model, client: client)
+                let content = try await MCPTools.call(name, args, model: model, client: client, draft: draft)
                 return ok(["content": content, "isError": false])
             } catch {
                 return ok(MCPTools.failure((error as? MCPToolError)?.message ?? error.localizedDescription))

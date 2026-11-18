@@ -16,7 +16,7 @@ enum MCPTools {
     linked pair: moving, trimming or deleting either moves both. Placing, moving or trimming a clip \
     over another on the same track overwrites what's underneath, as on the timeline. Start with \
     get_project and list_media; analyze_media finds a clip's best moments or a song's beats; \
-    get_frame shows you the cut. Each edit is shown to the person with your own cursor and can be \
+    look_at_media shows you a clip or photo, and get_frame shows you the cut. Each edit is shown to the person with your own cursor and can be \
     undone with history. auto_edit builds a whole cut on its own.
     """
 
@@ -46,6 +46,10 @@ enum MCPTools {
             tool("import_media", "Import media", "Adds files to the library.", ["paths": ["type": "array", "items": ["type": "string"], "description": "Absolute file paths."]], required: ["paths"]),
             tool("analyze_media", "Analyze media", "For a video or photo: its best moments, scored for focus, exposure, colour, faces and steadiness. For music: tempo, beats and where bars start. Done on this Mac; cached.",
                  ["asset_id": str("A library item's id."), "moment_length": num("Length of moments to look for, in seconds (default 2).")], required: ["asset_id"], readOnly: true),
+            tool("look_at_media", "Look at media", "Shows you a library item: a photo, or frames from across a video in a grid, each marked with its time in the file. Use it to see what's in each shot before choosing.",
+                 ["asset_id": str("A library item's id."), "frames": ["type": "integer", "description": "How many frames from across a video (default 6, at most 12)."],
+                  "times": ["type": "array", "items": ["type": "number"], "description": "Or exactly which times in the file to show, in seconds (at most 12)."]],
+                 required: ["asset_id"], readOnly: true),
             tool("get_frame", "Get frame", "A picture of the cut at a time (default: the playhead), 640 pixels on its longer side.", ["time": num("Seconds.")], readOnly: true),
             tool("add_clip", "Add clip", "Drags a library item onto the timeline. A video with sound brings its audio, linked.",
                  ["asset_id": str("A library item's id."), "start": num("Where on the timeline (default: the end of the track)."),
@@ -75,18 +79,25 @@ enum MCPTools {
 
     // MARK: Calls
 
-    static func call(_ name: String, _ args: [String: Any], model: EditorModel, client: MCPServer.Client?) async throws -> [[String: Any]] {
+    static func call(_ name: String, _ args: [String: Any], model: EditorModel, client: MCPServer.Client?,
+                     draft: MCPDraft? = nil) async throws -> [[String: Any]] {
         let who = client?.name ?? "Agent"
+        draft?.called(name)
+        /// The project as it is now: the Magic draft's while there is one.
+        func now() -> Project { draft?.project ?? model.project }
+        func notInMagic() throws {
+            if draft != nil { throw MCPToolError("\(name) isn't available while making a Magic edit.") }
+        }
         func text(_ s: String) -> [[String: Any]] { [["type": "text", "text": s]] }
         func json(_ v: Any) -> [[String: Any]] {
             let d = (try? JSONSerialization.data(withJSONObject: v, options: [.prettyPrinted, .sortedKeys])) ?? Data()
             return text(String(data: d, encoding: .utf8) ?? "{}")
         }
-        let p = model.project
+        let p = now()
 
         switch name {
         case "get_project":
-            return json(projectJSON(model))
+            return json(projectJSON(p, title: model.title, playhead: draft?.playhead ?? model.playhead))
 
         case "list_media":
             return json(p.assets.map(assetJSON))
@@ -95,6 +106,7 @@ enum MCPTools {
             return json(BuiltInLook.all.map(\.name))
 
         case "import_media":
+            try notInMagic()
             let paths = args["paths"] as? [String] ?? []
             let urls = paths.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
             let missing = urls.filter { !FileManager.default.fileExists(atPath: $0.path) }
@@ -127,10 +139,20 @@ enum MCPTools {
             if a.samples.contains(where: { $0.utility == true }) { out["looks_like_a_screenshot_or_document"] = true }
             return json(out)
 
+        case "look_at_media":
+            let asset = try assetArg(args, p)
+            guard asset.kind != .audio else { throw MCPToolError("\(asset.name) is sound only; analyze_media finds its beats.") }
+            let frames = (args["frames"] as? Int) ?? 6
+            let times = (args["times"] as? [Any])?.compactMap { ($0 as? Double) ?? ($0 as? Int).map(Double.init) }
+            guard let sheet = await ContactSheet.make(asset, frames: frames, around: times) else { throw MCPToolError("Couldn't look at \(asset.name).") }
+            let note = asset.kind == .image ? "\(asset.name), a photo." :
+                "\(asset.name), \(round3(asset.duration))s long. Frames at " + sheet.times.map { String(format: "%.1fs", $0) }.joined(separator: ", ") + ", left to right, top to bottom."
+            return [["type": "image", "data": sheet.jpeg.base64EncodedString(), "mimeType": "image/jpeg"], ["type": "text", "text": note]]
+
         case "get_frame":
             guard !p.clips.isEmpty else { throw MCPToolError("The timeline is empty.") }
-            let t = (args["time"] as? Double) ?? model.playhead
-            guard let img = await model.snapshot(at: t), let tiff = img.tiffRepresentation,
+            let t = (args["time"] as? Double) ?? draft?.playhead ?? model.playhead
+            guard let img = await model.snapshot(of: p, at: t), let tiff = img.tiffRepresentation,
                   let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
                 throw MCPToolError("Couldn't render a frame at \(t)s.")
             }
@@ -154,8 +176,8 @@ enum MCPTools {
                 clips[i].duration = p.snapFrame(length)
             }
             guard !clips.isEmpty else { throw MCPToolError("Couldn't make a clip from \(asset.name).") }
-            try await perform([.place(clips, asset: asset.id)], model, who)
-            return json(["added": clips.map { ["id": $0.id.uuidString, "track": trackName($0.trackID, model.project), "start": round3($0.start), "end": round3($0.end)] }])
+            try await perform([.place(clips, asset: asset.id)], model, who, draft)
+            return json(["added": clips.map { ["id": $0.id.uuidString, "track": trackName($0.trackID, now()), "start": round3($0.start), "end": round3($0.end)] }])
 
         case "add_title":
             let words = (args["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -163,6 +185,7 @@ enum MCPTools {
             let start = max(0, (args["start"] as? Double) ?? 0)
             let length = max(0.2, (args["duration"] as? Double) ?? 3)
             let track: UUID
+            var edits: [MagicEdit] = []
             if let name = args["track"] as? String {
                 track = try trackArg(name, p, kind: .video)
             } else {
@@ -170,16 +193,20 @@ enum MCPTools {
                 let free = p.videoTracks.dropFirst().first { t in !p.clips.contains { $0.trackID == t.id && $0.start < start + length && $0.end > start } }
                 if let t = free?.id {
                     track = t
+                } else if draft != nil {
+                    // None free: a new one on top, in the same step as the title.
+                    track = UUID()
+                    edits.append(addTrackEdit(.video, id: track))
                 } else {
-                    // None free: a new one on top.
                     model.addTrack(.video)
                     track = model.project.videoTracks.last!.id
                 }
             }
-            var clip = Clip(trackID: track, kind: .text, start: model.project.snapFrame(start), duration: model.project.snapFrame(length))
+            var clip = Clip(trackID: track, kind: .text, start: p.snapFrame(start), duration: p.snapFrame(length))
             clip.text.string = ""
-            try await perform([.place([clip], asset: nil), .type(clip.id, words)], model, who)
-            return json(["added": ["id": clip.id.uuidString, "track": trackName(track, model.project), "start": round3(clip.start), "end": round3(clip.end)]])
+            edits += [.place([clip], asset: nil), .type(clip.id, words)]
+            try await perform(edits, model, who, draft)
+            return json(["added": ["id": clip.id.uuidString, "track": trackName(track, now()), "start": round3(clip.start), "end": round3(clip.end)]])
 
         case "move_clip":
             let c = try clipArg(args, p)
@@ -189,8 +216,8 @@ enum MCPTools {
                 tracks[c.id] = try trackArg(name, p, kind: c.kind.trackKind)
             }
             let ids = Array(p.unlocked(p.linked([c.id])))
-            try await perform([.move(ids, from: c.start, to: p.snapFrame(start), tracks: tracks)], model, who)
-            return json(clipsJSON(ids, model.project))
+            try await perform([.move(ids, from: c.start, to: p.snapFrame(start), tracks: tracks)], model, who, draft)
+            return json(clipsJSON(ids, now()))
 
         case "trim_clip":
             let c = try clipArg(args, p)
@@ -211,8 +238,8 @@ enum MCPTools {
             if newStart != c.start { edits.append(.trimHead(ids, from: c.start, to: newStart)) }
             if newEnd != c.end { edits.append(.trimTail(ids, from: c.end, to: newEnd)) }
             guard !edits.isEmpty else { return json(clipsJSON(ids, p)) }
-            try await perform(edits, model, who)
-            return json(clipsJSON(ids, model.project))
+            try await perform(edits, model, who, draft)
+            return json(clipsJSON(ids, now()))
 
         case "split_clip":
             let c = try clipArg(args, p)
@@ -221,8 +248,8 @@ enum MCPTools {
             let ids = Array(p.unlocked(p.linked([c.id])))
             var pieces: [UUID: UUID] = [:]
             for id in ids { pieces[id] = UUID() }
-            try await perform([.blade(ids, at: at, pieces: pieces, link: UUID())], model, who)
-            return json(["left": clipsJSON(ids, model.project), "right": clipsJSON(ids.compactMap { pieces[$0] }, model.project)])
+            try await perform([.blade(ids, at: at, pieces: pieces, link: UUID())], model, who, draft)
+            return json(["left": clipsJSON(ids, now()), "right": clipsJSON(ids.compactMap { pieces[$0] }, now())])
 
         case "delete_clips":
             let raw = args["clip_ids"] as? [String] ?? []
@@ -232,7 +259,7 @@ enum MCPTools {
             }
             let all = Array(p.unlocked(p.linked(Set(ids))))
             guard !all.isEmpty else { throw MCPToolError("Nothing to delete (locked tracks?).") }
-            try await perform([.remove(all, ripple: args["ripple"] as? Bool ?? false)], model, who)
+            try await perform([.remove(all, ripple: args["ripple"] as? Bool ?? false)], model, who, draft)
             return text("Deleted \(all.count) clip\(all.count == 1 ? "" : "s").")
 
         case "set_grade":
@@ -271,8 +298,8 @@ enum MCPTools {
                 }
             }
             guard !edits.isEmpty else { throw MCPToolError("Nothing to change: give clip_ids and at least one setting.") }
-            try await perform(edits, model, who)
-            return json(clipsJSON(raw.compactMap(UUID.init(uuidString:)), model.project))
+            try await perform(edits, model, who, draft)
+            return json(clipsJSON(raw.compactMap(UUID.init(uuidString:)), now()))
 
         case "set_audio":
             let c = try clipArg(args, p)
@@ -281,40 +308,56 @@ enum MCPTools {
             if let f = args["fade_in"] as? Double { edits.append(.fadeIn(c.id, to: max(0, min(f, c.duration)))) }
             if let f = args["fade_out"] as? Double { edits.append(.fadeOut(c.id, to: max(0, min(f, c.duration)))) }
             guard !edits.isEmpty else { throw MCPToolError("Give gain_db, fade_in or fade_out.") }
-            try await perform(edits, model, who)
-            return json(clipsJSON([c.id], model.project))
+            try await perform(edits, model, who, draft)
+            return json(clipsJSON([c.id], now()))
 
         case "set_transition":
             let c = try clipArg(args, p)
             let kindName = args["kind"] as? String ?? "dissolve"
             if kindName == "none" {
-                try await perform([.change(c.id, "No transition") { proj in if let i = proj.index(of: c.id) { proj.clips[i].transitionIn = nil } }], model, who)
+                try await perform([.change(c.id, "No transition") { proj in if let i = proj.index(of: c.id) { proj.clips[i].transitionIn = nil } }], model, who, draft)
             } else {
                 guard let kind = TransitionKind(rawValue: kindName) else { throw MCPToolError("kind is dissolve, dipToBlack, wipe or none.") }
                 guard p.clips.contains(where: { $0.trackID == c.trackID && $0.id != c.id && abs($0.end - c.start) < 1e-3 }) else {
                     throw MCPToolError("Nothing ends where this clip starts on its track, so there's nothing to transition from.")
                 }
                 let t = Transition(kind: kind, duration: max(0.04, (args["duration"] as? Double) ?? 0.5))
-                try await perform([.transition(c.id, t)], model, who)
+                try await perform([.transition(c.id, t)], model, who, draft)
             }
-            return json(clipsJSON([c.id], model.project))
+            return json(clipsJSON([c.id], now()))
 
         case "add_track":
             let kind: TrackKind = (args["kind"] as? String) == "audio" ? .audio : .video
-            model.addTrack(kind)
-            let tracks = model.project.tracks(kind)
+            if let draft { draft.apply([addTrackEdit(kind, id: UUID())]) } else { model.addTrack(kind) }
+            let tracks = now().tracks(kind)
             return text("Added \(kind == .video ? "V" : "A")\(tracks.count).")
 
         case "set_sequence":
+            var size: (Int, Int)?
             if let w = args["width"] as? Int, let h = args["height"] as? Int {
                 guard w >= 16, h >= 16, w <= 8192, h <= 8192 else { throw MCPToolError("Width and height are 16…8192.") }
-                model.setSequence(width: w, height: h)
+                size = (w, h)
             }
-            if let fps = args["fps"] as? Double { model.setFPS(EditorModel.standardFPS(fps)) }
-            let q = model.project
+            let fps = (args["fps"] as? Double).map(EditorModel.standardFPS)
+            if let draft {
+                draft.apply([.change(nil, "Sequence") { proj in
+                    if let size { proj.width = size.0; proj.height = size.1 }
+                    if let fps { proj.fps = fps }
+                    proj.settingsLocked = true
+                }])
+            } else {
+                if let size { model.setSequence(width: size.0, height: size.1) }
+                if let fps { model.setFPS(fps) }
+            }
+            let q = now()
             return json(["width": q.width, "height": q.height, "fps": q.fps])
 
         case "playback":
+            if let draft {
+                // Nothing plays during a Magic edit; seeking moves get_frame's default time.
+                if args["action"] as? String == "seek" { draft.playhead = max(0, try numArg(args, "time")) }
+                return text("Playhead at \(String(format: "%.3f", draft.playhead))s. Playback is off while making a Magic edit; use get_frame to see the cut.")
+            }
             switch args["action"] as? String {
             case "play": model.play()
             case "pause": model.pause()
@@ -324,6 +367,18 @@ enum MCPTools {
             return text("Playhead at \(String(format: "%.3f", model.playhead))s, \(model.isPlaying ? "playing" : "paused").")
 
         case "history":
+            if let draft {
+                switch args["action"] as? String {
+                case "undo":
+                    guard draft.canUndo else { throw MCPToolError("Nothing to undo.") }
+                    draft.undo()
+                case "redo":
+                    guard draft.canRedo else { throw MCPToolError("Nothing to redo.") }
+                    draft.redo()
+                default: throw MCPToolError("action is undo or redo.")
+                }
+                return text("Done. \(draft.project.clips.count) clips on the timeline.")
+            }
             switch args["action"] as? String {
             case "undo":
                 guard model.canUndo else { throw MCPToolError("Nothing to undo.") }
@@ -336,13 +391,15 @@ enum MCPTools {
             return text("Done. \(model.project.clips.count) clips on the timeline.")
 
         case "auto_edit":
+            try notInMagic()
             while MagicShow.isRunning || MagicState.shared.busy { try? await Task.sleep(nanoseconds: 50_000_000) }
             MagicShow.start(model: model, fromMouse: false)
             try? await Task.sleep(nanoseconds: 100_000_000)
             while MagicShow.isRunning || MagicState.shared.busy { try? await Task.sleep(nanoseconds: 100_000_000) }
-            return json(projectJSON(model))
+            return json(projectJSON(model.project, title: model.title, playhead: model.playhead))
 
         case "save_project":
+            try notInMagic()
             guard model.fileURL != nil else { throw MCPToolError("This project has never been saved; ask the person to save it (File > Save).") }
             model.save()
             return text("Saved.")
@@ -354,8 +411,10 @@ enum MCPTools {
 
     // MARK: Performing
 
-    /// Plays edits with the agent's cursor and waits until they're done.
-    private static func perform(_ edits: [MagicEdit], _ model: EditorModel, _ who: String) async throws {
+    /// Plays edits with the agent's cursor and waits until they're done; during a Magic edit, just
+    /// makes them in the draft.
+    private static func perform(_ edits: [MagicEdit], _ model: EditorModel, _ who: String, _ draft: MCPDraft?) async throws {
+        if let draft { return draft.apply(edits) }
         reveal(edits, model)
         let color = Self.color(for: who)
         let start = AgentPresence.shared.take(who)
@@ -486,8 +545,16 @@ enum MCPTools {
         return d
     }
 
-    private static func projectJSON(_ model: EditorModel) -> [String: Any] {
-        let p = model.project
+    /// A new empty track with a known id, so the same edit makes the same track when it's played back.
+    private static func addTrackEdit(_ kind: TrackKind, id: UUID) -> MagicEdit {
+        .change(nil, kind == .video ? "Add video track" : "Add audio track") { proj in
+            var t = Track(kind: kind)
+            t.id = id
+            if kind == .video { proj.videoTracks.append(t) } else { proj.audioTracks.append(t) }
+        }
+    }
+
+    private static func projectJSON(_ p: Project, title: String, playhead: Double) -> [String: Any] {
         let tracks = p.videoTracks.enumerated().reversed().map { i, t in
             ["name": "V\(i + 1)", "kind": "video", "hidden": t.hidden, "locked": t.locked] as [String: Any]
         } + p.audioTracks.enumerated().map { i, t in
@@ -497,9 +564,9 @@ enum MCPTools {
             (trackName($0.trackID, p), $0.start) < (trackName($1.trackID, p), $1.start)
         }.map { clipJSON($0, p) }
         return [
-            "name": model.title,
+            "name": title,
             "sequence": ["width": p.width, "height": p.height, "fps": p.fps, "duration": round3(p.duration)],
-            "playhead": round3(model.playhead),
+            "playhead": round3(playhead),
             "tracks": tracks,
             "clips": clips,
             "markers": p.markerList.map { ["time": round3($0.time), "name": $0.name] },
