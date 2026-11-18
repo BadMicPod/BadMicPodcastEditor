@@ -858,11 +858,13 @@ final class EditorModel: ObservableObject {
     func removeAssets(_ ids: Set<UUID>) {
         guard !ids.isEmpty else { return }
         let used = project.clips.filter { $0.assetID.map(ids.contains) == true }
+        // A video and its linked sound count as one clip, as they look on the timeline.
+        let clipCount = Set(used.map { $0.linkID ?? $0.id }).count
         if !used.isEmpty {
             let names = project.assets.filter { ids.contains($0.id) }.map(\.name)
             let alert = NSAlert()
             alert.messageText = names.count == 1 ? "Delete “\(names[0])”?" : "Delete \(names.count) items?"
-            alert.informativeText = "\(used.count) clip\(used.count == 1 ? " on the timeline uses" : "s on the timeline use") \(names.count == 1 ? "it" : "them") and will be deleted too. The files stay on your Mac, and Undo brings everything back."
+            alert.informativeText = "\(clipCount) clip\(clipCount == 1 ? " on the timeline uses" : "s on the timeline use") \(names.count == 1 ? "it" : "them") and will be deleted too. The files stay on your Mac, and Undo brings everything back."
             alert.addButton(withTitle: "Delete")
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
