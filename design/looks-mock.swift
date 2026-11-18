@@ -115,8 +115,50 @@ let looks: [(String, (RGB) -> RGB)] = [
         return saturate(c, 0.8) }),
 ]
 
+/// A .cube file applied with trilinear interpolation, for comparing against real LUTs.
+func cubeLook(_ path: String) -> (RGB) -> RGB {
+    let text = try! String(contentsOfFile: path, encoding: .utf8)
+    var size = 0
+    var table: [RGB] = []
+    for line in text.split(whereSeparator: \.isNewline) {
+        let t = line.trimmingCharacters(in: .whitespaces)
+        if t.hasPrefix("LUT_3D_SIZE") { size = Int(t.split(separator: " ").last!)! ; continue }
+        let parts = t.split(separator: " ").compactMap { Double($0) }
+        if parts.count == 3, !t.hasPrefix("DOMAIN") { table.append((parts[0], parts[1], parts[2])) }
+    }
+    let n = size
+    return { c in
+        func at(_ r: Int, _ g: Int, _ b: Int) -> RGB { table[(b * n + g) * n + r] }
+        let f = [c.r, c.g, c.b].map { clamp($0) * Double(n - 1) }
+        let i0 = f.map { min(n - 2, Int($0)) }, d = (0..<3).map { f[$0] - Double(i0[$0]) }
+        func lerp(_ a: RGB, _ b: RGB, _ t: Double) -> RGB { (a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t) }
+        let c00 = lerp(at(i0[0], i0[1], i0[2]), at(i0[0] + 1, i0[1], i0[2]), d[0])
+        let c10 = lerp(at(i0[0], i0[1] + 1, i0[2]), at(i0[0] + 1, i0[1] + 1, i0[2]), d[0])
+        let c01 = lerp(at(i0[0], i0[1], i0[2] + 1), at(i0[0] + 1, i0[1], i0[2] + 1), d[0])
+        let c11 = lerp(at(i0[0], i0[1] + 1, i0[2] + 1), at(i0[0] + 1, i0[1] + 1, i0[2] + 1), d[0])
+        return lerp(lerp(c00, c10, d[1]), lerp(c01, c11, d[1]), d[2])
+    }
+}
+
+func model(_ c: RGB, _ p: [Double]) -> RGB {
+    var c = add(c, (p[0], p[1], p[2]))
+    c = map(c) { pow(clamp($0), p[3]) }
+    c = hueBand(c, center: 28, width: 22, shift: p[4], sat: p[5])
+    c = hueBand(c, center: 110, width: 60, shift: p[6], sat: p[7])
+    c = hueBand(c, center: 210, width: 45, shift: p[8], sat: p[9])
+    c = split(c, shadows: (p[10], p[11], p[12]), highlights: (p[13], p[14], p[15]))
+    c = contrast(c, p[16])
+    c = saturate(c, p[17])
+    return hueBand(c, center: 356, width: 20, shift: 0, sat: p[18], value: p[19])
+}
+
+let fitted: [Double] = [0.1260, 0.0872, 0.1130, 0.9273, 4.3723, 1.1754, -6.7912, 0.8993, -3.0058, 1.0943, -0.2338, -0.1982, -0.2908, -0.1016, -0.0275, -0.0710, 0.1846, 0.8248, 1.0324, 1.0304]
+func filmPrint(_ c: RGB) -> RGB { fade(model(c, fitted), 0.035) }
+
 let only = ProcessInfo.processInfo.environment["ONLY"] != nil
-let run: [(String, (RGB) -> RGB)] = only ? [("Original", { $0 }), ("Teal and orange", tealOrange), ("Cinematic", cinematic)] : looks
+let cubePath = ProcessInfo.processInfo.environment["CUBE"]
+let run: [(String, (RGB) -> RGB)] = cubePath.map { [("Original", { $0 }), ("Kodak 2383", cubeLook($0)), ("Matched", { model($0, fitted) }), ("Film print", filmPrint)] }
+    ?? (only ? [("Original", { $0 }), ("Teal and orange", tealOrange), ("Cinematic", cinematic)] : looks)
 let src = URL(fileURLWithPath: CommandLine.arguments[1]), out = URL(fileURLWithPath: CommandLine.arguments[2])
 try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
 let sRGB = CGColorSpace(name: CGColorSpace.sRGB)!

@@ -87,6 +87,7 @@ enum BuiltInLook {
     static let all: [(name: String, recipe: GradeRecipe)] = [
         ("Warm film", GradeRecipe(contrast: 8, saturation: -8, temperature: 18, lift: (0.02, 0, -0.02), fade: 0.03)),
         ("Golden hour", GradeRecipe(custom: LookMath.goldenHour)),
+        ("Film print", GradeRecipe(custom: LookMath.filmPrint)),
         ("Teal and orange", GradeRecipe(contrast: 12, saturation: 10, shadows: (-0.05, 0.01, 0.05), highlights: (0.06, 0.01, -0.05))),
         ("Pastel", GradeRecipe(custom: LookMath.pastel)),
         ("Bleach bypass", GradeRecipe(custom: LookMath.bleachBypass)),
@@ -126,6 +127,68 @@ enum LookMath {
         let l = clamp(luma(c))
         return add(add(c, shadows, (1 - l) * (1 - l)), highlights, l * l)
     }
+
+    private static func toHSV(_ c: RGB) -> (h: Double, s: Double, v: Double) {
+        let mx = max(c.0, c.1, c.2), mn = min(c.0, c.1, c.2), d = mx - mn
+        var h = 0.0
+        if d > 1e-6 {
+            if mx == c.0 { h = 60 * ((c.1 - c.2) / d).truncatingRemainder(dividingBy: 6) }
+            else if mx == c.1 { h = 60 * ((c.2 - c.0) / d + 2) }
+            else { h = 60 * ((c.0 - c.1) / d + 4) }
+        }
+        if h < 0 { h += 360 }
+        return (h, mx > 0 ? d / mx : 0, mx)
+    }
+
+    private static func fromHSV(_ h: Double, _ s: Double, _ v: Double) -> RGB {
+        let c = v * s, x = c * (1 - abs((h / 60).truncatingRemainder(dividingBy: 2) - 1)), m = v - c
+        switch h {
+        case ..<60: return (c + m, x + m, m)
+        case ..<120: return (x + m, c + m, m)
+        case ..<180: return (m, c + m, x + m)
+        case ..<240: return (m, x + m, c + m)
+        case ..<300: return (x + m, m, c + m)
+        default: return (c + m, m, x + m)
+        }
+    }
+
+    /// Shifts the hue and scales the saturation (and brightness) of colours near `center`, fading
+    /// out over `width` degrees and leaving greys and near-whites alone.
+    private static func hueBand(_ c: RGB, center: Double, width: Double, shift: Double, sat: Double, value: Double = 1) -> RGB {
+        var (h, s, v) = toHSV(c)
+        var d = abs(h - center)
+        if d > 180 { d = 360 - d }
+        guard d < width else { return c }
+        let w = (0.5 + 0.5 * cos(d / width * .pi)) * min(1, s * 2.5)
+        h = (h + shift * w + 360).truncatingRemainder(dividingBy: 360)
+        s = clamp(s * (1 + (sat - 1) * w))
+        v = clamp(v * (1 + (value - 1) * w))
+        return fromHSV(h, s, v)
+    }
+
+    /// The warm film-print look, inspired by Kodak 2383 print film: golden skin, dense rich reds,
+    /// teal-leaning shadows, filmic contrast, and a touch of fade for soft blacks. Our own maths,
+    /// with its settings tuned until it behaves like that print film on test footage.
+    static func filmPrint(_ c: RGB) -> RGB {
+        let p = filmPrintSettings
+        var c = add(each(c, clamp), (p[0], p[1], p[2]))
+        c = each(c) { pow(clamp($0), p[3]) }
+        c = hueBand(c, center: 28, width: 22, shift: p[4], sat: p[5])
+        c = hueBand(c, center: 110, width: 60, shift: p[6], sat: p[7])
+        c = hueBand(c, center: 210, width: 45, shift: p[8], sat: p[9])
+        c = split(c, shadows: (p[10], p[11], p[12]), highlights: (p[13], p[14], p[15]))
+        c = contrast(c, p[16])
+        c = saturate(c, p[17])
+        c = hueBand(c, center: 356, width: 20, shift: 0, sat: p[18], value: p[19])
+        return fade(c, 0.035)
+    }
+
+    /// Warmth (r, g, b), gamma, skin hue/saturation, green hue/saturation, blue hue/saturation,
+    /// shadow tint (r, g, b), highlight tint (r, g, b), contrast, saturation, red saturation and brightness.
+    private static let filmPrintSettings: [Double] = [
+        0.1260, 0.0872, 0.1130, 0.9273, 4.3723, 1.1754, -6.7912, 0.8993, -3.0058, 1.0943,
+        -0.2338, -0.1982, -0.2908, -0.1016, -0.0275, -0.0710, 0.1846, 0.8248, 1.0324, 1.0304,
+    ]
 
     /// Amber highlights, slightly cool shadows: late-afternoon light.
     static func goldenHour(_ c: RGB) -> RGB {

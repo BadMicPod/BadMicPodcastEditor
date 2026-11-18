@@ -655,6 +655,24 @@ enum SelfTest {
             log("STICKY EDGE \(good ? "OK" : "FAIL")")
             ok = ok && good
         }
+        // Film print: the app's Look gives the same colours as the mock it was approved from.
+        do {
+            let cases: [((Double, Double, Double), (Double, Double, Double))] = [
+                ((0.80, 0.55, 0.42), (0.8603, 0.6593, 0.5182)),
+                ((0.70, 0.10, 0.12), (0.6969, 0.1364, 0.1386)),
+                ((0.20, 0.50, 0.25), (0.3269, 0.5724, 0.3360)),
+                ((0.50, 0.50, 0.50), (0.6021, 0.5987, 0.5938)),
+                ((0.10, 0.12, 0.20), (0.1167, 0.1203, 0.1584)),
+                ((0.95, 0.93, 0.90), (0.9350, 0.9800, 0.9546)),
+            ]
+            let worst = cases.map { input, want in
+                let got = LookMath.filmPrint(input)
+                return max(abs(got.0 - want.0), abs(got.1 - want.1), abs(got.2 - want.2))
+            }.max() ?? 1
+            let good = worst < 0.002 && BuiltInLook.named("Film print") != nil
+            log("FILM PRINT \(good ? "OK" : "FAIL") worst=\(String(format: "%.4f", worst))")
+            ok = ok && good
+        }
         // Copy and paste grade: the whole grade goes onto every selected visual clip (not sound), and
         // one undo puts them all back.
         do {
