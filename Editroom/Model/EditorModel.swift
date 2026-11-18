@@ -157,6 +157,11 @@ final class EditorModel: ObservableObject {
                     try? await Task.sleep(nanoseconds: 1_500_000_000)
                     self.seek(to: t)
                 }
+                if let j = args.firstIndex(of: "--rows"), args.count > j + 1, let r = Double(args[j + 1]) {
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    self.setView(rowHeight: CGFloat(r))
+                    self.centerRows()
+                }
                 if args.contains("--select-first"), let first = self.project.clips.first {
                     self.selection = self.project.linked([first.id])
                 }

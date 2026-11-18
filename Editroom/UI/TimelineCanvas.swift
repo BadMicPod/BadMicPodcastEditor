@@ -1037,6 +1037,14 @@ final class TimelineCanvas: NSView {
     private static let labelAttrs: [NSAttributedString.Key: Any] = [
         .font: NSFont.systemFont(ofSize: 10.5, weight: .semibold),
         .foregroundColor: NSColor(white: 1, alpha: 0.95),
+        // Keeps names readable where the waveform runs up behind them.
+        .shadow: {
+            let s = NSShadow()
+            s.shadowColor = NSColor(white: 0, alpha: 0.8)
+            s.shadowBlurRadius = 2.5
+            s.shadowOffset = NSSize(width: 0, height: -0.5)
+            return s
+        }(),
     ]
     private static let rulerAttrs: [NSAttributedString.Key: Any] = [
         .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular),
@@ -1569,15 +1577,15 @@ final class TimelineCanvas: NSView {
         ctx.restoreGState()
     }
 
-    /// The sound as one smooth filled shape of average loudness, mirrored around the middle. It
-    /// shows beats and sections of dense music better than the very top of each peak, and silence
-    /// drops to a thin line, so pauses are easy to find and cut on. Samples sit on a grid tied to
-    /// the source, so the shape doesn't shimmer while scrolling or trimming.
+    /// The sound as one smooth filled shape of average loudness, growing up from the bottom of the
+    /// clip, so taller is louder. It uses the clip's whole height, running up behind the name, so it
+    /// still shows on the smallest rows. Silence drops to a thin line, so pauses are easy to find and
+    /// cut on. Samples sit on a grid tied to the source, so the shape doesn't shimmer while scrolling.
     private func drawWaveform(_ c: Clip, in r: CGRect, visible: CGRect, ctx: CGContext) {
         guard let wf = model.media.waveform(c), visible.width > 0, !wf.peaks.isEmpty else { return }
-        let top = r.minY + 20, bottom = r.maxY - 3
-        guard bottom - top > 6 else { return }
-        let mid = (top + bottom) / 2, half = (bottom - top) / 2
+        let top = r.minY + 2, base = r.maxY - 1
+        guard base - top > 4 else { return }
+        let room = base - top
         let gain = dbToLinear(c.gainDB)
         // Average loudness sits well under the peaks, so it's lifted to fill the lane, with headroom.
         let lift = 2.0, headroom: CGFloat = 0.92
@@ -1618,13 +1626,13 @@ final class TimelineCanvas: NSView {
             let v = (raw[j - 2] + raw[j - 1] + raw[j] + raw[j + 1] + raw[j + 2]) / 5
             let x = min(max(origin + CGFloat(k0 + j) * step, visible.minX), visible.maxX)
             xs.append(x)
-            hs.append(max(0.5, CGFloat(min(1, v * lift * gain)) * half * headroom))
+            hs.append(max(0.75, CGFloat(min(1, v * lift * gain)) * room * headroom))
         }
         guard xs.count > 1 else { return }
         let path = CGMutablePath()
-        path.move(to: CGPoint(x: xs[0], y: mid - hs[0]))
-        for i in 1..<xs.count { path.addLine(to: CGPoint(x: xs[i], y: mid - hs[i])) }
-        for i in stride(from: xs.count - 1, through: 0, by: -1) { path.addLine(to: CGPoint(x: xs[i], y: mid + hs[i])) }
+        path.move(to: CGPoint(x: xs[0], y: base))
+        for i in 0..<xs.count { path.addLine(to: CGPoint(x: xs[i], y: base - hs[i])) }
+        path.addLine(to: CGPoint(x: xs[xs.count - 1], y: base))
         path.closeSubpath()
         ctx.addPath(path)
         ctx.setFillColor(NSColor(srgbRed: 0.80, green: 0.80, blue: 0.78, alpha: 0.7).cgColor)
