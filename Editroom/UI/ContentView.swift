@@ -6,6 +6,8 @@ struct ContentView: View {
     @State private var libraryWidth: CGFloat = 252
     @State private var timelineHeight: CGFloat = 360
     @State private var dropTargeted = false
+    @AppStorage("magicEnabled") private var magicEnabled = true
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         GeometryReader { geo in
@@ -80,14 +82,16 @@ struct ContentView: View {
                 ExportProgressPill(queue: model.exports)
             }
             .withoutGlass()
-            ToolbarItem(placement: .primaryAction) {
-                MagicButton(model: model)
-                    .padding(.trailing, 8)
+            if magicEnabled {
+                ToolbarItem(placement: .primaryAction) {
+                    MagicButton(model: model)
+                        .padding(.trailing, 8)
+                }
+                .withoutGlass()
             }
-            .withoutGlass()
             ToolbarItem(placement: .primaryAction) {
                 PillButton(title: "Export", prominent: true) { model.showExport = true }
-                    .help("Export (⌘E)")
+                    .help("Export (\(ShortcutStore.shared.combos(.export).first?.display ?? "⌘E"))")
                     .padding(.trailing, 10)
             }
             .withoutGlass()
@@ -95,8 +99,13 @@ struct ContentView: View {
         .sheet(isPresented: $model.showExport) {
             ExportSheet(model: model)
         }
-        .sheet(isPresented: $model.showAgents) {
-            AgentsSheet(model: model)
+        // "Manage AI Agents" (and `--show-agents`): Settings, on its Magic tab.
+        .onChange(of: model.showAgents) { _, show in
+            guard show else { return }
+            // (`--settings-shortcuts`, testing: the Shortcuts tab instead.)
+            UserDefaults.standard.set(CommandLine.arguments.contains("--settings-shortcuts") ? "shortcuts" : "magic", forKey: "settingsTab")
+            openSettings()
+            model.showAgents = false
         }
         .alert("Import", isPresented: Binding(get: { model.importError != nil }, set: { if !$0 { model.importError = nil } })) {
             Button("OK", role: .cancel) {}
@@ -133,57 +142,82 @@ enum KeyCommands {
 
     private static func handle(_ e: NSEvent, _ model: EditorModel) -> Bool {
         guard let window = NSApp.keyWindow else { return false }
+        let keys = ShortcutStore.shared
+        // Settings is recording a shortcut: the key is for it.
+        if keys.recording != nil { return false }
         // While the magic show runs, keys are handled by the show (any key skips to the end).
         if MagicShow.isRunning { return false }
-        let flags = e.modifierFlags.intersection([.command, .option, .control])
+        let combo = KeyCombo(event: e)
         if let responder = window.firstResponder, responder is NSText {
-            // Typing S, R or K goes into the text. Those keys are also View menu shortcuts, and macOS
-            // checks the menu before the text field sees a key, so hand it straight to the window.
-            if flags.isEmpty, let key = e.charactersIgnoringModifiers?.lowercased(), ["s", "r", "k"].contains(key) {
+            // Plain keys that are also menu shortcuts (S, R, K, ⌫…) would be taken by the menu before the
+            // text field sees them, so hand them straight to the window to be typed.
+            if let combo, keys.isTypedMenuKey(combo) {
                 window.sendEvent(e)
                 return true
             }
             return false
         }
-        // Only the main editor window gets bare-key shortcuts; sheets and panels keep Return/Esc for themselves.
-        guard window.attachedSheet == nil, window.sheetParent == nil, !(window is NSPanel), flags.isEmpty else { return false }
-        let shift = e.modifierFlags.contains(.shift)
+        // Only the editor window gets these; sheets, panels and Settings keep their keys.
+        guard TimelineCanvas.current?.window === window, window.attachedSheet == nil, window.sheetParent == nil,
+              !(window is NSPanel) else { return false }
 
-        switch e.keyCode {
-        case 49: model.togglePlay()
-        case 51, 117: model.deleteSelection(ripple: shift)
-        // Arrows step a frame; with ⇧ they jump to the previous or next clip start or end (or marker).
-        case 123: shift ? model.jumpToEdit(forward: false) : model.step(frames: -1)
-        case 124: shift ? model.jumpToEdit(forward: true) : model.step(frames: 1)
-        case 126: model.jumpToEdit(forward: false)
-        case 125: model.jumpToEdit(forward: true)
-        case 115: model.seek(to: 0)
-        case 119: model.seek(to: model.project.duration)
-        case 53:
+        if e.keyCode == 53, e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty {
             if model.viewerOnly { model.toggleViewerFullScreen(); return true }
             model.selection = []
             model.tool = .move
-        default:
-            switch e.charactersIgnoringModifiers?.lowercased() {
-            case "v", "a": model.tool = .move
-            case "c": model.tool = .cut
-            case "s" where shift: model.audioScrub.toggle()
-            case "s": model.snapping.toggle()
-            case "m": model.addMarker()
-            case "i": model.setInPoint()
-            case "o": model.setOutPoint()
-            case "x" where shift: model.clearRange()
-            case "l": model.loop.toggle()
-            case "f": model.toggleViewerFullScreen()
-            case "r": model.sticky.toggle()
-            case "k": model.skimming.toggle()
-            case "z" where shift, "\\": model.zoomToFit()
-            case "=", "+": model.zoom(by: 1.4)
-            case "-": model.zoom(by: 1 / 1.4)
-            default: return false
-            }
+            return true
         }
+        guard let combo, let action = keys.action(for: combo) else { return false }
+        // ⌘ shortcuts of menu items go to the menu, so it flashes.
+        if action.inMenu, combo.command { return false }
+        perform(action, model)
         return true
+    }
+
+    static func perform(_ a: ShortcutAction, _ model: EditorModel) {
+        switch a {
+        case .new: model.newProject()
+        case .open: model.openProject()
+        case .save: model.save()
+        case .saveAs: model.saveAs()
+        case .importMedia: model.showImportPanel()
+        case .export: model.showExport = true
+        case .undo: model.undo()
+        case .redo: model.redo()
+        case .playPause: model.togglePlay()
+        case .stepBack: model.step(frames: -1)
+        case .stepForward: model.step(frames: 1)
+        case .previousEdit: model.jumpToEdit(forward: false)
+        case .nextEdit: model.jumpToEdit(forward: true)
+        case .goToStart: model.seek(to: 0)
+        case .goToEnd: model.seek(to: model.project.duration)
+        case .loop: model.loop.toggle()
+        case .fullScreenViewer: model.toggleViewerFullScreen()
+        case .selectTool: model.tool = .move
+        case .cutTool: model.tool = .cut
+        case .split: model.splitAtPlayhead()
+        case .addDissolve: model.addTransitionAtPlayhead()
+        case .detachAudio: model.detachAudio()
+        case .duplicate: model.duplicateSelection()
+        case .freezeFrame: model.freezeFrame()
+        case .reverse: model.reverseSelection()
+        case .copyGrade: model.copyGrade()
+        case .pasteGrade: model.pasteGrade()
+        case .delete: model.deleteSelection()
+        case .rippleDelete: model.deleteSelection(ripple: true)
+        case .addText: model.addAtPlayhead(.text)
+        case .addMarker: model.addMarker()
+        case .setIn: model.setInPoint()
+        case .setOut: model.setOutPoint()
+        case .clearInOut: model.clearRange()
+        case .zoomIn: model.zoom(by: 1.4)
+        case .zoomOut: model.zoom(by: 1 / 1.4)
+        case .zoomToFit: model.zoomToFit()
+        case .snapping: model.snapping.toggle()
+        case .sticky: model.sticky.toggle()
+        case .skimming: model.skimming.toggle()
+        case .audioScrubbing: model.audioScrub.toggle()
+        }
     }
 }
 

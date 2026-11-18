@@ -112,6 +112,7 @@ enum MenuCleanup {
 struct EditroomApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = EditorModel()
+    @StateObject private var keys = ShortcutStore.shared
 
     init() {
         // `--mcp`: a go-between for an AI agent, with no window. Never returns.
@@ -149,12 +150,9 @@ struct EditroomApp: App {
         .defaultSize(width: 1480, height: 940)
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
-            CommandGroup(after: .appInfo) {
-                Button("AI Agents…") { model.showAgents = true }
-            }
             CommandGroup(replacing: .newItem) {
-                Button("New") { model.newProject() }.keyboardShortcut("n")
-                Button("Open…") { model.openProject() }.keyboardShortcut("o")
+                Button("New") { model.newProject() }.keyboardShortcut(keys.menu(.new))
+                Button("Open…") { model.openProject() }.keyboardShortcut(keys.menu(.open))
                 Menu("Open Recent") {
                     ForEach(model.recentProjects, id: \.self) { url in
                         Button(url.deletingPathExtension().lastPathComponent) { model.openRecent(url) }
@@ -164,71 +162,74 @@ struct EditroomApp: App {
                         .disabled(model.recentProjects.isEmpty)
                 }
                 Divider()
-                Button("Save") { model.save() }.keyboardShortcut("s")
-                Button("Save As…") { model.saveAs() }.keyboardShortcut("s", modifiers: [.command, .shift])
+                Button("Save") { model.save() }.keyboardShortcut(keys.menu(.save))
+                Button("Save As…") { model.saveAs() }.keyboardShortcut(keys.menu(.saveAs))
                 Divider()
-                Button("Import Media…") { model.showImportPanel() }.keyboardShortcut("i")
-                Button("Export…") { model.showExport = true }.keyboardShortcut("e")
+                Button("Import Media…") { model.showImportPanel() }.keyboardShortcut(keys.menu(.importMedia))
+                Button("Export…") { model.showExport = true }.keyboardShortcut(keys.menu(.export))
             }
             CommandGroup(replacing: .undoRedo) {
-                Button("Undo") { model.undo() }.keyboardShortcut("z")
-                Button("Redo") { model.redo() }.keyboardShortcut("z", modifiers: [.command, .shift])
+                Button("Undo") { model.undo() }.keyboardShortcut(keys.menu(.undo))
+                Button("Redo") { model.redo() }.keyboardShortcut(keys.menu(.redo))
             }
             CommandMenu("Clip") {
-                Button("Split at Playhead") { model.splitAtPlayhead() }.keyboardShortcut("k")
-                Button("Add Dissolve") { model.addTransitionAtPlayhead() }.keyboardShortcut("d")
+                Button("Split at Playhead") { model.splitAtPlayhead() }.keyboardShortcut(keys.menu(.split))
+                Button("Add Dissolve") { model.addTransitionAtPlayhead() }.keyboardShortcut(keys.menu(.addDissolve))
                 Button("Even Out Audio Levels") { model.evenOutLevels() }
-                Button("Detach Audio") { model.detachAudio() }.keyboardShortcut("l", modifiers: [.command, .shift])
-                Button("Duplicate") { model.duplicateSelection() }.keyboardShortcut("d", modifiers: [.command, .shift])
-                Button("Freeze Frame") { model.freezeFrame() }.keyboardShortcut("f", modifiers: [.option])
-                Button("Reverse") { model.reverseSelection() }.keyboardShortcut("r", modifiers: [.option])
+                Button("Detach Audio") { model.detachAudio() }.keyboardShortcut(keys.menu(.detachAudio))
+                Button("Duplicate") { model.duplicateSelection() }.keyboardShortcut(keys.menu(.duplicate))
+                Button("Freeze Frame") { model.freezeFrame() }.keyboardShortcut(keys.menu(.freezeFrame))
+                Button("Reverse") { model.reverseSelection() }.keyboardShortcut(keys.menu(.reverse))
                 Divider()
                 Button("Copy Grade") { model.copyGrade() }
-                    .keyboardShortcut("c", modifiers: [.command, .option])
+                    .keyboardShortcut(keys.menu(.copyGrade))
                     .disabled(!model.canCopyGrade)
                 Button("Paste Grade") { model.pasteGrade() }
-                    .keyboardShortcut("v", modifiers: [.command, .option])
+                    .keyboardShortcut(keys.menu(.pasteGrade))
                     .disabled(!model.canPasteGrade)
                 Divider()
                 Button("Match Sequence to Clip") { if let a = model.matchableAsset { model.matchSequence(to: a) } }
                     .disabled(model.matchableAsset.map { model.sequenceMatches($0) } ?? true)
                 Divider()
-                Button("Delete") { model.deleteSelection() }
-                Button("Ripple Delete") { model.deleteSelection(ripple: true) }
+                Button("Delete") { model.deleteSelection() }.keyboardShortcut(keys.menu(.delete))
+                Button("Ripple Delete") { model.deleteSelection(ripple: true) }.keyboardShortcut(keys.menu(.rippleDelete))
                 Button("Close All Gaps") { model.closeAllGaps() }
                 Divider()
-                Button("Add Text") { model.addAtPlayhead(.text) }.keyboardShortcut("t")
+                Button("Add Text") { model.addAtPlayhead(.text) }.keyboardShortcut(keys.menu(.addText))
                 Button("Add Solid") { model.addAtPlayhead(.solid) }
                 Divider()
                 Button("Add Video Track") { model.addTrack(.video) }
                 Button("Add Audio Track") { model.addTrack(.audio) }
             }
-            // Bare-key shortcuts (M, I, O, ⇧X) are handled by the editor window, so typing in a
-            // text field isn't affected; the menu lists them for finding.
+            // Plain-key shortcuts (M, I, O, ⇧X) are run by the editor window first (KeyCommands), and
+            // typed as text in a text field.
             CommandMenu("Mark") {
-                Button("Add Marker   M") { model.addMarker() }
+                Button("Add Marker") { model.addMarker() }.keyboardShortcut(keys.menu(.addMarker))
                 Button("Clear All Markers") { model.clearMarkers() }
                     .disabled((model.project.markers ?? []).isEmpty)
                 Divider()
-                Button("Set In   I") { model.setInPoint() }
-                Button("Set Out   O") { model.setOutPoint() }
-                Button("Clear In and Out   ⇧X") { model.clearRange() }
+                Button("Set In") { model.setInPoint() }.keyboardShortcut(keys.menu(.setIn))
+                Button("Set Out") { model.setOutPoint() }.keyboardShortcut(keys.menu(.setOut))
+                Button("Clear In and Out") { model.clearRange() }.keyboardShortcut(keys.menu(.clearInOut))
                     .disabled(model.project.inPoint == nil && model.project.outPoint == nil)
             }
             CommandGroup(after: .toolbar) {
-                Button("Zoom In") { model.zoom(by: 1.4) }.keyboardShortcut("=")
-                Button("Zoom Out") { model.zoom(by: 1 / 1.4) }.keyboardShortcut("-")
-                Button("Zoom to Fit") { model.zoomToFit() }.keyboardShortcut("0")
+                Button("Zoom In") { model.zoom(by: 1.4) }.keyboardShortcut(keys.menu(.zoomIn))
+                Button("Zoom Out") { model.zoom(by: 1 / 1.4) }.keyboardShortcut(keys.menu(.zoomOut))
+                Button("Zoom to Fit") { model.zoomToFit() }.keyboardShortcut(keys.menu(.zoomToFit))
                 Divider()
                 // The timeline toolbar's toggles, in the same order, ticked when on. Typing in a text
                 // field keeps these single keys (see KeyCommands); macOS puts Enter Full Screen after
                 // them, and MenuCleanup keeps a line above it.
                 Toggle("Filmstrips", isOn: $model.thumbnails)
-                Toggle("Snapping", isOn: $model.snapping).keyboardShortcut("s", modifiers: [])
-                Toggle("Sticky Edges", isOn: $model.sticky).keyboardShortcut("r", modifiers: [])
-                Toggle("Skimming", isOn: $model.skimming).keyboardShortcut("k", modifiers: [])
-                Toggle("Audio Scrubbing", isOn: $model.audioScrub).keyboardShortcut("s", modifiers: .shift)
+                Toggle("Snapping", isOn: $model.snapping).keyboardShortcut(keys.menu(.snapping))
+                Toggle("Sticky Edges", isOn: $model.sticky).keyboardShortcut(keys.menu(.sticky))
+                Toggle("Skimming", isOn: $model.skimming).keyboardShortcut(keys.menu(.skimming))
+                Toggle("Audio Scrubbing", isOn: $model.audioScrub).keyboardShortcut(keys.menu(.audioScrubbing))
             }
+        }
+        Settings {
+            SettingsView(model: model)
         }
     }
 }

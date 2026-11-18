@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import AVFoundation
 
@@ -1036,6 +1037,41 @@ enum SelfTest {
                 detail = error.localizedDescription
             }
             log("AGENT CONNECT \(good ? "OK" : "FAIL") \(detail)")
+            ok = ok && good
+        }
+        // Shortcuts: key presses find their action; changing one takes it from whatever had it; resetting
+        // brings the defaults back. The person's own shortcuts are put back afterwards.
+        do {
+            let saved = UserDefaults.standard.data(forKey: "shortcuts")
+            defer {
+                if let saved { UserDefaults.standard.set(saved, forKey: "shortcuts") } else { UserDefaults.standard.removeObject(forKey: "shortcuts") }
+            }
+            UserDefaults.standard.removeObject(forKey: "shortcuts")
+            let keys = ShortcutStore()
+            func press(_ chars: String, code: UInt16, _ flags: NSEvent.ModifierFlags = []) -> KeyCombo? {
+                NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0, context: nil,
+                                 characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code).flatMap(KeyCombo.init(event:))
+            }
+            let space = press(" ", code: 49).flatMap(keys.action(for:))
+            let scrub = press("S", code: 1, .shift).flatMap(keys.action(for:))
+            let save = press("s", code: 1, .command).flatMap(keys.action(for:))
+            let ripple = press("\u{7f}", code: 51, .shift).flatMap(keys.action(for:))
+            let findOK = space == .playPause && scrub == .audioScrubbing && save == .save && ripple == .rippleDelete
+            // P for Snapping; then S (Snapping's old key) for Loop, which has to take it from nobody.
+            keys.set(.snapping, to: KeyCombo("p"))
+            let taken = keys.set(.loop, to: KeyCombo("s"))
+            let moved = keys.action(for: KeyCombo("p")) == .snapping && keys.action(for: KeyCombo("s")) == .loop && taken == nil
+            // ⇧S for Loop takes it from Audio Scrubbing.
+            let stolen = keys.set(.loop, to: KeyCombo("s", shift: true))
+            let stealOK = stolen == .audioScrubbing && keys.combos(.audioScrubbing).isEmpty
+            let reloaded = ShortcutStore()
+            let persisted = reloaded.combos(.snapping) == [KeyCombo("p")]
+            reloaded.resetAll()
+            let resetOK = ShortcutStore().combos(.snapping) == ShortcutAction.snapping.defaults
+            // Menus never get plain Delete (it would delete clips from Settings or a sheet).
+            let menuOK = reloaded.menu(.delete) == nil && reloaded.menu(.save) != nil
+            let good = findOK && moved && stealOK && persisted && resetOK && menuOK
+            log("SHORTCUTS \(good ? "OK" : "FAIL") find=\(findOK) move=\(moved) steal=\(stealOK) saved=\(persisted) reset=\(resetOK) menu=\(menuOK)")
             ok = ok && good
         }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")

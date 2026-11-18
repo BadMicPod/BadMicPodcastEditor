@@ -78,7 +78,7 @@ final class AgentConnect: ObservableObject {
     private func status(of app: AgentApp) -> State {
         switch app {
         case .claude:
-            if claudeExtensionInstalled { return .connected }
+            if claudeExtensionInstalled, !claudeAppOff { return .connected }
             if case .waiting = states[app] { return .waiting }
             return Self.appURL(Self.claudeBundleID) == nil ? .missing : .ready
         case .chatgpt:
@@ -96,6 +96,13 @@ final class AgentConnect: ObservableObject {
         NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
     }
 
+    /// Disconnected in Editroom: the Claude app's extension may still be installed, but Editroom
+    /// won't answer it (or use Claude for Magic through it) until it's connected again.
+    var claudeAppOff: Bool {
+        get { UserDefaults.standard.bool(forKey: "claudeAppDisconnected") }
+        set { UserDefaults.standard.set(newValue, forKey: "claudeAppDisconnected") }
+    }
+
     // MARK: Connect
 
     func connect(_ app: AgentApp) {
@@ -103,7 +110,10 @@ final class AgentConnect: ObservableObject {
         Task {
             do {
                 switch app {
-                case .claude: try connectClaude()
+                case .claude:
+                    claudeAppOff = false
+                    // Installed already (and only turned off here): nothing more to do.
+                    if !claudeExtensionInstalled { try connectClaude() }
                 case .chatgpt: try connectCodex()
                 case .claudeCode: try await runClaudeCLI(["mcp", "add", "--scope", "user", "--transport", "http", "editroom", MCPServer.endpoint])
                 }
@@ -125,10 +135,8 @@ final class AgentConnect: ObservableObject {
             do {
                 switch app {
                 case .claude:
-                    // Claude manages its own extensions: show where to remove it.
-                    if let claude = Self.appURL(Self.claudeBundleID) {
-                        NSWorkspace.shared.openApplication(at: claude, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
-                    }
+                    // Claude keeps its own list of extensions; Editroom stops answering this one.
+                    claudeAppOff = true
                 case .chatgpt: try disconnectCodex()
                 case .claudeCode: try await runClaudeCLI(["mcp", "remove", "--scope", "user", "editroom"])
                 }
@@ -179,7 +187,8 @@ final class AgentConnect: ObservableObject {
     }
 
     /// A small script that starts Editroom's connection program, finding Editroom even if it has moved.
-    static func launcherScript() -> String {
+    /// `from` tells Editroom which app is calling (so a disconnected one can be turned away).
+    static func launcherScript(from: String = "") -> String {
         let binary = Bundle.main.executableURL?.path ?? "/Applications/Editroom.app/Contents/MacOS/Editroom"
         return """
         #!/bin/sh
@@ -190,7 +199,7 @@ final class AgentConnect: ObservableObject {
           [ -n "$found" ] && app="$found/Contents/MacOS/Editroom"
         fi
         [ -x "$app" ] || app="/Applications/Editroom.app/Contents/MacOS/Editroom"
-        exec "$app" --mcp
+        exec "$app" --mcp\(from.isEmpty ? "" : " --from \(from)")
 
         """
     }
@@ -200,10 +209,10 @@ final class AgentConnect: ObservableObject {
     }
 
     /// Writes the launcher (refreshed every time, in case Editroom moved) and returns its path.
-    private func writeLauncher(in folder: URL) throws -> URL {
+    private func writeLauncher(in folder: URL, from: String = "") throws -> URL {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let url = folder.appendingPathComponent("editroom-mcp")
-        try Self.launcherScript().write(to: url, atomically: true, encoding: .utf8)
+        try Self.launcherScript(from: from).write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
         return url
     }
@@ -236,7 +245,7 @@ final class AgentConnect: ObservableObject {
         let stage = supportFolder.appendingPathComponent("claude-extension", isDirectory: true)
         try? fm.removeItem(at: stage)
         try fm.createDirectory(at: stage.appendingPathComponent("server"), withIntermediateDirectories: true)
-        _ = try writeLauncher(in: stage.appendingPathComponent("server"))
+        _ = try writeLauncher(in: stage.appendingPathComponent("server"), from: "claude-app")
 
         if let tiff = NSApp?.applicationIconImage?.tiffRepresentation(using: .none, factor: 1),
            let rep = NSBitmapImageRep(data: tiff),
@@ -342,7 +351,7 @@ final class AgentConnect: ObservableObject {
     func connectCodex() throws {
         let fm = FileManager.default
         try fm.createDirectory(at: codexHome, withIntermediateDirectories: true)
-        let launcher = try writeLauncher(in: supportFolder)
+        let launcher = try writeLauncher(in: supportFolder, from: "codex")
         let existing = (try? String(contentsOf: codexConfig, encoding: .utf8)) ?? ""
         if !existing.isEmpty {
             // A copy of their settings as they were, just in case.

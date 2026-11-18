@@ -150,6 +150,12 @@ final class MCPServer: ObservableObject {
             let err = Self.error(nil, -32700, "Parse error")
             return send("400 Bad Request", (try? JSONSerialization.data(withJSONObject: err)) ?? Data(), headers: ["Content-Type": "application/json"])
         }
+        // The Claude app, disconnected in Editroom's Settings: say so instead of working.
+        if req.headers["x-editroom-from"] == "claude-app", AgentConnect.shared.claudeAppOff {
+            guard json["id"] != nil else { return send("202 Accepted") }
+            let err = Self.error(json["id"], -32001, "Editroom is disconnected from Claude. To use it again, connect Claude in Editroom > Settings > Magic.")
+            return send("200 OK", (try? JSONSerialization.data(withJSONObject: err)) ?? Data(), headers: ["Content-Type": "application/json"])
+        }
         var session = req.headers["mcp-session-id"]
         let method = json["method"] as? String ?? ""
         if method == "initialize" {

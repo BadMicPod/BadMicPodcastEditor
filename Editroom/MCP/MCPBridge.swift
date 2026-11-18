@@ -11,6 +11,9 @@ enum MCPBridge {
         let endpoint = URL(string: MCPServer.endpoint)!
         var session: String?
         var launched = false
+        // Which app started this (from its launcher), so Editroom can turn away a disconnected one.
+        let args = CommandLine.arguments
+        let from = args.firstIndex(of: "--from").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
 
         func post(_ line: Data) -> (Data?, Int) {
             var req = URLRequest(url: endpoint)
@@ -20,6 +23,7 @@ enum MCPBridge {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
             if let session { req.setValue(session, forHTTPHeaderField: "Mcp-Session-Id") }
+            if let from { req.setValue(from, forHTTPHeaderField: "X-Editroom-From") }
             let done = DispatchSemaphore(value: 0)
             var body: Data?, status = 0
             URLSession.shared.dataTask(with: req) { data, response, _ in
