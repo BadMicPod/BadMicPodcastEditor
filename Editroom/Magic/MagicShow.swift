@@ -143,7 +143,20 @@ final class MagicShow: NSObject {
 
     static let outro = 0.34
     static let homeTrip = 0.42
-    static let card = CGSize(width: 178, height: 106)
+    static let cardHeight: CGFloat = 96
+    static let cardGap: CGFloat = 6
+    /// Grade panels sit in the inspector, stacked; this many fit at once.
+    private var cardSlots = 4
+    private var cardSize = CGSize(width: 290, height: 106)
+    private var trackWidth: CGFloat { cardSize.width - Self.trackX - 46 }
+    private static let trackX: CGFloat = 84
+    private let backdrop = CALayer()
+    private let backdropTitle = CATextLayer()
+    private let backdropCount = CATextLayer()
+    private var backdropSpan = (0.0, 0.0)
+    /// The show runs slower than it's planned, so it lasts about this long.
+    static let targetLength = 5.0
+    private var pace = 1.0
 
     private init(model: EditorModel, plan: MagicPlan, window: NSWindow, canvas: TimelineCanvas, fromMouse: Bool) {
         self.model = model
@@ -205,6 +218,15 @@ final class MagicShow: NSObject {
         finalProject = plan.base
         for t in tasks { t.edit.apply(&finalProject, 1) }
 
+        let insp = inspectorRect
+        cardSize = CGSize(width: insp.width - 24, height: Self.cardHeight)
+        cardSlots = max(2, Int((insp.height - 60) / (Self.cardHeight + Self.cardGap)))
+        // Grade panels take turns in the inspector's places.
+        var slotFree = Array(repeating: 0.0, count: cardSlots)
+        var cardLeft: [UUID: Int] = [:]
+        var cardLast: [UUID: Double] = [:]
+        for t in tasks where t.edit.isGradeCard { if let id = t.edit.clipID { cardLeft[id, default: 0] += 1 } }
+
         let count = min(64, max(14, Int(Double(tasks.count) / 2.4)))
         var rng = SeededRandom(seed: UInt64(tasks.count))
         for i in 0..<count {
@@ -231,11 +253,23 @@ final class MagicShow: NSObject {
         while !remaining.isEmpty {
             var best: (task: Int, ready: Double)?
             for i in remaining where tasks[i].after.allSatisfy({ end[$0] >= 0 }) {
-                let ready = (tasks[i].after.map { end[$0] }.max() ?? 0) + tasks[i].delay
+                var ready = (tasks[i].after.map { end[$0] }.max() ?? 0) + tasks[i].delay
+                if tasks[i].edit.isGradeCard, let id = tasks[i].edit.clipID {
+                    // Waits for its panel to be in the inspector, or for a place to open up.
+                    if let card = cards[id] { ready = max(ready, card.appear + 0.18 + tasks[i].delay) }
+                    else { ready = max(ready, (slotFree.min() ?? 0) + 0.18 + tasks[i].delay) }
+                }
                 if best == nil || ready < best!.ready { best = (i, ready) }
             }
             guard let (ti, ready) = best else { break }
             let edit = tasks[ti].edit
+            if edit.isGradeCard, let id = edit.clipID, cards[id] == nil {
+                let j = slotFree.indices.min { slotFree[$0] < slotFree[$1] } ?? 0
+                let card = Card(clip: id, row: j)
+                card.appear = max(slotFree[j], ready - 0.18 - tasks[ti].delay)
+                cards[id] = card
+                slotFree[j] = .infinity
+            }
             let (grab, release) = computePoints(edit)
             // The cursor that can get there first; a cursor already out beats a new one.
             var pick = 0, pickStart = Double.infinity, pickTravel = 0.0
@@ -254,6 +288,16 @@ final class MagicShow: NSObject {
             used[pick] = true
             end[ti] = finish
             remaining.remove(ti)
+            if edit.isGradeCard, let id = edit.clipID, let card = cards[id] {
+                card.slots.append(slots.count - 1)
+                cardLast[id] = max(cardLast[id] ?? 0, finish)
+                cardLeft[id, default: 1] -= 1
+                if cardLeft[id] == 0 {
+                    // Done: it leaves for its clip, and the next panel can take its place.
+                    card.vanish = cardLast[id]! + 0.12
+                    slotFree[card.row] = card.vanish + 0.18
+                }
+            }
         }
         order = slots.indices.sorted { slots[$0].start < slots[$1].start }
         workEnd = (slots.map(\.end).max() ?? 0) + 0.06
@@ -267,24 +311,10 @@ final class MagicShow: NSObject {
         }
         showEnd = max(workEnd, agents.map(\.gone).max() ?? workEnd) + 0.05
 
-        // Grade cards, one per graded clip.
-        var row = 0
-        for i in order where slots[i].edit.isGradeCard {
-            guard let id = slots[i].edit.clipID else { continue }
-            if cards[id] == nil {
-                cards[id] = Card(clip: id, row: row % 3)
-                row += 1
-            }
-            cards[id]!.slots.append(i)
+        if let first = cards.values.map(\.appear).min(), let last = cards.values.map(\.vanish).max() {
+            backdropSpan = (first - 0.15, last + 0.3)
         }
-        for c in cards.values {
-            // Pops out once its clip is down, a moment before the cursors start on it.
-            let landed = slots.first { s in
-                if case .place(let clips, _) = s.edit { return clips.contains { $0.id == c.clip } } else { return false }
-            }?.end ?? 0
-            c.appear = max(landed, (c.slots.map { slots[$0].start }.min() ?? 0) - 0.36)
-            c.vanish = (c.slots.map { slots[$0].end }.max() ?? 0) + 0.2
-        }
+        pace = max(1, Self.targetLength / showEnd)
     }
 
     // MARK: Overlay
@@ -306,6 +336,21 @@ final class MagicShow: NSObject {
 
         let scale = window.backingScaleFactor
 
+        backdrop.backgroundColor = Theme.NS.panel.cgColor
+        backdrop.opacity = 0
+        for (layer, text, x, size, color) in [(backdropTitle, "Grade", 16.0, 13.0, Theme.NS.text), (backdropCount, "", 0.0, 11.0, Theme.NS.textDim)] {
+            layer.contentsScale = scale
+            layer.string = text
+            layer.font = NSFont.systemFont(ofSize: size, weight: x > 0 ? .semibold : .medium)
+            layer.fontSize = size
+            layer.foregroundColor = color.cgColor
+            layer.alignmentMode = x > 0 ? .left : .right
+            backdrop.addSublayer(layer)
+        }
+        let insp = inspectorRect
+        backdropTitle.frame = CGRect(x: 16, y: 15, width: 120, height: 17)
+        backdropCount.frame = CGRect(x: insp.width - 136, y: 17, width: 120, height: 15)
+        root.addSublayer(backdrop)
         for c in cards.values {
             buildCard(c, scale: scale)
             root.addSublayer(c.layer)
@@ -353,16 +398,12 @@ final class MagicShow: NSObject {
     }
 
     private func buildCard(_ c: Card, scale: CGFloat) {
-        let size = Self.card
+        let size = cardSize
         c.layer.bounds = CGRect(origin: .zero, size: size)
-        c.layer.backgroundColor = NSColor(hex: 0x161616).withAlphaComponent(0.97).cgColor
-        c.layer.cornerRadius = 9
+        c.layer.backgroundColor = NSColor(hex: 0x181818).cgColor
+        c.layer.cornerRadius = 8
         c.layer.borderWidth = 1
-        c.layer.borderColor = NSColor(white: 1, alpha: 0.13).cgColor
-        c.layer.shadowColor = NSColor.black.cgColor
-        c.layer.shadowOpacity = 0.55
-        c.layer.shadowRadius = 10
-        c.layer.shadowOffset = CGSize(width: 0, height: -3)
+        c.layer.borderColor = NSColor(white: 1, alpha: 0.09).cgColor
         c.layer.opacity = 0
 
         func text(_ s: String, _ frame: CGRect, size: CGFloat = 10, weight: NSFont.Weight = .medium,
@@ -388,11 +429,11 @@ final class MagicShow: NSObject {
             }.first ?? "Clip"
         c.title.contentsScale = scale
         _ = text("GRADE", CGRect(x: 10, y: 8, width: 44, height: 12), size: 9, weight: .bold, color: Theme.NS.textFaint)
-        let t = text(name, CGRect(x: 52, y: 7, width: size.width - 62, height: 13), size: 10, weight: .semibold, color: Theme.NS.text)
+        let t = text(name, CGRect(x: 52, y: 7, width: size.width - 62, height: 13), size: 10.5, weight: .semibold, color: Theme.NS.text)
         t.truncationMode = .middle
 
-        _ = text("Look", CGRect(x: 10, y: 29, width: 56, height: 13))
-        c.chip.frame = CGRect(x: 70, y: 26, width: 98, height: 19)
+        _ = text("Look", CGRect(x: 10, y: 27, width: 56, height: 13))
+        c.chip.frame = CGRect(x: Self.trackX - 6, y: 24, width: size.width - Self.trackX - 4, height: 18)
         c.chip.cornerRadius = 5
         c.chip.backgroundColor = NSColor(hex: 0x232323).cgColor
         c.chip.borderWidth = 1
@@ -402,15 +443,15 @@ final class MagicShow: NSObject {
         c.chipText.font = NSFont.systemFont(ofSize: 10, weight: .medium)
         c.chipText.fontSize = 10
         c.chipText.foregroundColor = Theme.NS.textDim.cgColor
-        c.chipText.frame = CGRect(x: 8, y: 3, width: 84, height: 13)
+        c.chipText.frame = CGRect(x: 8, y: 2.5, width: c.chip.frame.width - 16, height: 13)
         c.chipText.string = "None"
         c.chip.addSublayer(c.chipText)
 
         for (i, key) in MagicGradeKey.allCases.enumerated() {
             let y = Self.rowY(i)
-            _ = text(key.label, CGRect(x: 10, y: y - 7, width: 58, height: 13))
+            _ = text(key.label, CGRect(x: 10, y: y - 7, width: 70, height: 13))
             let track = CALayer()
-            track.frame = CGRect(x: 70, y: y - 1, width: Self.trackWidth, height: 2)
+            track.frame = CGRect(x: Self.trackX, y: y - 1, width: trackWidth, height: 2)
             track.cornerRadius = 1
             track.backgroundColor = NSColor(white: 1, alpha: 0.13).cgColor
             c.layer.addSublayer(track)
@@ -425,18 +466,17 @@ final class MagicShow: NSObject {
             knob.borderWidth = 2
             knob.borderColor = NSColor(hex: 0x161616).cgColor
             c.layer.addSublayer(knob)
-            let value = text("0", CGRect(x: 146, y: y - 7, width: 26, height: 13), size: 9.5, color: Theme.NS.textFaint, align: .right)
+            let value = text("0", CGRect(x: size.width - 40, y: y - 7, width: 30, height: 13), size: 9.5, color: Theme.NS.textFaint, align: .right)
             value.font = NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .medium)
             c.knobs[key] = (fill, knob, value)
         }
     }
 
-    private static let trackWidth: CGFloat = 72
-    private static func rowY(_ i: Int) -> CGFloat { 60 + CGFloat(i) * 17 }
+    private static func rowY(_ i: Int) -> CGFloat { 54 + CGFloat(i) * 15 }
 
-    private static func knobX(_ key: MagicGradeKey, _ v: Double) -> CGFloat {
+    private func knobX(_ key: MagicGradeKey, _ v: Double) -> CGFloat {
         let r = key.range
-        return 70 + CGFloat((v - r.lowerBound) / (r.upperBound - r.lowerBound)) * trackWidth
+        return Self.trackX + CGFloat((v - r.lowerBound) / (r.upperBound - r.lowerBound)) * trackWidth
     }
 
     private static func cursorImage(_ color: NSColor, scale: CGFloat) -> CGImage? {
@@ -496,6 +536,11 @@ final class MagicShow: NSObject {
         clip(id).flatMap { clipRect($0) }
     }
 
+    private var inspectorRect: CGRect {
+        MagicAnchors.rect("inspector").map { toOverlay($0) }
+            ?? CGRect(x: window.frame.width - 320, y: 52, width: 320, height: max(300, timelineRect.minY - 60))
+    }
+
     private var timelineRect: CGRect { toOverlay(canvas.convert(canvas.bounds, to: nil)) }
 
     private func tileRect(_ asset: UUID) -> CGRect {
@@ -510,13 +555,10 @@ final class MagicShow: NSObject {
 
     private func cardFrame(_ c: Card) -> CGRect {
         if let f = c.frame { return f }
-        let size = Self.card
-        let tl = timelineRect
-        // Above where the clip ends up.
-        let cx = finalProject.clip(c.clip).flatMap { canvas.magicWindowRect(of: $0, in: finalProject) }.map { toOverlay($0).midX } ?? tl.midX
-        let x = min(max(cx - size.width / 2, 8), window.frame.width - size.width - 8)
-        let y = tl.minY - 44 - size.height - CGFloat(c.row) * (size.height + 6)
-        let f = CGRect(x: x, y: max(60, y), width: size.width, height: size.height)
+        // Its place in the inspector's stack.
+        let insp = inspectorRect
+        let f = CGRect(x: insp.minX + 12, y: insp.minY + 52 + CGFloat(c.row) * (cardSize.height + Self.cardGap),
+                       width: cardSize.width, height: cardSize.height)
         c.frame = f
         return f
     }
@@ -587,8 +629,8 @@ final class MagicShow: NSObject {
             if let card = cards[id] {
                 let f = cardFrame(card)
                 let y = f.minY + Self.rowY(MagicGradeKey.allCases.firstIndex(of: key) ?? 0)
-                grab = CGPoint(x: f.minX + Self.knobX(key, key.value(project.clip(id)?.grade)), y: y)
-                release = CGPoint(x: f.minX + Self.knobX(key, to), y: y)
+                grab = CGPoint(x: f.minX + knobX(key, key.value(project.clip(id)?.grade)), y: y)
+                release = CGPoint(x: f.minX + knobX(key, to), y: y)
             } else if let r = finalRect(id) {
                 grab = CGPoint(x: r.midX, y: tl.minY - 160)
                 release = grab
@@ -608,7 +650,7 @@ final class MagicShow: NSObject {
 
     // MARK: Frames
 
-    private var now: Double { CACurrentMediaTime() - t0 + skip }
+    private var now: Double { (CACurrentMediaTime() - t0) / pace + skip }
 
     private func fastForward() {
         let t = now
@@ -639,7 +681,7 @@ final class MagicShow: NSObject {
             if s.edit.isGradeCard { continue }
             s.edit.apply(&p, (t - s.start) / (s.end - s.start))
         }
-        for c in cards.values where t >= c.vanish - 0.2 {
+        for c in cards.values where t >= c.vanish - 0.1 {
             for i in c.slots { slots[i].edit.apply(&p, 1) }
         }
         model.live(autoCommit: false) { $0 = p }
@@ -775,7 +817,7 @@ final class MagicShow: NSObject {
 
     private func drawCards(_ t: Double) {
         let project = model.project
-        let inspector = MagicAnchors.rect("inspector").map { toOverlay($0) }
+        drawBackdrop(t)
         for c in cards.values {
             guard t >= c.appear, t < c.vanish + 0.16 else {
                 c.layer.opacity = 0
@@ -784,14 +826,13 @@ final class MagicShow: NSObject {
             let f = cardFrame(c)
             let target = CGPoint(x: f.midX, y: f.midY)
             if t < c.appear + 0.16 {
-                // Peels off the inspector and flies to its clip.
+                // Slides into its place in the inspector.
                 let u = CGFloat(MagicEase.out((t - c.appear) / 0.16))
-                let from = inspector.map { CGPoint(x: $0.midX, y: $0.minY + 140) } ?? target
-                c.layer.position = CGPoint(x: from.x + (target.x - from.x) * u, y: from.y + (target.y - from.y) * u)
-                let s = 0.4 + 0.6 * u
-                c.layer.transform = CATransform3DMakeScale(s, s, 1)
+                c.layer.position = CGPoint(x: target.x + 40 * (1 - u), y: target.y)
+                c.layer.transform = CATransform3DIdentity
                 c.layer.opacity = Float(u)
             } else if t > c.vanish {
+                // Done: shrinks away down onto its clip.
                 let u = CGFloat(MagicEase.inOut((t - c.vanish) / 0.16))
                 let clip = clipRect(c.clip).map { CGPoint(x: $0.midX, y: $0.midY) } ?? target
                 c.layer.position = CGPoint(x: target.x + (clip.x - target.x) * u, y: target.y + (clip.y - target.y) * u)
@@ -819,7 +860,7 @@ final class MagicShow: NSObject {
                     guard let k = c.knobs[key] else { continue }
                     let from = t >= s.end ? key.value(grade) : 0
                     let v = t >= s.end ? from : to * u
-                    let x = Self.knobX(key, v), mid = Self.knobX(key, 0)
+                    let x = knobX(key, v), mid = knobX(key, 0)
                     let y = Self.rowY(MagicGradeKey.allCases.firstIndex(of: key) ?? 0)
                     k.knob.position = CGPoint(x: x, y: y)
                     k.fill.frame = CGRect(x: min(x, mid), y: y - 1, width: abs(x - mid), height: 2)
@@ -849,6 +890,17 @@ final class MagicShow: NSObject {
             guard let self, !self.done else { return }
             preview.show(a, at: time, image: img)
         }
+    }
+
+    /// Covers the real inspector while grade panels are stacked in it.
+    private func drawBackdrop(_ t: Double) {
+        let (a, b) = backdropSpan
+        let u = t < a ? 0 : t < a + 0.15 ? (t - a) / 0.15 : t < b ? 1 : max(0, 1 - (t - b) / 0.15)
+        backdrop.opacity = Float(u)
+        guard u > 0 else { return }
+        backdrop.frame = inspectorRect
+        let active = cards.values.filter { t >= $0.appear && t < $0.vanish }.count
+        backdropCount.string = active == 0 ? "" : "\(active) clip\(active == 1 ? "" : "s")"
     }
 
     private func drawStatus(_ t: Double, finished: Int) {
