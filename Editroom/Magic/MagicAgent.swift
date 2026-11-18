@@ -234,10 +234,13 @@ final class MagicAgent: ObservableObject {
         set_sequence to 1080 by 1920 first.
         5. To make an edit shorter or keep people watching: open on the strongest moment, cut the slow starts and \
         ends of shots, drop weak or repeated shots, and close every gap (delete_clips with ripple, or move clips).
-        6. Finish. One look from list_looks on every shot so it feels like one film. A short title only if it \
+        6. Speed: set_speed speeds a clip up (4 to 20 times for a timelapse) or slows it down. Turn a sped-up \
+        clip's own sound right down (set_audio gain_db -60) unless they asked to keep it. For a long video like a \
+        vlog, keep what people say whole, and use short titles to mark each part.
+        7. Finish. One look from list_looks on every shot so it feels like one film. A short title only if it \
         helps. Fade music out over the last 2 seconds. A dissolve or dip to black only where it helps, never on \
         every cut.
-        7. Check a few moments with get_frame and fix what's wrong.
+        8. Check a few moments with get_frame and fix what's wrong.
 
         When you're done, write one or two short sentences for the person: what you made or changed, and anything \
         you couldn't do and why. Plain words, no lists, no ids.

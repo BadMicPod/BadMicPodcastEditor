@@ -59,6 +59,8 @@ enum MCPTools {
             tool("add_title", "Add title", "Adds a text title, typed in.", ["text": str("The words."), "start": num("Default 0."), "duration": num("Default 3."), "track": str("A video track (default: one that's free there, above V1).")], required: ["text"]),
             tool("move_clip", "Move clip", "Moves a clip (and anything linked to it) in time, and optionally to another track of the same kind.", ["clip_id": str("A clip's id."), "start": num("New start."), "track": str("Optional new track.")], required: ["clip_id", "start"]),
             tool("trim_clip", "Trim clip", "Moves a clip's start and/or end edge on the timeline (and its linked clip's). The source moves with the start edge.", ["clip_id": str("A clip's id."), "start": num("New start edge."), "end": num("New end edge.")], required: ["clip_id"]),
+            tool("set_speed", "Set speed", "Speeds a clip (and its linked sound) up or slows it down, keeping the same part of the file: 4 plays four times as fast and a quarter as long (a timelapse), 0.5 is slow motion. Clips after it on the track move to stay butted up.",
+                 ["clip_id": str("A clip's id."), "speed": num("0.05...100; 1 is normal.")], required: ["clip_id", "speed"]),
             tool("split_clip", "Split clip", "Cuts a clip (and its linked clip) in two with the blade. Returns the new right-hand pieces.", ["clip_id": str("A clip's id."), "at": num("Timeline time inside the clip.")], required: ["clip_id", "at"]),
             tool("delete_clips", "Delete clips", "Deletes clips and anything linked to them.", ["clip_ids": ["type": "array", "items": ["type": "string"]], "ripple": ["type": "boolean", "description": "Close the gap left behind (default false)."]], required: ["clip_ids"]),
             tool("set_grade", "Set grade", "Colour for video, photo and title clips. Leave out what shouldn't change.",
@@ -240,6 +242,15 @@ enum MCPTools {
             guard !edits.isEmpty else { return json(clipsJSON(ids, p)) }
             try await perform(edits, model, who, draft)
             return json(clipsJSON(ids, now()))
+
+        case "set_speed":
+            let c = try clipArg(args, p)
+            guard c.playsSource else { throw MCPToolError("Only video and sound clips have a speed.") }
+            let speed = try numArg(args, "speed").clamped(to: 0.05...100)
+            let ids = p.unlocked(p.linked([c.id]))
+            let label = speed >= 1 ? String(format: "Speed ×%g", speed) : String(format: "Slow ×%g", speed)
+            try await perform([.change(c.id, label) { proj in proj.setSpeed(ids: ids, speed: speed) }], model, who, draft)
+            return json(clipsJSON(Array(ids), now()))
 
         case "split_clip":
             let c = try clipArg(args, p)

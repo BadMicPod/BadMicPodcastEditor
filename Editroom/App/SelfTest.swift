@@ -907,6 +907,7 @@ enum SelfTest {
                 _ = await call("move_clip", ["clip_id": c, "start": 8.0])
                 _ = await call("history", ["action": "undo"])   // takes back the move
                 _ = await call("set_audio", ["clip_id": c, "gain_db": -12.0, "fade_out": 0.5])
+                let (sped, speedError) = await call("set_speed", ["clip_id": b, "speed": 4.0])
                 _ = await call("set_sequence", ["width": 1080, "height": 1920])
                 _ = await call("delete_clips", ["clip_ids": [a], "ripple": true])
                 let (_, refused) = await call("save_project", [:])
@@ -947,8 +948,9 @@ enum SelfTest {
                 let parallel = plan.tasks.filter { $0.after.isEmpty }.count
                 let shapeOK = target.width == 1080 && target.clips.contains { $0.kind == .text && $0.text.string == "Hello" }
                     && target.clip(UUID(uuidString: c)!)?.start ?? 0 < 8 && target.clip(UUID(uuidString: a)!) == nil
-                good = untouched && replayOK && shapeOK && refused != nil && frameError == nil && parallel > 1
-                detail = "untouched=\(untouched) replay=\(replayOK) failing=\(failing.count)/\(orders.count) shape=\(shapeOK) edits=\(plan.tasks.count) startFree=\(parallel) refused=\(refused != nil)"
+                let speedOK = speedError == nil && sped != nil && target.clip(UUID(uuidString: b)!)?.speed == 4
+                good = untouched && replayOK && shapeOK && speedOK && refused != nil && frameError == nil && parallel > 1
+                detail = "speed=\(speedOK) untouched=\(untouched) replay=\(replayOK) failing=\(failing.count)/\(orders.count) shape=\(shapeOK) edits=\(plan.tasks.count) startFree=\(parallel) refused=\(refused != nil)"
             }
             log("MAGIC DRAFT \(good ? "OK" : "FAIL") \(detail)")
             ok = ok && good

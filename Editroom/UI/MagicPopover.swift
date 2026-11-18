@@ -24,6 +24,7 @@ struct MagicPopover: View {
             AITabs(selection: $ai.tab)
             content
                 .padding(.top, 12)
+            footer
         }
         .padding(14)
         .frame(width: 380)
@@ -110,6 +111,34 @@ struct MagicPopover: View {
                 .padding(.top, 6)
             }
         }
+    }
+
+    /// Whose plan it uses on the left; AI Agents settings on the right.
+    private var footer: some View {
+        HStack {
+            Text(footerText)
+            Spacer()
+            if ai.tab != .local {
+                Button("Manage AI Agents") {
+                    close()
+                    model.showAgents = true
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .font(.system(size: 10.5))
+        .foregroundStyle(Theme.textFaint)
+        .padding(.top, 10)
+        .overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.07)).frame(height: 0.5) }
+        .padding(.top, 11)
+    }
+
+    private var footerText: String {
+        guard let kind = ai.tab.kind else { return "On this Mac" }
+        if !ai.installed(kind) { return "Free to download" }
+        if kind == .claude, connections.states[.claude] == .waiting { return "Waiting for Claude…" }
+        if !ai.connected(kind) { return "No API key needed" }
+        return "Uses your \(kind.name) plan"
     }
 
     // MARK: Actions
@@ -254,10 +283,37 @@ private struct PromptForm: View {
     let go: () -> Void
     @FocusState private var focused: Bool
 
-    private static let forThisEdit = ["Make this shorter so people keep watching", "Cut it to the beat of the music",
-                                      "Give it a warm film look", "Open on the strongest moment"]
-    private static let startFresh = ["A 30-second highlight reel cut to the music", "A calm, slow story of the day",
-                                     "Fast and punchy, vertical for Reels"]
+    /// A name for the menu, and the prompt it fills the box with (to send as it is, or change first).
+    private typealias Idea = (name: String, symbol: String, prompt: String)
+
+    private static let make: [Idea] = [
+        ("Story", "book",
+         "Make the best story you can from this footage: a clear beginning, middle and end, the strongest moments where they land hardest, and shots left to breathe where it matters."),
+        ("Highlight reel", "sparkles",
+         "Make a 30 to 60 second highlight reel of the best moments, cut to the beat of the music, opening on the strongest shot and ending on a bar."),
+        ("Timelapse", "timer",
+         "Make a timelapse over the music: speed the footage up, cut out the dead space where nothing changes, keep the moments where something happens, and end on the strongest shot."),
+        ("Vlog", "person.wave.2",
+         "Make an engaging vlog, up to 8 minutes: hook in the first few seconds, keep the parts where someone is talking or something happens, cut pauses, retakes and repeats, and add short titles to mark each part."),
+        ("Vertical reel", "iphone",
+         "Make a fast, punchy 15 to 30 second vertical video for Reels and TikTok: 1080 by 1920, a hook in the first second, quick cuts on the beat."),
+    ]
+
+    private static let improve: [Idea] = [
+        ("Tighten it", "scissors",
+         "Make this shorter so people keep watching: open on the strongest moment, cut the slow starts and ends of shots, and drop weak or repeated shots."),
+        ("Cut to the beat", "metronome",
+         "Recut this to the beat of the music: cuts on beats, the biggest moments on bar starts, and end on a bar."),
+        ("Smooth it out", "wind",
+         "Smooth this out: fix jumpy cuts, add a dissolve only where the scene changes, even out the sound, and fade in and out."),
+        ("One look", "camera.filters",
+         "Give it one consistent look: the same warm film grade on every shot, matched in brightness so it feels like one film."),
+    ]
+
+    private static let sound: [Idea] = [
+        ("Music and levels", "music.note",
+         "Pick the best music in my Media for this edit, cut so the music and pictures land together, keep voices clear over it, and fade in and out."),
+    ]
 
     private var placeholder: String {
         hasEdit
@@ -275,12 +331,21 @@ private struct PromptForm: View {
                 // Ideas fill the box, to send as they are or change first.
                 Menu {
                     if hasEdit {
-                        Section("For this edit") {
-                            ForEach(Self.forThisEdit, id: \.self) { idea in Button(idea) { use(idea) } }
+                        Section("Improve this edit") {
+                            ForEach(Self.improve, id: \.name) { idea in
+                                Button { use(idea.prompt) } label: { Label(idea.name, systemImage: idea.symbol) }
+                            }
                         }
                     }
-                    Section(hasEdit ? "Start fresh" : "Ideas") {
-                        ForEach(Self.startFresh, id: \.self) { idea in Button(idea) { use(idea) } }
+                    Section(hasEdit ? "Make something new" : "Make") {
+                        ForEach(Self.make, id: \.name) { idea in
+                            Button { use(idea.prompt) } label: { Label(idea.name, systemImage: idea.symbol) }
+                        }
+                    }
+                    Section("Sound") {
+                        ForEach(Self.sound, id: \.name) { idea in
+                            Button { use(idea.prompt) } label: { Label(idea.name, systemImage: idea.symbol) }
+                        }
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -370,10 +435,6 @@ private struct ModelChip: View {
                 }
             }
             .pickerStyle(.inline)
-            Divider()
-            Section("Uses your \(kind.name) plan") {
-                Button("Manage AI Agents…", action: manage)
-            }
         } label: {
             ChipLabel(title: ai.modelName(for: kind))
         }
