@@ -655,6 +655,40 @@ enum SelfTest {
             log("STICKY EDGE \(good ? "OK" : "FAIL")")
             ok = ok && good
         }
+        // Copy and paste grade: the whole grade goes onto every selected visual clip (not sound), and
+        // one undo puts them all back.
+        do {
+            var p = Project()
+            let v = p.videoTracks[0].id, au = p.audioTracks[0].id
+            var graded = Clip(trackID: v, kind: .solid, start: 0, duration: 2)
+            var g = ColorGrade()
+            g.look = "Warm film"
+            g.lookIntensity = 0.6
+            g.exposure = 0.4
+            g.saturation = -12
+            graded.grade = g
+            var other = Clip(trackID: v, kind: .solid, start: 2, duration: 2)
+            var og = ColorGrade()
+            og.exposure = -1
+            other.grade = og
+            let plain = Clip(trackID: v, kind: .text, start: 4, duration: 2)
+            let sound = Clip(trackID: au, kind: .audio, start: 0, duration: 2)
+            p.clips = [graded, other, plain, sound]
+            let m = EditorModel()
+            m.load(p, url: nil)
+            m.selection = [graded.id]
+            let canCopy = m.canCopyGrade
+            m.copyGrade()
+            m.selection = [other.id, plain.id, sound.id]
+            let canPaste = m.canPasteGrade
+            m.pasteGrade()
+            let pasted = m.project.clip(other.id)?.grade == g && m.project.clip(plain.id)?.grade == g && m.project.clip(sound.id)?.grade == nil
+            m.undo()
+            let undone = m.project.clip(other.id)?.grade == og && m.project.clip(plain.id)?.grade == nil
+            let good = canCopy && canPaste && pasted && undone
+            log("GRADE PASTE \(good ? "OK" : "FAIL") copy=\(canCopy) paste=\(canPaste) pasted=\(pasted) undo=\(undone)")
+            ok = ok && good
+        }
         // Export shapes: a vertical 9:16 export is 1080 × 1920, and moving the crop changes what's kept.
         do {
             var settings = ExportSettings()

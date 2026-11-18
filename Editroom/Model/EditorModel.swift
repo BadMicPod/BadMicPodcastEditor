@@ -980,6 +980,37 @@ final class EditorModel: ObservableObject {
     /// Copied clips, with times measured from the earliest of them.
     private(set) var clipboard: [Clip] = []
 
+    // MARK: Copy and paste grade
+
+    /// A grade copied from a clip, to paste onto others. Nil inside means the clip had no grade, so
+    /// pasting clears grades.
+    @Published private(set) var copiedGrade: ColorGrade??
+
+    /// Selected clips that take a colour grade (everything but sound), on unlocked tracks.
+    private var gradableSelection: [Clip] {
+        let ids = project.unlocked(selection)
+        return project.clips.filter { ids.contains($0.id) && $0.kind != .audio }
+    }
+
+    var canCopyGrade: Bool { gradableSelection.count == 1 }
+    var canPasteGrade: Bool { copiedGrade != nil && !gradableSelection.isEmpty }
+
+    /// Copies the selected clip's whole grade: look and its strength, adjustments and wheels.
+    func copyGrade() {
+        guard let clip = gradableSelection.first else { return }
+        copiedGrade = .some(clip.grade)
+    }
+
+    /// Gives every selected clip the copied grade, replacing theirs, as one undoable edit.
+    func pasteGrade() {
+        guard let copied = copiedGrade else { return }
+        let ids = Set(gradableSelection.map(\.id))
+        guard !ids.isEmpty else { return }
+        mutate { p in
+            for i in p.clips.indices where ids.contains(p.clips[i].id) { p.clips[i].grade = copied }
+        }
+    }
+
     private var selectedForCopy: [Clip] {
         let ids = project.unlocked(project.linked(selection))
         return project.clips.filter { ids.contains($0.id) }

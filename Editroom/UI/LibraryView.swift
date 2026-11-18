@@ -48,7 +48,8 @@ struct LibraryView: View {
                         SearchField(text: $search)
                         VStack(spacing: 3) {
                             ForEach(shown) { asset in
-                                AssetRow(model: model, media: media, asset: asset, offline: media.isOffline(asset), selected: inSelection.contains(asset.id))
+                                AssetRow(model: model, media: media, asset: asset, offline: media.isOffline(asset), selected: inSelection.contains(asset.id),
+                                         matchesSequence: model.sequenceMatches(asset))
                             }
                         }
                         if shown.isEmpty {
@@ -215,6 +216,7 @@ private struct AssetActions: ViewModifier {
     let model: EditorModel
     let asset: MediaAsset
     let offline: Bool
+    let matchesSequence: Bool
 
     func body(content: Content) -> some View {
         content
@@ -231,7 +233,7 @@ private struct AssetActions: ViewModifier {
                 Button("Add to Timeline") { model.addAtPlayhead(.asset(asset.id)) }
                 if asset.kind == .video {
                     Button("Match Sequence to Clip") { model.matchSequence(to: asset) }
-                        .disabled(model.sequenceMatches(asset))
+                        .disabled(matchesSequence)
                 }
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: asset.path)]) }
                 Divider()
@@ -247,6 +249,9 @@ private struct AssetRow: View {
     let offline: Bool
     /// Used by a clip selected on the timeline.
     let selected: Bool
+    /// The sequence already has this video's size and rate. Passed in (rather than read from the
+    /// model in the menu) so the row, and its menu, update when the sequence changes.
+    let matchesSequence: Bool
     @State private var hovering = false
 
     private var detail: String {
@@ -281,6 +286,6 @@ private struct AssetRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
-        .modifier(AssetActions(model: model, asset: asset, offline: offline))
+        .modifier(AssetActions(model: model, asset: asset, offline: offline, matchesSequence: matchesSequence))
     }
 }

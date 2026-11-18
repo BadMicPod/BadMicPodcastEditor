@@ -168,6 +168,14 @@ struct EditroomApp: App {
                 Button("Duplicate") { model.duplicateSelection() }.keyboardShortcut("d", modifiers: [.command, .shift])
                 Button("Freeze Frame") { model.freezeFrame() }.keyboardShortcut("f", modifiers: [.option])
                 Button("Reverse") { model.reverseSelection() }.keyboardShortcut("r", modifiers: [.option])
+                Divider()
+                Button("Copy Grade") { model.copyGrade() }
+                    .keyboardShortcut("c", modifiers: [.command, .option])
+                    .disabled(!model.canCopyGrade)
+                Button("Paste Grade") { model.pasteGrade() }
+                    .keyboardShortcut("v", modifiers: [.command, .option])
+                    .disabled(!model.canPasteGrade)
+                Divider()
                 Button("Match Sequence to Clip") { if let a = model.matchableAsset { model.matchSequence(to: a) } }
                     .disabled(model.matchableAsset.map { model.sequenceMatches($0) } ?? true)
                 Divider()

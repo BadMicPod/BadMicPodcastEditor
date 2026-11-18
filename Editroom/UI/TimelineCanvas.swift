@@ -896,6 +896,12 @@ final class TimelineCanvas: NSView {
                     }
                 })
             }
+            if h.clip.kind != .audio {
+                menu.addItem(.separator())
+                menu.addItem(ActionItem("Copy Grade", enabled: model.canCopyGrade) { model.copyGrade() })
+                let count = model.project.clips.filter { model.selection.contains($0.id) && $0.kind != .audio }.count
+                menu.addItem(ActionItem(count > 1 ? "Paste Grade to \(count) Clips" : "Paste Grade", enabled: model.canPasteGrade) { model.pasteGrade() })
+            }
             if h.clip.kind == .video, let asset = model.project.asset(h.clip.assetID ?? UUID()) {
                 menu.addItem(.separator())
                 menu.addItem(ActionItem("Match Sequence to Clip", enabled: !model.sequenceMatches(asset)) { model.matchSequence(to: asset) })
