@@ -102,8 +102,10 @@ struct ContentView: View {
         // "Manage AI Agents" (and `--show-agents`): Settings, on its Magic tab.
         .onChange(of: model.showAgents) { _, show in
             guard show else { return }
-            // (`--settings-shortcuts`, testing: the Shortcuts tab instead.)
-            UserDefaults.standard.set(CommandLine.arguments.contains("--settings-shortcuts") ? "shortcuts" : "magic", forKey: "settingsTab")
+            // (`--settings-tab shortcuts|magic|updates`, testing: that tab instead.)
+            let args = CommandLine.arguments
+            let tab = args.firstIndex(of: "--settings-tab").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } ?? "magic"
+            UserDefaults.standard.set(tab, forKey: "settingsTab")
             openSettings()
             model.showAgents = false
         }

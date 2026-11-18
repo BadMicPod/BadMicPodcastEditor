@@ -4,56 +4,74 @@ import SwiftUI
 /// Editroom > Settings… (⌘,): keyboard shortcuts, and Magic (on or off, and the AI apps it can use).
 struct SettingsView: View {
     @ObservedObject var model: EditorModel
-    @AppStorage("settingsTab") private var tab = "shortcuts"
+
+    enum Tab: String, CaseIterable, Identifiable {
+        case shortcuts = "Shortcuts", magic = "Magic", updates = "Updates"
+        var id: Self { self }
+        var symbol: String {
+            switch self {
+            case .shortcuts: "keyboard"
+            case .magic: "wand.and.sparkles"
+            case .updates: "arrow.down.circle"
+            }
+        }
+        /// The tab's name kept in UserDefaults ("shortcuts", "magic", "updates").
+        var key: String { rawValue.lowercased() }
+    }
+
+    @AppStorage("settingsTab") private var tabKey = "shortcuts"
+    @State private var hovered: Tab?
+    private var tab: Tab { Tab.allCases.first { $0.key == tabKey } ?? .shortcuts }
 
     var body: some View {
         VStack(spacing: 0) {
+            // Our own tab row, like a Mac app's Settings toolbar: icon over name, a soft backing on the
+            // chosen one (the native toolbar would draw it in the system accent colour).
             HStack(spacing: 2) {
-                SettingsTab(title: "Shortcuts", symbol: "keyboard", on: tab == "shortcuts") { tab = "shortcuts" }
-                SettingsTab(title: "Magic", symbol: "wand.and.sparkles", on: tab == "magic") { tab = "magic" }
+                ForEach(Tab.allCases) { tabButton($0) }
             }
-            .padding(3)
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.bg))
-            .frame(width: 260)
-            .padding(.top, 14)
-            .padding(.bottom, 12)
-
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
             Divider().overlay(Theme.stroke)
 
-            if tab == "magic" {
-                MagicSettings(model: model)
-            } else {
-                ShortcutSettings()
+            VStack(alignment: .leading, spacing: 0) {
+                Text(tab.rawValue)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 20)
+                    .padding(.bottom, 4)
+                switch tab {
+                case .shortcuts: ShortcutSettings()
+                case .magic: MagicSettings(model: model)
+                case .updates: UpdateSettings()
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(width: 600, height: 620)
+        .frame(width: 600, height: 640)
         .background(Theme.panel)
+        .navigationTitle("Settings")
         .preferredColorScheme(.dark)
     }
-}
 
-private struct SettingsTab: View {
-    let title: String
-    let symbol: String
-    let on: Bool
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: symbol).font(.system(size: 11, weight: .semibold))
-                Text(title).font(.system(size: 11.5, weight: .semibold))
+    private func tabButton(_ item: Tab) -> some View {
+        let selected = tab == item
+        return Button { tabKey = item.key } label: {
+            VStack(spacing: 3) {
+                Image(systemName: item.symbol).font(.system(size: 20)).frame(width: 28, height: 26)
+                Text(item.rawValue).font(.system(size: 13))
             }
-            .foregroundStyle(on || hovering ? Theme.text : Theme.textDim)
-            .frame(maxWidth: .infinity)
-            .frame(height: 26)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(on ? Theme.raised : .clear))
-            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Color.white.opacity(on ? 0.1 : 0)))
-            .contentShape(Rectangle())
+            .foregroundStyle(selected ? Theme.text : Theme.textDim)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Color.white.opacity(selected ? 0.1 : hovered == item ? 0.05 : 0),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
-        .onHover { hovering = $0 }
+        .onHover { hovered = $0 ? item : (hovered == item ? nil : hovered) }
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -129,8 +147,8 @@ private struct ShortcutSettings: View {
             .padding(.horizontal, 10)
             .frame(height: 30)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.field))
-            .padding(.horizontal, 20)
-            .padding(.top, 14)
+            .padding(.horizontal, 24)
+            .padding(.top, 12)
             .padding(.bottom, 4)
 
             ScrollView {
@@ -150,7 +168,7 @@ private struct ShortcutSettings: View {
                         }
                     }
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 24)
                 .padding(.vertical, 12)
             }
 
@@ -167,7 +185,7 @@ private struct ShortcutSettings: View {
                 }
                 .disabled(keys.changed.isEmpty)
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 24)
             .frame(height: 52)
         }
         .onDisappear { recorder.stop() }
@@ -253,7 +271,7 @@ private struct MagicSettings: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 8) {
-                    SectionLabel(text: "Magic")
+                    SectionLabel(text: "Magic button")
                     ToggleRow(title: "Show the Magic button",
                               note: "Magic makes an edit for you: a quick cut on this Mac, or one Claude or ChatGPT works out from what you ask. Turn it off to hide the button.",
                               isOn: $magicEnabled)
@@ -301,7 +319,8 @@ private struct MagicSettings: View {
                     }
                 }
             }
-            .padding(20)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
         }
         .onAppear { connect.refresh() }
         // Back from Claude or ChatGPT: see what changed.
@@ -418,6 +437,98 @@ private struct AppRow: View {
             }
         case .failed:
             PillButton(title: "Try Again", prominent: true) { connect.connect(app) }
+        }
+    }
+}
+
+// MARK: Updates
+
+/// Which version this is, and (once public releases begin) checking for new ones.
+private struct UpdateSettings: View {
+    private var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development" }
+    private var build: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—" }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Card(title: "Software Update") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Row(name: "Installed version", value: "\(version) (\(build))")
+                        Row(name: "Release channel", value: "Development")
+                        Divider().overlay(Theme.stroke)
+                        Text("Automatic updates aren't connected yet.")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Theme.text)
+                        Text("Sparkle will check for and install updates once public releases begin. This build has no update feed.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.textDim)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Toggle("Check for updates automatically", isOn: .constant(false))
+                            .toggleStyle(.checkbox)
+                            .font(.system(size: 12))
+                            .disabled(true)
+                        PillButton(title: "Check for Updates…", prominent: false) {}
+                            .disabled(true)
+                    }
+                }
+                Card(title: "Release Notes") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Latest public release notes")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Theme.text)
+                        Text("Release notes will appear here once a public release feed is connected.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.textDim)
+                        PillButton(title: "View GitHub Releases", prominent: false) {
+                            NSWorkspace.shared.open(URL(string: "https://github.com/robbietilton/Editroom/releases")!)
+                        }
+                        Divider().overlay(Theme.stroke)
+                        Text("Current development changes")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Theme.text)
+                        Text("""
+                        • Magic: a quick cut on this Mac, or Claude or ChatGPT edits from what you ask
+                        • Edit with Claude or ChatGPT from their own apps, with their own cursor
+                        • Editable keyboard shortcuts
+                        • Settings for Magic and AI apps
+                        """)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.text)
+                            .lineSpacing(3)
+                        Text("These describe this build; they aren't published release notes.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.textFaint)
+                    }
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+        }
+    }
+
+    private struct Card<Content: View>: View {
+        let title: String
+        @ViewBuilder let content: Content
+        var body: some View {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
+                content
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.field))
+        }
+    }
+
+    private struct Row: View {
+        let name: String
+        let value: String
+        var body: some View {
+            HStack(spacing: 8) {
+                Text(name).foregroundStyle(Theme.textDim)
+                Text(value).foregroundStyle(Theme.text).textSelection(.enabled)
+            }
+            .font(.system(size: 12.5))
         }
     }
 }
