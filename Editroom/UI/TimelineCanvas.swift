@@ -1400,7 +1400,8 @@ final class TimelineCanvas: NSView {
         guard let full = rect(for: c) else { return }
         guard full.maxX > -4, full.minX < bounds.width + 4, full.maxY > TimelineLayout.ruler, full.minY < bounds.height else { return }
         let r = full.insetBy(dx: 0, dy: 2).insetBy(dx: min(0.5, full.width / 4), dy: 0)
-        let base = Theme.NS.clip(c.kind)
+        let thumbs = model.thumbnails
+        let base = thumbs ? Theme.NS.clip(c.kind) : Theme.NS.clipType(c.kind)
         let selected = model.selection.contains(c.id)
         let hovered = hover?.id == c.id
         let zone = hovered ? hover?.zone : nil
@@ -1423,9 +1424,9 @@ final class TimelineCanvas: NSView {
 
         switch c.kind {
         case .video:
-            if let asset { drawFilmstrip(c, asset: asset, in: r, visible: visible, ctx: ctx) }
+            if thumbs, let asset { drawFilmstrip(c, asset: asset, in: r, visible: visible, ctx: ctx) }
         case .image:
-            if let img = model.media.still(c.assetID).map({ graded($0, c.grade) }) {
+            if thumbs, let img = model.media.still(c.assetID).map({ graded($0, c.grade) }) {
                 let tileW = max(20, r.height * CGFloat(img.width) / CGFloat(max(1, img.height)))
                 var tx = r.minX + floor(max(0, visible.minX - r.minX) / tileW) * tileW
                 ctx.setAlpha(alpha * 0.85)
@@ -1446,7 +1447,7 @@ final class TimelineCanvas: NSView {
 
         // Title strip
         if r.width > 26, r.height > 20 {
-            if c.kind == .video || c.kind == .image {
+            if thumbs, c.kind == .video || c.kind == .image {
                 ctx.setFillColor(NSColor(white: 0, alpha: 0.45).cgColor)
                 ctx.fill(CGRect(x: r.minX, y: r.minY, width: r.width, height: 17))
             }
@@ -1526,7 +1527,10 @@ final class TimelineCanvas: NSView {
             ctx.setStrokeColor(NSColor(white: 1, alpha: 0.6).cgColor)
             ctx.setLineWidth(1)
         } else {
-            ctx.setStrokeColor(Theme.NS.clipStroke.cgColor)
+            // Flat colour clips are edged in a lighter tone of their own colour, so cuts between
+            // clips of one type still show.
+            let edge = thumbs ? Theme.NS.clipStroke : (base.blended(withFraction: 0.18, of: .white) ?? base)
+            ctx.setStrokeColor(edge.cgColor)
             ctx.setLineWidth(1)
         }
         ctx.strokePath()
@@ -1698,7 +1702,10 @@ final class TimelineCanvas: NSView {
         path.addLine(to: CGPoint(x: xs[xs.count - 1], y: base))
         path.closeSubpath()
         ctx.addPath(path)
-        ctx.setFillColor(NSColor(srgbRed: 0.80, green: 0.80, blue: 0.78, alpha: 0.7).cgColor)
+        // On green (thumbnails off) the shape is a pale green tint, so it sits in the clip's colour.
+        let tint = model.thumbnails ? NSColor(srgbRed: 0.80, green: 0.80, blue: 0.78, alpha: 0.7)
+                                    : NSColor(srgbRed: 0.88, green: 0.97, blue: 0.90, alpha: 0.55)
+        ctx.setFillColor(tint.cgColor)
         ctx.fillPath()
     }
 

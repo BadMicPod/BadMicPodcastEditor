@@ -55,6 +55,7 @@ struct TimelineToolbar: View {
             ToggleChip(title: "Sticky", on: model.sticky, help: "Sticky Edges (R): clips touching a clip that changes length move with it") { model.sticky.toggle() }
             ToggleChip(title: "Skim", on: model.skimming, help: "Skimming (K): hover the timeline to preview frames") { model.skimming.toggle() }
             ToggleChip(title: "Audio", on: model.audioScrub, help: "Audio Scrubbing (⇧S): hear sound while dragging the playhead or skimming") { model.audioScrub.toggle() }
+            ToggleChip(title: "Thumbnails", on: model.thumbnails, help: "Clip Thumbnails: pictures in clips. Off shows clips as flat colour by type") { model.thumbnails.toggle() }
             IconButton(symbol: "arrow.left.and.right", help: "Zoom to Fit (⇧Z)") { model.zoomToFit() }
                 .padding(.leading, 4)
         }

@@ -61,6 +61,17 @@ enum Theme {
             case .solid: return solid
             }
         }
+
+        // With thumbnails off, clips are flat colour by media type, as in Premiere: pictures blue,
+        // audio green, text plum, solids ochre.
+        static func clipType(_ kind: ClipKind) -> NSColor {
+            switch kind {
+            case .video, .image: return NSColor(hex: 0x3A5A80)
+            case .audio: return NSColor(hex: 0x2F6A47)
+            case .text: return NSColor(hex: 0x664675)
+            case .solid: return NSColor(hex: 0x7A6428)
+            }
+        }
     }
 
     static let bg = Color(nsColor: NS.bg)

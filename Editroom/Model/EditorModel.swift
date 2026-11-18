@@ -60,6 +60,11 @@ final class EditorModel: ObservableObject {
             if !skimming { skim(to: nil) }
         }
     }
+    /// Clip thumbnails: pictures in video and image clips. Off draws every clip as flat colour by
+    /// media type, which reads more clearly on a busy or zoomed-out timeline.
+    @Published var thumbnails = UserDefaults.standard.object(forKey: "thumbnails") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(thumbnails, forKey: "thumbnails") }
+    }
     /// Where the viewer is skimmed to, if anywhere.
     private(set) var skimTime: Double?
     /// Audio scrubbing: hear short snippets while dragging the playhead or skimming. Off unless turned on.
