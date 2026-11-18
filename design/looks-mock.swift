@@ -45,6 +45,30 @@ func hueBand(_ c: RGB, center: Double, width: Double, shift: Double, sat: Double
     return fromHSV(h, s, v)
 }
 
+/// The app's existing Teal and orange recipe, for comparison.
+func tealOrange(_ c: RGB) -> RGB {
+    var (r, g, b) = c
+    let l = min(1, max(0, 0.2126 * r + 0.7152 * g + 0.0722 * b)), sh = 1 - l
+    r += -0.05 * sh + 0.06 * l; g += 0.01 * sh + 0.01 * l; b += 0.05 * sh - 0.05 * l
+    let k = 1 + 12.0 / 50 * 0.6
+    r = (r - 0.5) * k + 0.5; g = (g - 0.5) * k + 0.5; b = (b - 0.5) * k + 0.5
+    let l2 = 0.2126 * r + 0.7152 * g + 0.0722 * b, s = 1.1
+    return (clamp(l2 + (r - l2) * s), clamp(l2 + (g - l2) * s), clamp(l2 + (b - l2) * s))
+}
+
+/// Warm skin, teal-olive shadows and greens, milky blacks, soft highlight roll-off.
+func cinematic(_ c: RGB) -> RGB {
+    var c = add(c, (0.04, 0.015, -0.035))
+    c = hueBand(c, center: 25, width: 30, shift: 3, sat: 1.14)
+    c = hueBand(c, center: 110, width: 60, shift: 22, sat: 0.68)
+    c = hueBand(c, center: 210, width: 45, shift: -12, sat: 0.82)
+    c = split(c, shadows: (-0.06, 0.04, 0.065), highlights: (0.045, 0.024, -0.03))
+    c = contrast(c, -0.1)
+    c = map(c) { x in x <= 0.72 ? x : 0.72 + (1 - 0.72) * (1 - exp(-(x - 0.72) / (1 - 0.72) * 1.2)) / (1 - exp(-1.2)) }
+    c = fade(c, 0.05)
+    return saturate(c, 0.88)
+}
+
 let looks: [(String, (RGB) -> RGB)] = [
     ("Original", { $0 }),
     ("Film green", { c in
@@ -85,6 +109,8 @@ let looks: [(String, (RGB) -> RGB)] = [
         return saturate(c, 0.8) }),
 ]
 
+let only = ProcessInfo.processInfo.environment["ONLY"] != nil
+let run: [(String, (RGB) -> RGB)] = only ? [("Original", { $0 }), ("Teal and orange", tealOrange), ("Cinematic", cinematic)] : looks
 let src = URL(fileURLWithPath: CommandLine.arguments[1]), out = URL(fileURLWithPath: CommandLine.arguments[2])
 try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
 let sRGB = CGColorSpace(name: CGColorSpace.sRGB)!
@@ -95,7 +121,7 @@ for file in try! FileManager.default.contentsOfDirectory(atPath: src.path) where
     ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
     let base = ctx.data!.assumingMemoryBound(to: UInt8.self)
     let original = Array(UnsafeBufferPointer(start: base, count: w * h * 4))
-    for (i, look) in looks.enumerated() {
+    for (i, look) in run.enumerated() {
         for p in 0..<(w * h) {
             let c = look.1((Double(original[p * 4]) / 255, Double(original[p * 4 + 1]) / 255, Double(original[p * 4 + 2]) / 255))
             base[p * 4] = UInt8(clamp(c.r) * 255 + 0.5); base[p * 4 + 1] = UInt8(clamp(c.g) * 255 + 0.5); base[p * 4 + 2] = UInt8(clamp(c.b) * 255 + 0.5)
@@ -104,4 +130,4 @@ for file in try! FileManager.default.contentsOfDirectory(atPath: src.path) where
         try! rep.representation(using: .png, properties: [:])!.write(to: out.appendingPathComponent("\(i)_" + file))
     }
 }
-print(looks.map(\.0).joined(separator: "|"))
+print(run.map(\.0).joined(separator: "|"))
