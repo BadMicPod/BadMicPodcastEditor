@@ -1087,6 +1087,58 @@ enum SelfTest {
             log("MEDIA DELETE \(good ? "OK" : "FAIL") gone=\(gone) undo=\(back) redo=\(again)")
             ok = ok && good
         }
+        // Local Magic on an edit: repeats out, long shots trimmed, cuts on the beat, ends on a bar, no gaps,
+        // the song trimmed to fit, and a doubled title out.
+        do {
+            func video(_ name: String) -> MediaAsset {
+                MediaAsset(path: "/tmp/\(name).mov", name: name, kind: .video, duration: 10, width: 1920, height: 1080, fps: 30, hasAudio: false)
+            }
+            let a = video("A"), b = video("B")
+            let songAsset = MediaAsset(path: "/tmp/song.m4a", name: "Song", kind: .audio, duration: 60, width: 0, height: 0, fps: 0, hasAudio: true)
+            var p = Project()
+            p.assets = [a, b, songAsset]
+            while p.videoTracks.count < 2 { p.videoTracks.append(Track(kind: .video)) }
+            let v1 = p.videoTracks[0].id, v2 = p.videoTracks[1].id, a1 = p.audioTracks[0].id
+            func shot(_ asset: MediaAsset, _ start: Double, _ length: Double, src: Double) -> Clip {
+                var c = Clip(trackID: v1, kind: .video, assetID: asset.id, start: start, duration: length)
+                c.sourceStart = src
+                return c
+            }
+            p.clips = [shot(a, 0, 5, src: 0), shot(b, 5, 5, src: 0), shot(a, 10, 5, src: 0.5), shot(b, 15, 2, src: 6)]
+            p.clips.append(Clip(trackID: a1, kind: .audio, assetID: songAsset.id, start: 0, duration: 30))
+            var t1 = Clip(trackID: v2, kind: .text, start: 0, duration: 2); t1.text.string = "Hi"
+            p.addTrack(.video)
+            var t2 = Clip(trackID: p.videoTracks[2].id, kind: .text, start: 0, duration: 2); t2.text.string = "Hi"
+            p.clips += [t1, t2]
+            // Sharp in the middle of each file, soft at the ends.
+            func analysis() -> ClipAnalysis {
+                ClipAnalysis(duration: 10, created: nil, samples: stride(from: 0.0, through: 10, by: 0.25).map { t in
+                    ClipAnalysis.Sample(time: t, luma: 0.45, sharpness: 400 - 30 * abs(t - 5) * abs(t - 5), motion: 0.01, color: 0.3, faces: 0)
+                })
+            }
+            let music = MusicAnalysis(duration: 60, bpm: 120, beats: stride(from: 0.0, to: 60, by: 0.5).map { $0 }, barPhase: 0,
+                                      energy: Array(repeating: 0.5, count: 120))
+            var good = false
+            var detail = "no plan"
+            if let outcome = LocalImprover.plan(project: p, analyses: [a.id: analysis(), b.id: analysis()], music: music) {
+                var q = p
+                for task in outcome.plan.tasks { task.edit.apply(&q, 1) }
+                let kept = q.clips.filter { $0.trackID == v1 }.sorted { $0.start < $1.start }
+                let gapless = zip(kept, kept.dropFirst()).allSatisfy { abs($0.end - $1.start) < 1e-6 } && abs((kept.first?.start ?? 1)) < 1e-6
+                let onBeats = kept.allSatisfy { abs(($0.end * 2).rounded() - $0.end * 2) < 1e-6 }
+                let end = kept.last?.end ?? 0
+                let onBar = abs((end / 2).rounded() - end / 2) < 1e-6
+                let repeatsOut = kept.filter { $0.assetID == a.id }.count == 1
+                let trimmed = kept.allSatisfy { $0.duration <= 4.5 + 1e-6 }
+                let song = q.clips.first { $0.assetID == songAsset.id }
+                let songFits = song.map { abs($0.end - end) < 1e-6 && $0.fadeOut > 0 } ?? false
+                let titleOnce = q.clips.filter { $0.kind == .text }.count == 1
+                good = gapless && onBeats && onBar && repeatsOut && trimmed && songFits && titleOnce
+                detail = "\(outcome.summary) | gapless=\(gapless) beats=\(onBeats) bar=\(onBar) repeats=\(repeatsOut) trimmed=\(trimmed) song=\(songFits) title=\(titleOnce) cuts=\(kept.map { $0.end })"
+            }
+            log("LOCAL IMPROVE \(good ? "OK" : "FAIL") \(detail)")
+            ok = ok && good
+        }
         // Shortcuts: key presses find their action; changing one takes it from whatever had it; resetting
         // brings the defaults back. The person's own shortcuts are put back afterwards.
         do {

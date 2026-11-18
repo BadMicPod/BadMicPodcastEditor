@@ -99,16 +99,25 @@ final class MagicShow: NSObject {
         let click = fromMouse ? window.mouseLocationOutsideOfEventStream : nil
         let project = model.project
         let offline = Set(project.assets.filter { model.media.isOffline($0) }.map(\.id))
+        // With an edit on the timeline, Magic improves that edit (its shots, its song) rather than
+        // starting over from the whole library.
+        let onTimeline = Set(project.clips.filter { $0.kind == .video || $0.kind == .image }.compactMap(\.assetID))
+        let improving = !onTimeline.isEmpty
         let visuals = project.assets.filter { a in
             !offline.contains(a.id) && (a.kind == .image || (a.kind == .video && a.duration >= 1))
+                && (!improving || onTimeline.contains(a.id))
         }
         guard !visuals.isEmpty else {
             NSSound.beep()
             return
         }
-        // The longest song in the library, if there is one.
-        let song = project.assets.filter { $0.kind == .audio && !offline.contains($0.id) && $0.duration >= 8 }
+        // The song: the one the edit uses, or (for a new cut) the longest in the library.
+        let songOnTimeline = project.clips.filter { $0.kind == .audio && $0.linkID == nil }
+            .compactMap { c in project.assets.first { $0.id == c.assetID && $0.kind == .audio } }
             .max { $0.duration < $1.duration }
+        let song = improving
+            ? songOnTimeline.flatMap { offline.contains($0.id) ? nil : $0 }
+            : project.assets.filter { $0.kind == .audio && !offline.contains($0.id) && $0.duration >= 8 }.max { $0.duration < $1.duration }
         state.busy = true
         state.status = "Watching"
         Task { @MainActor in
@@ -117,10 +126,20 @@ final class MagicShow: NSObject {
                 state.status = "Watching \(done) of \(total)"
             }
             state.status = "Planning"
-            let decision = AutoPlanner.decide(project: model.project, clips: found.clips, music: found.music)
-            let plan = decision.flatMap { Choreographer.plan(project: model.project, decision: $0) }
-            if CommandLine.arguments.contains("--magic"), let decision {
-                log(decision, found.music?.1, seconds: CACurrentMediaTime() - started)
+            var plan: MagicPlan?
+            if improving {
+                let analyses = Dictionary(found.clips.map { ($0.0.id, $0.1) }, uniquingKeysWith: { a, _ in a })
+                let outcome = LocalImprover.plan(project: model.project, analyses: analyses, music: found.music?.1)
+                plan = outcome?.plan
+                if CommandLine.arguments.contains("--magic") {
+                    FileHandle.standardError.write("MAGIC IMPROVE \(outcome?.summary ?? "nothing to change") (\(outcome?.plan.tasks.count ?? 0) edits)\n".data(using: .utf8)!)
+                }
+            } else {
+                let decision = AutoPlanner.decide(project: model.project, clips: found.clips, music: found.music)
+                plan = decision.flatMap { Choreographer.plan(project: model.project, decision: $0) }
+                if CommandLine.arguments.contains("--magic"), let decision {
+                    log(decision, found.music?.1, seconds: CACurrentMediaTime() - started)
+                }
             }
             guard let plan, current == nil, let canvas = TimelineCanvas.current, let window = canvas.window else {
                 state.busy = false

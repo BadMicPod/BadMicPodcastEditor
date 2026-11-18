@@ -93,10 +93,12 @@ struct MagicPopover: View {
             }
         } else {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Quick cut on this Mac")
+                Text(hasEdit ? "Improve this edit on this Mac" : "Quick cut on this Mac")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.text)
-                Text("Finds the best moments, cuts to the beat of your music, titles and grades it. A few seconds, no AI, nothing leaves your Mac.")
+                Text(hasEdit
+                     ? "Takes out repeats and weak shots, trims long shots to their best moment, cuts to the beat of your music, and gives it one look. Your shots, order and music stay. A few seconds, no AI."
+                     : "Finds the best moments, cuts to the beat of your music, titles and grades it. A few seconds, no AI, nothing leaves your Mac.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textDim)
                     .fixedSize(horizontal: false, vertical: true)
