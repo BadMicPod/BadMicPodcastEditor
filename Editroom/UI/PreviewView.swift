@@ -106,8 +106,8 @@ struct PreviewView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 16)
-            .padding(.bottom, 8)
 
+            // The bar takes the whole space under the picture, so its controls sit in the middle of it.
             TransportBar(model: model, clock: model.clock, meters: model.meters, zoom: $zoom)
         }
         .background(model.viewerOnly ? Color.black : Theme.bg)
@@ -244,7 +244,7 @@ struct TransportBar: View {
             }
         }
         .padding(.horizontal, 16)
-        .frame(height: 68)
+        .frame(height: 76)
     }
 }
 
