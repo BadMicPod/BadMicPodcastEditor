@@ -102,7 +102,7 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
         return CIContext(options: options)
     }()
 
-    private let queue = DispatchQueue(label: "cutandplay.compositor", qos: .userInteractive)
+    private let queue = DispatchQueue(label: "editroom.compositor", qos: .userInteractive)
     private let lock = NSLock()
     private var generation = 0
 
@@ -147,7 +147,7 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
             }
             guard let instruction = request.videoCompositionInstruction as? TimelineInstruction,
                   let output = request.renderContext.newPixelBuffer() else {
-                request.finish(with: NSError(domain: "CutAndPlay", code: 1))
+                request.finish(with: NSError(domain: "Editroom", code: 1))
                 return
             }
             let image = Self.compose(instruction, request: request)

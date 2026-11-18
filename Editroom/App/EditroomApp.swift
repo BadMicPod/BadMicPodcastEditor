@@ -100,16 +100,37 @@ enum MenuCleanup {
 }
 
 @main
-struct CutAndPlayApp: App {
+struct EditroomApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = EditorModel()
 
     init() {
+        Self.carryOverFromCutAndPlay()
         SelfTest.runIfRequested()
     }
 
+    /// The app used to be called Cut and Play. Its settings and its Application Support folder
+    /// (recovery file, converted and reversed media) move over once, the first time Editroom runs.
+    private static func carryOverFromCutAndPlay() {
+        let defaults = UserDefaults.standard
+        if let id = Bundle.main.bundleIdentifier,
+           defaults.persistentDomain(forName: id)?.isEmpty ?? true,
+           let old = defaults.persistentDomain(forName: "com.wonderassembly.CutAndPlay"), !old.isEmpty {
+            defaults.setPersistentDomain(old, forName: id)
+        }
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let old = support.appendingPathComponent("CutAndPlay", isDirectory: true)
+        let new = support.appendingPathComponent("Editroom", isDirectory: true)
+        if FileManager.default.fileExists(atPath: old.path), !FileManager.default.fileExists(atPath: new.path) {
+            try? FileManager.default.moveItem(at: old, to: new)
+            let recovery = new.appendingPathComponent("Recovery")
+            try? FileManager.default.moveItem(at: recovery.appendingPathComponent("Untitled.cutplay"),
+                                              to: recovery.appendingPathComponent("Untitled.room"))
+        }
+    }
+
     var body: some Scene {
-        Window("Cut and Play", id: "main") {
+        Window("Editroom", id: "main") {
             ContentView(model: model)
                 .frame(minWidth: 1080, minHeight: 680)
         }

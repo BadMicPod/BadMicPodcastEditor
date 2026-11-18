@@ -316,7 +316,7 @@ final class ExportJob {
                 videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
             output.videoComposition = built.videoComposition
             output.alwaysCopiesSampleData = false
-            guard reader.canAdd(output) else { throw NSError(domain: "CutAndPlay", code: 2, userInfo: [NSLocalizedDescriptionKey: "Couldn't set up video rendering."]) }
+            guard reader.canAdd(output) else { throw NSError(domain: "Editroom", code: 2, userInfo: [NSLocalizedDescriptionKey: "Couldn't set up video rendering."]) }
             reader.add(output)
 
             var compression: [String: Any] = [
@@ -339,7 +339,7 @@ final class ExportJob {
                 ],
             ])
             input.expectsMediaDataInRealTime = false
-            guard writer.canAdd(input) else { throw NSError(domain: "CutAndPlay", code: 3, userInfo: [NSLocalizedDescriptionKey: "This resolution isn't supported by the encoder."]) }
+            guard writer.canAdd(input) else { throw NSError(domain: "Editroom", code: 3, userInfo: [NSLocalizedDescriptionKey: "This resolution isn't supported by the encoder."]) }
             writer.add(input)
             pairs.append((output, input))
         }
@@ -378,7 +378,7 @@ final class ExportJob {
                 }
             }
         }
-        guard !pairs.isEmpty else { throw NSError(domain: "CutAndPlay", code: 4, userInfo: [NSLocalizedDescriptionKey: "Nothing to export."]) }
+        guard !pairs.isEmpty else { throw NSError(domain: "Editroom", code: 4, userInfo: [NSLocalizedDescriptionKey: "Nothing to export."]) }
     }
 
     func run(progress: @escaping (Double) -> Void, completion: @escaping (Error?) -> Void) {
@@ -393,7 +393,7 @@ final class ExportJob {
         let total = max(duration, 0.001)
         for (index, pair) in pairs.enumerated() {
             let (output, input) = pair
-            let queue = DispatchQueue(label: "cutandplay.export.\(index)")
+            let queue = DispatchQueue(label: "editroom.export.\(index)")
             var lastReported = -1.0
             group.enter()
             input.requestMediaDataWhenReady(on: queue) { [weak self] in

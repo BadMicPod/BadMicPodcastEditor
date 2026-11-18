@@ -204,7 +204,7 @@ private struct AddButton: View {
             .onTapGesture { model.addAtPlayhead(payload) }
             .onDrag {
                 model.dragPayload = payload
-                return NSItemProvider(object: ("cutandplay:" + (payload == .text ? "text" : "solid")) as NSString)
+                return NSItemProvider(object: ("editroom:" + (payload == .text ? "text" : "solid")) as NSString)
             }
             .help(help)
     }
@@ -221,7 +221,7 @@ private struct AssetActions: ViewModifier {
             .onTapGesture(count: 2) { model.addAtPlayhead(.asset(asset.id)) }
             .onDrag {
                 model.dragPayload = .asset(asset.id)
-                return NSItemProvider(object: ("cutandplay:" + asset.id.uuidString) as NSString)
+                return NSItemProvider(object: ("editroom:" + asset.id.uuidString) as NSString)
             }
             .contextMenu {
                 if offline {

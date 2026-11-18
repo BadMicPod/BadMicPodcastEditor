@@ -1,7 +1,7 @@
 import Foundation
 import AVFoundation
 
-/// Headless engine check: `Cut and Play --selftest <mediaDir> <outDir>`.
+/// Headless engine check: `Editroom --selftest <mediaDir> <outDir>`.
 /// Imports every file in mediaDir, builds a small multi-track edit, and exports MP4 + WAV.
 @MainActor
 enum SelfTest {
@@ -170,7 +170,7 @@ enum SelfTest {
         // Half size, in the top-right quarter of the frame.
         solid.transform = ClipTransform(scale: 0.5, x: 0.25, y: -0.25)
         var text = Clip(trackID: v2, kind: .text, start: 0.5, duration: 2)
-        text.text.string = "Cut and Play"
+        text.text.string = "Editroom"
         text.fadeIn = 0.5
         text.fadeOut = 0.5
         text.fadeOutCurve = .smooth
@@ -198,7 +198,7 @@ enum SelfTest {
         project.sanitize()
         log("project duration \(project.duration)")
         if let data = try? JSONEncoder().encode(SavedDocument(project: project)) {
-            try? data.write(to: outDir.appendingPathComponent("selftest.cutplay"))
+            try? data.write(to: outDir.appendingPathComponent("selftest.room"))
         }
 
         var ok = true

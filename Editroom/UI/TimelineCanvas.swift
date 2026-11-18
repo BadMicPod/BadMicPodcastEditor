@@ -922,8 +922,8 @@ final class TimelineCanvas: NSView {
     // MARK: Drag & drop
 
     private func payload(from sender: NSDraggingInfo) -> DragPayload? {
-        if let s = sender.draggingPasteboard.string(forType: .string), s.hasPrefix("cutandplay:") {
-            let body = String(s.dropFirst("cutandplay:".count))
+        if let s = sender.draggingPasteboard.string(forType: .string), s.hasPrefix("editroom:") {
+            let body = String(s.dropFirst("editroom:".count))
             if body == "solid" { return .solid }
             if body == "text" { return .text }
             if let id = UUID(uuidString: body) { return .asset(id) }

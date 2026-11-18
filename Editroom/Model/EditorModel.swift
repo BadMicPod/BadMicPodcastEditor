@@ -149,7 +149,7 @@ final class EditorModel: ObservableObject {
         Task {
             await BaseVideo.load()
             self.setNeedsRebuild()
-            // `--open <project.cutplay>` loads a project at launch.
+            // `--open <project.room>` loads a project at launch.
             let args = CommandLine.arguments
             if let i = args.firstIndex(of: "--open"), args.count > i + 1 {
                 self.open(url: URL(fileURLWithPath: args[i + 1]))
@@ -208,9 +208,9 @@ final class EditorModel: ObservableObject {
     /// Unsaved work on an untitled project is kept here, and reopened on the next launch.
     static var recoveryURL: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("CutAndPlay/Recovery", isDirectory: true)
+            .appendingPathComponent("Editroom/Recovery", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("Untitled.cutplay")
+        return dir.appendingPathComponent("Untitled.room")
     }
 
     /// What to reopen at launch: a project file's path, or "untitled" for the recovery copy.
@@ -1097,13 +1097,17 @@ final class EditorModel: ObservableObject {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
+    /// Projects are saved as `.room`; `.cutplay` is the name from before the app was called Editroom.
+    static let projectExtensions = ["room", "cutplay"]
+    static func isProjectFile(_ url: URL) -> Bool { projectExtensions.contains(url.pathExtension.lowercased()) }
+
     /// Files handed to the app from outside: a project opens, anything else is imported.
     func handleOpen(_ urls: [URL]) {
-        if let project = urls.first(where: { $0.pathExtension.lowercased() == "cutplay" }) {
+        if let project = urls.first(where: { Self.isProjectFile($0) }) {
             guard confirmDiscard() else { return }
             open(url: project)
         }
-        let media = urls.filter { $0.pathExtension.lowercased() != "cutplay" }
+        let media = urls.filter { !Self.isProjectFile($0) }
         if !media.isEmpty { importFiles(media) }
         NSApp.activate()
     }
@@ -1145,7 +1149,7 @@ final class EditorModel: ObservableObject {
     func openProject() {
         guard confirmDiscard() else { return }
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "cutplay") ?? .json]
+        panel.allowedContentTypes = Self.projectExtensions.compactMap { UTType(filenameExtension: $0) }
         guard panel.runModal() == .OK, let url = panel.url else { return }
         open(url: url)
     }
@@ -1158,8 +1162,8 @@ final class EditorModel: ObservableObject {
 
     func saveAs() {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "cutplay") ?? .json]
-        panel.nameFieldStringValue = title + ".cutplay"
+        panel.allowedContentTypes = [UTType(filenameExtension: "room") ?? .json]
+        panel.nameFieldStringValue = title + ".room"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         write(to: url)
         noteRecent(url)

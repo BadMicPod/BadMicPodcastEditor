@@ -10,7 +10,7 @@ import VideoToolbox
 enum Reverser {
     static var folder: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("CutAndPlay/Reversed", isDirectory: true)
+            .appendingPathComponent("Editroom/Reversed", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -40,7 +40,7 @@ final class ReverseFrames: @unchecked Sendable {
     private let lock = NSLock()
     private var chunks: [Key: Chunk] = [:]
     private var clock = 0
-    private let decodeQueue = DispatchQueue(label: "cutandplay.reverse", qos: .userInitiated, attributes: .concurrent)
+    private let decodeQueue = DispatchQueue(label: "editroom.reverse", qos: .userInitiated, attributes: .concurrent)
 
     init(asset: AVAsset, track: AVAssetTrack, naturalSize: CGSize) {
         self.asset = asset
