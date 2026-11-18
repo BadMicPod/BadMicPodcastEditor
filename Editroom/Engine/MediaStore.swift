@@ -18,7 +18,9 @@ final class MediaRuntime {
     /// The file's sound played backwards, once it's been made.
     var reversedAudio: (asset: AVURLAsset, track: AVAssetTrack, range: CMTimeRange)?
     /// Frames for playing the picture backwards.
-    lazy var reverseFrames: ReverseFrames? = videoTrack.map { ReverseFrames(asset: asset, track: $0, naturalSize: naturalSize) }
+    lazy var reverseFrames: ReverseFrames? = videoTrack.map {
+        ReverseFrames(asset: asset, track: $0, naturalSize: naturalSize, tenBit: !sourceColor.isStandard)
+    }
     var generator: FrameGrabber?
     /// Frames for hover-scrubbing a library tile: closer to the asked-for time than the filmstrip's.
     lazy var scrubGenerator: FrameGrabber = makeGenerator(maximumSize: CGSize(width: 400, height: 240),

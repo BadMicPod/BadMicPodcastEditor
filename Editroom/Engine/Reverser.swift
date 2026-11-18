@@ -19,12 +19,16 @@ enum Reverser {
 // MARK: - Picture
 
 /// Hands out a file's frames for any time, read half a second at a time and kept in a small cache,
-/// so playing backwards decodes each stretch once. The stretch before the one being shown is decoded
-/// ahead, while the current one plays.
+/// so playing decodes each stretch once. The next stretch in the playing direction is decoded ahead,
+/// while the current one plays. Used for clips playing backwards, and for HDR and Log clips, whose
+/// frames must reach the compositor exactly as the file has them (AVFoundation's own conversion of
+/// them is inaccurate).
 final class ReverseFrames: @unchecked Sendable {
     private let asset: AVAsset
     private let track: AVAssetTrack
     private let naturalSize: CGSize
+    /// HDR and Log are kept at 10 bits: their flat curves band badly in 8.
+    private let pixelFormat: OSType
 
     private final class Chunk: @unchecked Sendable {
         let group = DispatchGroup()
@@ -40,18 +44,61 @@ final class ReverseFrames: @unchecked Sendable {
     private let lock = NSLock()
     private var chunks: [Key: Chunk] = [:]
     private var clock = 0
+    private var lastTouched = Date.distantPast
+    private let fps: Double
+
+    /// Every instance alive, so one that starts decoding can tell idle ones to let their frames go:
+    /// decoded 4K frames are large, and a clip that has finished playing shouldn't keep them.
+    private static let registry = NSHashTable<ReverseFrames>.weakObjects()
+    private static let registryLock = NSLock()
     private let decodeQueue = DispatchQueue(label: "editroom.reverse", qos: .userInitiated, attributes: .concurrent)
 
-    init(asset: AVAsset, track: AVAssetTrack, naturalSize: CGSize) {
+    init(asset: AVAsset, track: AVAssetTrack, naturalSize: CGSize, tenBit: Bool = false) {
         self.asset = asset
         self.track = track
         self.naturalSize = naturalSize
+        pixelFormat = tenBit ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        let rate = Double(track.nominalFrameRate)
+        fps = rate > 1 ? rate : 30
+        Self.registryLock.lock()
+        Self.registry.add(self)
+        Self.registryLock.unlock()
+    }
+
+    /// Lets go of every decoded frame if nothing has asked for one for a couple of seconds.
+    private func releaseIfIdle(_ now: Date) {
+        lock.lock(); defer { lock.unlock() }
+        if now.timeIntervalSince(lastTouched) > 2 { chunks.removeAll() }
+    }
+
+    /// The frame showing at file time `t`, for playing forwards: the last one starting at or before it.
+    func frame(at t: Double, limit: Int) -> CVPixelBuffer? {
+        let len = chunkLength(limit: limit)
+        let k = max(0, Int(floor((t + 1e-6) / len)))
+        let chunk = self.chunk(k, limit: limit, length: len)
+        _ = chunk.group.wait(timeout: .now() + 3)
+        // Playing forwards needs the stretch after this one next.
+        _ = self.chunk(k + 1, limit: limit, length: len)
+        lock.lock()
+        let found = chunk.frames.last(where: { $0.pts <= t + 1e-6 })?.buffer
+        lock.unlock()
+        if let found { return found }
+        guard k > 0 else {
+            lock.lock(); defer { lock.unlock() }
+            return chunk.frames.first?.buffer
+        }
+        let previous = self.chunk(k - 1, limit: limit, length: len)
+        _ = previous.group.wait(timeout: .now() + 3)
+        lock.lock(); defer { lock.unlock() }
+        return previous.frames.last?.buffer ?? chunk.frames.first?.buffer
     }
 
     /// Frames are kept no bigger than `limit` on their long side. Big frames are cached in shorter
     /// stretches to keep memory down.
     private func chunkLength(limit: Int) -> Double {
-        limit > 2000 ? 0.25 : 0.5
+        // A stretch is a set number of frames (fewer when they're big), so a 60 or 120 fps file
+        // doesn't hold several times the memory of a 24 fps one.
+        limit > 2000 ? min(0.25, max(0.1, 8 / fps)) : min(0.5, max(0.15, 16 / fps))
     }
 
     /// The frame showing just before original time `t` (frames are held until the next one, so
@@ -81,6 +128,7 @@ final class ReverseFrames: @unchecked Sendable {
         let key = Key(index: k, limit: limit)
         lock.lock()
         clock += 1
+        lastTouched = Date()
         if let c = chunks[key] {
             c.lastUsed = clock
             lock.unlock()
@@ -90,12 +138,17 @@ final class ReverseFrames: @unchecked Sendable {
         c.lastUsed = clock
         c.group.enter()
         chunks[key] = c
-        // Keep the four most recently used stretches.
-        if chunks.count > 4 {
+        // Keep the three most recently used stretches: the one showing and those either side.
+        if chunks.count > 3 {
             let old = chunks.filter { $0.key != key }.sorted { $0.value.lastUsed < $1.value.lastUsed }
-            for (k, _) in old.prefix(chunks.count - 4) { chunks[k] = nil }
+            for (k, _) in old.prefix(chunks.count - 3) { chunks[k] = nil }
         }
         lock.unlock()
+        Self.registryLock.lock()
+        let others = Self.registry.allObjects.filter { $0 !== self }
+        Self.registryLock.unlock()
+        let now = Date()
+        for other in others { other.releaseIfIdle(now) }
         decodeQueue.async { [self] in
             let frames = decode(from: Double(k) * length, to: Double(k + 1) * length, limit: limit)
             lock.lock()
@@ -109,7 +162,7 @@ final class ReverseFrames: @unchecked Sendable {
     private func decode(from start: Double, to end: Double, limit: Int) -> [(pts: Double, buffer: CVPixelBuffer)] {
         guard let reader = try? AVAssetReader(asset: asset) else { return [] }
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            kCVPixelBufferPixelFormatTypeKey as String: pixelFormat,
             kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
         ])
         output.alwaysCopiesSampleData = false
@@ -132,7 +185,7 @@ final class ReverseFrames: @unchecked Sendable {
             guard pts >= start - 1e-4, pts < end - 1e-4, let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
             if let session {
                 var small: CVPixelBuffer?
-                CVPixelBufferCreate(nil, w, h, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                CVPixelBufferCreate(nil, w, h, pixelFormat,
                                     [kCVPixelBufferIOSurfacePropertiesKey: [String: Any](),
                                      kCVPixelBufferMetalCompatibilityKey: true] as CFDictionary, &small)
                 if let small, VTPixelTransferSessionTransferImage(session, from: buffer, to: small) == noErr {

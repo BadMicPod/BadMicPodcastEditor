@@ -108,6 +108,18 @@ enum CompositionBuilder {
                         layers.append(RenderLayer(clip: clip, source: .reversed(frames, rt.orientation, limit: limit, start: shown.start,
                                                                                 sourceStart: shown.sourceStart, speed: clip.speed, length: length),
                                                   cube: GradeBaker.cube(for: clip.grade), color: rt.sourceColor, plan: plan))
+                    case .video where clip.assetID.flatMap { media.runtimes[$0] }.map { !$0.sourceColor.isStandard } == true:
+                        // HDR and Log: read from the file as it plays, so the compositor gets the file's own
+                        // pixels; no composition track needed.
+                        guard let id = clip.assetID, let rt = media.runtimes[id], let frames = rt.reverseFrames else { continue }
+                        var shown = clip
+                        shown.start -= plan.leadIn
+                        shown.sourceStart -= plan.leadIn * clip.speed
+                        hash(shown, into: &hasher)
+                        let limit = Int(max(canvas.width, canvas.height).rounded())
+                        layers.append(RenderLayer(clip: clip, source: .decoded(frames, rt.orientation, limit: limit, start: shown.start,
+                                                                               sourceStart: shown.sourceStart, speed: clip.isFreeze ? 0 : clip.speed),
+                                                  cube: GradeBaker.cube(for: clip.grade), color: rt.sourceColor, plan: plan))
                     case .video:
                         guard let id = clip.assetID, let rt = media.runtimes[id], let src = rt.videoTrack else { continue }
                         let lane = index % 2
@@ -221,9 +233,12 @@ enum CompositionBuilder {
         vc.customVideoCompositorClass = TimelineCompositor.self
         vc.frameDuration = frameDuration(fps: project.fps)
         vc.renderSize = renderSize
-        // No colour space is set on purpose: that would make AVFoundation convert HDR and Log sources
-        // itself (poorly) before the compositor sees them. The compositor converts each source to
-        // Rec.709 (SourceColor) and tags every frame it makes as Rec.709.
+        // The timeline is Rec.709. Only SDR clips go through composition tracks (AVFoundation leaves
+        // them as they are); HDR and Log clips are read straight from their files and converted by
+        // the compositor (SourceColor), because AVFoundation's conversion of them is inaccurate.
+        vc.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
+        vc.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
+        vc.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
         let range = CMTimeRange(start: .zero, duration: CMTimeMaximum(comp.duration, time(total)))
         vc.instructions = [TimelineInstruction(timeRange: range, layers: layers, trackIDs: requiredTracks, canvas: canvas, offset: offset)]
 

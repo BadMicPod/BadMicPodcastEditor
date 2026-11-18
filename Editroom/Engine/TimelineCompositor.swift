@@ -11,6 +11,9 @@ struct RenderLayer {
         /// Played backwards: at timeline time t the frame is the one just before file time
         /// `length - (sourceStart + (t - start) * speed)`, kept no bigger than `limit` pixels.
         case reversed(ReverseFrames, CGImagePropertyOrientation, limit: Int, start: Double, sourceStart: Double, speed: Double, length: Double)
+        /// Played forwards, read straight from the file (HDR and Log): at timeline time t the frame
+        /// is the one showing at file time `sourceStart + (t - start) * speed`.
+        case decoded(ReverseFrames, CGImagePropertyOrientation, limit: Int, start: Double, sourceStart: Double, speed: Double)
     }
 
     /// When the layer is drawn: the clip, plus any extra a transition shows before or after it.
@@ -122,11 +125,6 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
         kCVPixelBufferIOSurfacePropertiesKey as String: [String: any Sendable](),
     ]
 
-    // HDR and wide-colour frames arrive untouched; each layer converts its own (see SourceColor),
-    // which is far more accurate than the system's conversion.
-    let supportsWideColorSourceFrames = true
-    let supportsHDRSourceFrames = true
-
     let requiredPixelBufferAttributesForRenderContext: [String: any Sendable] = [
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
         kCVPixelBufferMetalCompatibilityKey as String: true,
@@ -182,7 +180,7 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
             if opacity <= 0.001 { continue }
             var image: CIImage
             switch layer.source {
-            case .track, .reversed:
+            case .track, .reversed, .decoded:
                 var buffer: CVPixelBuffer?
                 var orientation = CGImagePropertyOrientation.up
                 if case .track(let id, let o) = layer.source {
@@ -190,6 +188,9 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
                     orientation = o
                 } else if case .reversed(let frames, let o, let limit, let start, let sourceStart, let speed, let length) = layer.source {
                     buffer = frames.frame(before: length - (sourceStart + (t - 1e-4 - start) * speed), limit: limit)
+                    orientation = o
+                } else if case .decoded(let frames, let o, let limit, let start, let sourceStart, let speed) = layer.source {
+                    buffer = frames.frame(at: sourceStart + (t - 1e-4 - start) * speed, limit: limit)
                     orientation = o
                 }
                 guard let buffer else { continue }

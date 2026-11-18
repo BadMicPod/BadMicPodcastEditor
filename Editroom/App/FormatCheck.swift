@@ -23,14 +23,31 @@ enum FormatCheck {
             log("FORMAT matrix Apple Wide Gamut to 709: \(fmt(SourceColor.wideGamutTo709))")
             var assets: [MediaAsset] = []
             for f in files { if let a = await check(f, out: out) { assets.append(a) } }
-            // Every video clip in a row, to look at in the app.
+            // Every video clip in a row: a timeline mixing formats, as people really edit. The
+            // system can hand frames over differently here than for a clip on its own.
+            let mixedMedia = MediaStore()
             var p = Project()
-            p.assets = assets
+            for f in files { if let a = await mixedMedia.importFile(f) { p.assets.append(a) } }
             var t = 0.0
-            for a in assets where a.kind == .video {
+            for a in p.assets where a.kind == .video {
                 p.clips.append(Clip(trackID: p.videoTracks[0].id, kind: .video, assetID: a.id, start: t, duration: min(a.duration, 2)))
                 t += min(a.duration, 2)
             }
+            p.width = 1920; p.height = 1080
+            var start = 0.0
+            for c in p.clips {
+                let name = p.assets.first { $0.id == c.assetID }?.name ?? "?"
+                let px = frame(p, media: mixedMedia, at: start + 1)
+                let patches = ["sdr_", "hlg_", "pq_", "applelog_"].contains { name.hasPrefix($0) }
+                if let px, patches {
+                    let worst = zip(px, expected).map { max(abs($0.0 - $1.0), abs($0.1 - $1.1), abs($0.2 - $1.2)) }.max() ?? 0
+                    log("FORMAT mixed timeline, \(name): worst off by \(worst)  [\(px.map { "\($0.0),\($0.1),\($0.2)" }.joined(separator: "  "))]")
+                } else {
+                    log("FORMAT mixed timeline, \(name): \(px == nil ? "NO FRAME" : "frame ok")")
+                }
+                start += c.duration
+            }
+            _ = assets
             if let data = try? JSONEncoder().encode(SavedDocument(project: p)) {
                 try? data.write(to: out.appendingPathComponent("formats.room"))
             }
@@ -105,8 +122,8 @@ enum FormatCheck {
         return a
     }
 
-    /// A frame at 0.5 s through the same pipeline playback uses, at full size.
-    static func frame(_ p: Project, media: MediaStore) -> [(Int, Int, Int)]? {
+    /// A frame at `at` seconds through the same pipeline playback uses, at full size.
+    static func frame(_ p: Project, media: MediaStore, at: Double = 0.5) -> [(Int, Int, Int)]? {
         let size = CGSize(width: p.width, height: p.height)
         guard let built = CompositionBuilder.build(project: p, media: media, renderSize: size, includeAudio: false),
               let reader = try? AVAssetReader(asset: built.composition) else { return nil }
@@ -118,7 +135,7 @@ enum FormatCheck {
         guard reader.startReading() else { return nil }
         var found: CMSampleBuffer?
         while let s = output.copyNextSampleBuffer() {
-            if CMSampleBufferGetPresentationTimeStamp(s).seconds >= 0.5 { found = s; break }
+            if CMSampleBufferGetPresentationTimeStamp(s).seconds >= at - 1e-3 { found = s; break }
         }
         guard let s = found, let pb = CMSampleBufferGetImageBuffer(s) else { return nil }
         CVPixelBufferLockBaseAddress(pb, .readOnly)
