@@ -113,6 +113,11 @@ final class TimelineCanvas: NSView {
     /// The window's timeline, for the magic overlay.
     static weak var current: TimelineCanvas?
 
+    /// What the magic show's cursors are doing, drawn the way a real drag is.
+    var magicMarks = MagicMarks() {
+        didSet { if magicMarks != oldValue { needsDisplay = true } }
+    }
+
     init(model: EditorModel) {
         self.model = model
         super.init(frame: .zero)
@@ -1181,6 +1186,21 @@ final class TimelineCanvas: NSView {
             for y in [top, bottom] { ctx.fillEllipse(in: CGRect(x: sx - 3, y: y - 3, width: 6, height: 6)) }
         }
 
+        // The magic show's snap guides and blade lines.
+        for line in magicMarks.snaps {
+            guard let c = project.clip(line.clip), let r = rect(for: c) else { continue }
+            let sx = x(line.time)
+            let top = max(ruler, r.minY - 4), bottom = min(bounds.height, r.maxY + 4)
+            ctx.setFillColor(NSColor(white: 1, alpha: 0.9).cgColor)
+            ctx.fill(CGRect(x: sx - 0.5, y: top, width: 1, height: bottom - top))
+            for y in [top, bottom] { ctx.fillEllipse(in: CGRect(x: sx - 3, y: y - 3, width: 6, height: 6)) }
+        }
+        for line in magicMarks.cuts {
+            guard let c = project.clip(line.clip), let r = rect(for: c) else { continue }
+            ctx.setFillColor(NSColor.white.cgColor)
+            ctx.fill(CGRect(x: x(line.time) - 0.75, y: r.minY + 2, width: 1.5, height: r.height - 4))
+        }
+
         // Marquee
         if let m = marquee {
             ctx.setFillColor(Theme.NS.accent.withAlphaComponent(0.12).cgColor)
@@ -1406,9 +1426,9 @@ final class TimelineCanvas: NSView {
         let r = full.insetBy(dx: 0, dy: 2).insetBy(dx: min(0.5, full.width / 4), dy: 0)
         let thumbs = model.thumbnails
         let base = thumbs ? Theme.NS.clip(c.kind) : Theme.NS.clipType(c.kind)
-        let selected = model.selection.contains(c.id)
+        let selected = model.selection.contains(c.id) || magicMarks.selected.contains(c.id)
         let hovered = hover?.id == c.id
-        let zone = hovered ? hover?.zone : nil
+        let zone = hovered ? hover?.zone : magicZone(c.id)
         let radius = min(7, r.width / 2)
         let path = CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius, transform: nil)
         let visible = r.intersection(bounds.insetBy(dx: -2, dy: 0))
@@ -1829,7 +1849,33 @@ private struct MarkerRow: View {
 
 // MARK: - Magic overlay geometry
 
+/// Highlights for the magic show: clips its cursors have hold of, and the edges, lines and
+/// handles they're dragging.
+struct MagicMarks: Equatable {
+    struct Line: Equatable {
+        var time: Double
+        var clip: UUID
+    }
+    var selected: Set<UUID> = []
+    var left: Set<UUID> = []
+    var right: Set<UUID> = []
+    var gain: Set<UUID> = []
+    var fadeIn: Set<UUID> = []
+    var fadeOut: Set<UUID> = []
+    var snaps: [Line] = []
+    var cuts: [Line] = []
+}
+
 extension TimelineCanvas {
+    private func magicZone(_ id: UUID) -> Zone? {
+        if magicMarks.left.contains(id) { return .left }
+        if magicMarks.right.contains(id) { return .right }
+        if magicMarks.gain.contains(id) { return .gain }
+        if magicMarks.fadeIn.contains(id) { return .fadeIn }
+        if magicMarks.fadeOut.contains(id) { return .fadeOut }
+        return nil
+    }
+
     /// A clip's rectangle in window coordinates, laid out for `project`.
     func magicWindowRect(of c: Clip, in project: Project) -> NSRect? {
         let layout = TimelineLayout(project: project, rowHeight: view.rowHeight)

@@ -84,6 +84,9 @@ final class MagicShow: NSObject {
         let tag = CALayer()
         let tagText = CATextLayer()
         let ghost = CALayer()
+        /// The right-click menu it opens to pick a transition.
+        let menu = CALayer()
+        let menuHighlight = CALayer()
         var slots: [Int] = []
         var label = ""
         var birth = 0.0
@@ -155,8 +158,13 @@ final class MagicShow: NSObject {
     private let backdropCount = CATextLayer()
     private var backdropSpan = (0.0, 0.0)
     /// The show runs slower than it's planned, so it lasts about this long.
-    static let targetLength = 5.0
+    static let targetLength = 7.0
     private var pace = 1.0
+    /// Timeline zoom during the show, and zoomed to fit the finished cut at the end.
+    private var startPPS: CGFloat = 1
+    /// Where a transition menu's Dissolve item is, from where the menu was opened.
+    static let menuItem = CGPoint(x: 62, y: 20)
+    static let menuItems = ["Dissolve", "Dip to Black", "Wipe"]
 
     private init(model: EditorModel, plan: MagicPlan, window: NSWindow, canvas: TimelineCanvas, fromMouse: Bool) {
         self.model = model
@@ -186,6 +194,7 @@ final class MagicShow: NSObject {
         model.setView(rowHeight: min(62, fit))
         model.setView(pps: (model.view.viewWidth - 60) / CGFloat(total), scrollX: 0)
         model.centerRows()
+        startPPS = model.view.pps
 
         spawn = spawnPoint()
         schedule()
@@ -214,9 +223,12 @@ final class MagicShow: NSObject {
     /// each takes the next edit it can reach soonest, so they work and finish independently.
     private func schedule() {
         let tasks = plan.tasks
-        for t in tasks { if case .place(let clips, _) = t.edit { for c in clips { staged[c.id] = c } } }
+        // Every clip as it first appears (dropped, or cut off by the blade), and the finished cut.
         finalProject = plan.base
-        for t in tasks { t.edit.apply(&finalProject, 1) }
+        for t in tasks {
+            t.edit.apply(&finalProject, 1)
+            for c in finalProject.clips where staged[c.id] == nil { staged[c.id] = c }
+        }
 
         let insp = inspectorRect
         cardSize = CGSize(width: insp.width - 24, height: Self.cardHeight)
@@ -365,6 +377,33 @@ final class MagicShow: NSObject {
             root.addSublayer(a.ghost)
         }
         for a in agents {
+            a.menu.bounds = CGRect(x: 0, y: 0, width: 116, height: 70)
+            a.menu.anchorPoint = .zero
+            a.menu.backgroundColor = NSColor(hex: 0x262626).cgColor
+            a.menu.cornerRadius = 7
+            a.menu.borderWidth = 1
+            a.menu.borderColor = NSColor(white: 1, alpha: 0.14).cgColor
+            a.menu.shadowColor = NSColor.black.cgColor
+            a.menu.shadowOpacity = 0.5
+            a.menu.shadowRadius = 8
+            a.menuHighlight.frame = CGRect(x: 4, y: 4, width: 108, height: 20)
+            a.menuHighlight.cornerRadius = 4
+            a.menuHighlight.backgroundColor = a.color.withAlphaComponent(0.85).cgColor
+            a.menu.addSublayer(a.menuHighlight)
+            for (k, item) in Self.menuItems.enumerated() {
+                let tl = CATextLayer()
+                tl.contentsScale = scale
+                tl.string = item
+                tl.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+                tl.fontSize = 11
+                tl.foregroundColor = Theme.NS.text.cgColor
+                tl.frame = CGRect(x: 12, y: 7 + CGFloat(k) * 21, width: 96, height: 15)
+                a.menu.addSublayer(tl)
+            }
+            a.menu.isHidden = true
+            root.addSublayer(a.menu)
+        }
+        for a in agents {
             a.cursor.contents = Self.cursorImage(a.color, scale: scale)
             a.cursor.contentsScale = scale
             a.cursor.bounds = CGRect(x: 0, y: 0, width: 18, height: 24)
@@ -420,13 +459,7 @@ final class MagicShow: NSObject {
             return t
         }
 
-        let name = model.project.clip(c.clip).map { model.project.name(of: $0) }
-            ?? plan.tasks.lazy.compactMap { t -> String? in
-                if case .place(let clips, let asset) = t.edit, clips.contains(where: { $0.id == c.clip }) {
-                    return self.plan.base.asset(asset)?.name
-                }
-                return nil
-            }.first ?? "Clip"
+        let name = finalProject.clip(c.clip).map { finalProject.name(of: $0) } ?? "Clip"
         c.title.contentsScale = scale
         _ = text("GRADE", CGRect(x: 10, y: 8, width: 44, height: 12), size: 9, weight: .bold, color: Theme.NS.textFaint)
         let t = text(name, CGRect(x: 52, y: 7, width: size.width - 62, height: 13), size: 10.5, weight: .semibold, color: Theme.NS.text)
@@ -543,8 +576,12 @@ final class MagicShow: NSObject {
 
     private var timelineRect: CGRect { toOverlay(canvas.convert(canvas.bounds, to: nil)) }
 
-    private func tileRect(_ asset: UUID) -> CGRect {
+    private func tileRect(_ asset: UUID?) -> CGRect {
         let library = MagicAnchors.rect("library").map { toOverlay($0) } ?? CGRect(x: 0, y: 80, width: 250, height: 400)
+        // A title comes from the Text button.
+        guard let asset else {
+            return MagicAnchors.rect("addText").map { toOverlay($0) } ?? CGRect(x: library.maxX - 90, y: library.minY + 10, width: 26, height: 26)
+        }
         guard var r = MagicAnchors.rect(asset.uuidString).map({ toOverlay($0) }) else {
             return CGRect(x: library.minX + 16, y: library.minY + 90, width: 64, height: 36)
         }
@@ -637,7 +674,23 @@ final class MagicShow: NSObject {
             }
         case .transition(let id, _):
             if let c = clip(id), let r = clipRect(c) {
+                // Right-clicks the cut, then picks Dissolve from the menu.
                 grab = CGPoint(x: r.minX, y: r.midY)
+                release = CGPoint(x: grab.x + Self.menuItem.x, y: grab.y + Self.menuItem.y)
+            }
+        case .blade(let ids, let at, _, _):
+            if let id = ids.first, let r = clipRect(id) {
+                grab = CGPoint(x: x(at), y: r.midY)
+                release = grab
+            }
+        case .remove(let ids):
+            if let id = ids.first, let r = clipRect(id) {
+                grab = CGPoint(x: r.midX, y: r.midY)
+                release = grab
+            }
+        case .type(let id, _):
+            if let r = clipRect(id) {
+                grab = CGPoint(x: r.minX + min(r.width / 2, 60), y: r.midY)
                 release = grab
             }
         }
@@ -685,6 +738,13 @@ final class MagicShow: NSObject {
             for i in c.slots { slots[i].edit.apply(&p, 1) }
         }
         model.live(autoCommit: false) { $0 = p }
+        canvas.magicMarks = marks(t)
+        if t > workEnd, finalProject.duration > 0 {
+            // Zoom out to fit the finished cut as the cursors head home.
+            let u = CGFloat(MagicEase.inOut(min(1, (t - workEnd) / max(0.1, showEnd - workEnd - 0.05))))
+            let fit = (model.view.viewWidth - 80) / CGFloat(finalProject.duration)
+            model.setView(pps: startPPS + (fit - startPPS) * u, scrollX: 0)
+        }
         flashViewer(t)
         let wall = CACurrentMediaTime()
         if frames > 0 { longestFrame = max(longestFrame, wall - lastFrame) }
@@ -707,6 +767,7 @@ final class MagicShow: NSObject {
                 a.cursor.isHidden = true
                 a.tag.isHidden = true
                 a.ghost.isHidden = true
+                a.menu.isHidden = true
                 continue
             }
             let work = min(t, a.home)
@@ -718,6 +779,7 @@ final class MagicShow: NSObject {
             var label = ""
             var ghost: (CGRect, CGImage?)?
             var pressed = false
+            var menu: (at: CGPoint, open: CGFloat, picked: Bool, shown: Bool)?
 
             // The edit this cursor is on: the first it hasn't finished, or its last.
             if let k = a.slots.firstIndex(where: { slots[$0].end > work }) ?? (a.slots.isEmpty ? nil : a.slots.count - 1) {
@@ -745,7 +807,9 @@ final class MagicShow: NSObject {
                     }
                     label = s.edit.label
                 } else if work < s.start {
-                    let (grab, _) = points(i)
+                    // Aims at where the control is now; it's pinned down when the drag starts, as
+                    // what it's heading for may still be moving.
+                    let (grab, _) = points(i, cache: false)
                     let early = s.start - leave > s.start - s.travelStart + 0.3
                     let from = early ? hoverPoint(i, a) : prev
                     // Otherwise it sets off when it needs to, at its own pace.
@@ -756,9 +820,16 @@ final class MagicShow: NSObject {
                     label = s.edit.label
                 } else {
                     let (grab, release) = points(i)
-                    let u = CGFloat(MagicEase.inOut((work - s.start) / (s.end - s.start)))
+                    let raw = (work - s.start) / (s.end - s.start)
+                    var u = CGFloat(MagicEase.inOut(raw))
+                    if case .transition = s.edit {
+                        // Right-click, the menu opens, slide down to Dissolve, click.
+                        let m = CGFloat(MagicEase.inOut(min(1, max(0, (raw - 0.3) / 0.45))))
+                        u = m
+                        menu = (grab, CGFloat(min(1, raw / 0.15)), raw > 0.6, raw < 0.9)
+                    }
                     pos = CGPoint(x: grab.x + (release.x - grab.x) * u, y: grab.y + (release.y - grab.y) * u)
-                    label = s.edit.label
+                    label = s.edit.label((work - s.start) / (s.end - s.start))
                     pressed = true
                     if case .place(let clips, let asset) = s.edit {
                         let tile = tileRect(asset)
@@ -766,14 +837,14 @@ final class MagicShow: NSObject {
                         let w0 = tile.width, h0 = tile.height
                         let w1 = min(target.width, 260), h1 = target.height
                         let w = w0 + (w1 - w0) * u, h = h0 + (h1 - h0) * u
-                        let poster = model.media.posters[asset]?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+                        let poster = asset.flatMap { model.media.posters[$0] }?.cgImage(forProposedRect: nil, context: nil, hints: nil)
                         ghost = (CGRect(x: pos.x - w * 0.3, y: pos.y - h / 2, width: w, height: h), poster)
                     }
                 }
             }
             if out > 0 {
                 // Back into the button.
-                let ctrl = CGPoint(x: (pos.x + spawn.x) / 2 + dir.x * 120, y: (pos.y + spawn.y) / 2 + dir.y * 120)
+                let ctrl = onScreen(CGPoint(x: (pos.x + spawn.x) / 2 + dir.x * 120, y: (pos.y + spawn.y) / 2 + dir.y * 120))
                 pos = Self.bezier(pos, ctrl, spawn, CGFloat(out))
                 label = ""
             }
@@ -798,6 +869,17 @@ final class MagicShow: NSObject {
                 a.tag.isHidden = false
                 a.tag.position = CGPoint(x: pos.x + 10 + a.tag.bounds.width / 2, y: pos.y + 26)
                 a.tag.opacity = a.cursor.opacity
+            }
+
+            if let menu, menu.shown {
+                a.menu.isHidden = false
+                a.menu.position = CGPoint(x: menu.at.x + 4, y: menu.at.y + 6)
+                a.menu.opacity = Float(menu.open)
+                let sc = 0.85 + 0.15 * menu.open
+                a.menu.transform = CATransform3DMakeScale(sc, sc, 1)
+                a.menuHighlight.opacity = menu.picked ? 1 : 0
+            } else if !a.menu.isHidden {
+                a.menu.isHidden = true
             }
 
             if let (frame, poster) = ghost {
@@ -872,6 +954,50 @@ final class MagicShow: NSObject {
         }
     }
 
+    /// What the timeline highlights: the clips cursors have hold of, the edges and handles they're
+    /// dragging, snap guides as they land, and the blade's line.
+    private func marks(_ t: Double) -> MagicMarks {
+        var m = MagicMarks()
+        for i in order where t >= slots[i].start && t < slots[i].end + 0.12 {
+            let s = slots[i]
+            let u = min(1, (t - s.start) / (s.end - s.start))
+            let live = t < s.end
+            switch s.edit {
+            case .place(let clips, _):
+                if !live { m.selected.formUnion(clips.map(\.id)) }
+            case .trimHead(let ids, _, let to):
+                m.selected.formUnion(ids)
+                if live { m.left.formUnion(ids) }
+                if live, u > 0.7, let id = ids.first { m.snaps.append(.init(time: to, clip: id)) }
+            case .trimTail(let ids, _, let to):
+                m.selected.formUnion(ids)
+                if live { m.right.formUnion(ids) }
+                if live, u > 0.7, let id = ids.first { m.snaps.append(.init(time: to, clip: id)) }
+            case .move(let ids, _, let to, _):
+                m.selected.formUnion(ids)
+                if live, u > 0.6, let id = ids.first { m.snaps.append(.init(time: to, clip: id)) }
+            case .blade(let ids, let at, _, _):
+                if live { m.cuts += ids.map { .init(time: at, clip: $0) } }
+            case .remove(let ids):
+                m.selected.formUnion(ids)
+            case .type(let id, _), .transition(let id, _):
+                m.selected.insert(id)
+            case .gain(let id, _, _):
+                m.selected.insert(id)
+                if live { m.gain.insert(id) }
+            case .fadeIn(let id, _):
+                m.selected.insert(id)
+                if live { m.fadeIn.insert(id) }
+            case .fadeOut(let id, _):
+                m.selected.insert(id)
+                if live { m.fadeOut.insert(id) }
+            case .look, .grade:
+                break
+            }
+        }
+        return m
+    }
+
     /// The viewer shows the shots as they're picked, one after another.
     private func flashViewer(_ t: Double) {
         let preview = model.sourcePreview
@@ -918,7 +1044,17 @@ final class MagicShow: NSObject {
     }
 
     /// A gentle curve between two points; the first trip fans out from where the cursors appeared.
+    /// Keeps a curve's control point in the window: the curve stays inside the triangle its ends and
+    /// control point make, so it never leaves the screen.
+    private func onScreen(_ p: CGPoint) -> CGPoint {
+        CGPoint(x: min(max(p.x, 12), window.frame.width - 12), y: min(max(p.y, 40), window.frame.height - 12))
+    }
+
     private func travelControl(_ a: CGPoint, _ b: CGPoint, _ agent: Agent, first: Bool, dir: CGPoint) -> CGPoint {
+        onScreen(rawControl(a, b, agent, first: first))
+    }
+
+    private func rawControl(_ a: CGPoint, _ b: CGPoint, _ agent: Agent, first: Bool) -> CGPoint {
         if first {
             // Swings out of the button toward its target, curving one way or the other.
             let dx = b.x - a.x, dy = b.y - a.y
@@ -957,6 +1093,8 @@ final class MagicShow: NSObject {
         model.live(autoCommit: false) { $0 = p }
         model.commitLive()
         model.sourcePreview.clear()
+        canvas.magicMarks = MagicMarks()
+        model.zoomToFit()
         if CommandLine.arguments.contains("--magic") {
             FileHandle.standardError.write(String(format: "MAGIC agents %d edits %d work %.2fs frames %d longest %.0fms\n",
                          agents.count, slots.count, workEnd, frames, longestFrame * 1000).data(using: .utf8)!)

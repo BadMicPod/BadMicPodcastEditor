@@ -203,6 +203,7 @@ private struct AddButton: View {
             .onHover { hovering = $0 }
             .animation(.easeOut(duration: 0.12), value: hovering)
             .onTapGesture { model.addAtPlayhead(payload) }
+            .background(MagicAnchor(key: payload == .text ? "addText" : "addSolid"))
             .onDrag {
                 model.dragPayload = payload
                 return NSItemProvider(object: ("editroom:" + (payload == .text ? "text" : "solid")) as NSString)
