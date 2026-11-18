@@ -311,6 +311,8 @@ private struct PromptForm: View {
     ]
 
     private static let sound: [Idea] = [
+        ("Find music", "magnifyingglass",
+         "Find royalty-free music I can download and use that suits this video, and tell me where to get it and what its licence allows."),
         ("Music and levels", "music.note",
          "Pick the best music in my Media for this edit, cut so the music and pictures land together, keep voices clear over it, and fade in and out."),
     ]
