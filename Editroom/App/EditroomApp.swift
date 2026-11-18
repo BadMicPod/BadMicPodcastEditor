@@ -90,7 +90,8 @@ enum MenuCleanup {
     }
 
     private static func isExtra(_ item: NSMenuItem) -> Bool {
-        let actions: Set<String> = ["startDictation:", "orderFrontCharacterPalette:"]
+        // Close and ⌘W are gone: there's one editor window, and ⌘Q quits.
+        let actions: Set<String> = ["startDictation:", "orderFrontCharacterPalette:", "performClose:", "closeAll:"]
         let identifiers: Set<String> = ["__NSTextViewContextSubmenuIdentifierWritingTools", "_NSMenuItemAutoFillIdentifier",
                                         "_NSMenuItemLegacyWritingToolsSeparatorIdentifier"]
         if let services = NSApp.servicesMenu, item.submenu === services { return true }
