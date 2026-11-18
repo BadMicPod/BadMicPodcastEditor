@@ -82,6 +82,7 @@ struct ContentView: View {
             .withoutGlass()
             ToolbarItem(placement: .primaryAction) {
                 MagicButton(model: model)
+                    .padding(.trailing, 8)
             }
             .withoutGlass()
             ToolbarItem(placement: .primaryAction) {
@@ -206,33 +207,48 @@ struct MagicButton: View {
     @ObservedObject var model: EditorModel
     @ObservedObject var state = MagicState.shared
     @ObservedObject var ai = MagicAgent.shared
+    @ObservedObject var connections = AgentConnect.shared
     @State private var hovering = false
 
     private var hasMedia: Bool { model.project.assets.contains { $0.kind != .audio } || !model.project.clips.isEmpty }
-    private var status: String? { ai.running ? (hovering ? "Stop" : ai.status) : ai.ready ?? state.status }
+    private var status: String? { ai.running ? ai.status : ai.ready ?? state.status }
+    /// While the AI works, hovering offers Stop in the same space (the button keeps its size, so the
+    /// pointer never slips off it).
+    private var offerStop: Bool { ai.running && hovering }
 
     var body: some View {
         Button {
             if ai.running { ai.stop() }
-            else if ai.choice != nil { ai.note = nil; ai.asking = true }
-            else { MagicShow.start(model: model, fromMouse: true) }
+            else {
+                connections.refresh()
+                if ai.choice != nil { ai.note = nil; ai.asking = true }
+                else { MagicShow.start(model: model, fromMouse: true) }
+            }
         } label: {
-            HStack(spacing: 5) {
-                if ai.running && hovering {
+            ZStack {
+                HStack(spacing: 5) {
+                    if status != nil {
+                        ProgressView().controlSize(.small).scaleEffect(0.55).frame(width: 12, height: 12)
+                    } else {
+                        Image(systemName: "wand.and.sparkles")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
+                    }
+                    Text(status ?? "Magic")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                        .monospacedDigit()
+                }
+                .opacity(offerStop ? 0 : 1)
+                HStack(spacing: 5) {
                     Image(systemName: "stop.fill")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(Theme.accent)
-                } else if status != nil {
-                    ProgressView().controlSize(.small).scaleEffect(0.55).frame(width: 12, height: 12)
-                } else {
-                    Image(systemName: "wand.and.sparkles")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Theme.accent)
+                    Text("Stop")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(Theme.text)
                 }
-                Text(status ?? "Magic")
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(Theme.text)
-                    .monospacedDigit()
+                .opacity(offerStop ? 1 : 0)
             }
             .padding(.horizontal, 11)
             .frame(height: 26)
@@ -247,6 +263,11 @@ struct MagicButton: View {
         .opacity(hasMedia || ai.running ? 1 : 0.4)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
+        // Which AIs are connected can change in AI Agents or in the apps themselves.
+        .onAppear { connections.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            connections.refresh()
+        }
         .help(ai.running ? "Stop \(ai.agent?.name ?? "")" : !hasMedia ? "Import some clips first"
               : ai.choice.map { "Magic: tell \($0.name) what to make" } ?? "Magic: build a cut from your media")
         // One popover: what to make, or what the AI said when it finished.
@@ -285,6 +306,7 @@ private struct MagicPrompt: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.text)
                 Spacer()
+                // Only the AIs that are connected; a choice only when there are two.
                 if ai.available.count > 1 {
                     Picker("", selection: $ai.preferred) {
                         ForEach(ai.available) { Text($0.name).tag($0) }
@@ -295,6 +317,7 @@ private struct MagicPrompt: View {
                     .controlSize(.small)
                 }
             }
+            ModelMenu(ai: ai, kind: kind)
 
             TextField(hasEdit ? "Leave empty to make it better" : "Leave empty for the best cut", text: $request, axis: .vertical)
                 .textFieldStyle(.plain)
@@ -347,6 +370,46 @@ private struct MagicPrompt: View {
     private func go() {
         close()
         ai.start(request: request, with: kind, model: model)
+    }
+}
+
+/// Which model the AI uses, and how hard it thinks. Remembered for each AI.
+private struct ModelMenu: View {
+    @ObservedObject var ai: MagicAgent
+    let kind: MagicAgent.Kind
+
+    var body: some View {
+        let current = ai.model(for: kind), effort = ai.effort(for: kind)
+        let options = ai.models(for: kind)
+        Menu {
+            Section("Model") {
+                ForEach(options) { m in
+                    Button {
+                        // Keep the effort if the new model has it.
+                        ai.setModel(m.id, effort: m.efforts.contains(effort) ? effort : "", for: kind)
+                    } label: {
+                        if m.id == current { Label(m.name, systemImage: "checkmark") } else { Text(m.name) }
+                    }
+                }
+            }
+            Section("Effort") {
+                ForEach([""] + (options.first { $0.id == current }?.efforts ?? []), id: \.self) { e in
+                    Button {
+                        ai.setModel(current, effort: e, for: kind)
+                    } label: {
+                        let name = e.isEmpty ? "Default" : MagicAgent.effortName(e)
+                        if e == effort { Label(name, systemImage: "checkmark") } else { Text(name) }
+                    }
+                }
+            }
+        } label: {
+            Text(ai.modelLabel(for: kind))
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(Theme.textDim)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Which \(kind.name) model makes the edit, and how hard it thinks")
     }
 }
 

@@ -52,11 +52,73 @@ final class MagicAgent: ObservableObject {
     private var startedServer = false
 
     /// The AIs on this Mac that Magic can use.
+    /// Only the AIs connected in AI Agents (and only while AI Agents is on): Claude through the Claude
+    /// app or Claude Code, ChatGPT through Codex.
     var available: [Kind] {
+        let c = AgentConnect.shared
+        guard MCPServer.shared.enabled else { return [] }
         var out: [Kind] = []
-        if AgentConnect.shared.claudeCLI != nil { out.append(.claude) }
-        if AgentConnect.shared.codexCLI != nil { out.append(.chatgpt) }
+        if c.states[.claude] == .connected || c.states[.claudeCode] == .connected, c.claudeCLI != nil { out.append(.claude) }
+        if c.states[.chatgpt] == .connected, c.codexCLI != nil { out.append(.chatgpt) }
         return out
+    }
+
+    // MARK: Model and effort
+
+    struct ModelOption: Identifiable, Hashable {
+        /// What the program is given ("" for its own default).
+        let id: String
+        let name: String
+        let efforts: [String]
+    }
+
+    static func effortName(_ e: String) -> String {
+        switch e {
+        case "": "Default effort"
+        case "xhigh": "Extra high"
+        default: e.prefix(1).uppercased() + e.dropFirst()
+        }
+    }
+
+    /// The models each AI offers. ChatGPT's come from Codex's own list on this Mac.
+    func models(for kind: Kind) -> [ModelOption] {
+        switch kind {
+        case .claude:
+            let efforts = ["low", "medium", "high", "xhigh", "max"]
+            return [ModelOption(id: "", name: "Default", efforts: efforts)] + [
+                ("claude-opus-5-5", "Opus 5.5"), ("claude-sonnet-5-5", "Sonnet 5.5"),
+                ("claude-haiku-5-5", "Haiku 5.5"), ("claude-fable-5-2", "Fable 5.2"),
+            ].map { ModelOption(id: $0.0, name: $0.1, efforts: efforts) }
+        case .chatgpt:
+            let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/models_cache.json")
+            var out = [ModelOption(id: "", name: "Default", efforts: ["low", "medium", "high", "xhigh"])]
+            if let data = try? Data(contentsOf: file),
+               let models = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["models"] as? [[String: Any]] {
+                for m in models where m["visibility"] as? String == "list" {
+                    guard let slug = m["slug"] as? String else { continue }
+                    // Not "ultra": it hands parts of the job to more agents, which costs much more.
+                    let efforts = (m["supported_reasoning_levels"] as? [[String: Any]] ?? []).compactMap { $0["effort"] as? String }.filter { $0 != "ultra" }
+                    out.append(ModelOption(id: slug, name: m["display_name"] as? String ?? slug, efforts: efforts))
+                }
+            }
+            return out
+        }
+    }
+
+    func model(for kind: Kind) -> String { UserDefaults.standard.string(forKey: "magicModel.\(kind.rawValue)") ?? "" }
+    func effort(for kind: Kind) -> String { UserDefaults.standard.string(forKey: "magicEffort.\(kind.rawValue)") ?? "" }
+
+    func setModel(_ id: String, effort: String, for kind: Kind) {
+        objectWillChange.send()
+        UserDefaults.standard.set(id, forKey: "magicModel.\(kind.rawValue)")
+        UserDefaults.standard.set(effort, forKey: "magicEffort.\(kind.rawValue)")
+    }
+
+    /// "Opus 5.5 · Low", for the popover's menu.
+    func modelLabel(for kind: Kind) -> String {
+        let id = model(for: kind), e = effort(for: kind)
+        let name = models(for: kind).first { $0.id == id }?.name ?? (id.isEmpty ? "Default" : id)
+        return e.isEmpty ? name : "\(name) · \(Self.effortName(e))"
     }
 
     /// The AI to use: the one picked last time if it's still here.
@@ -131,9 +193,17 @@ final class MagicAgent: ObservableObject {
 
     func start(request: String, with kind: Kind, model: EditorModel) {
         guard !running, !MagicShow.isRunning else { return }
+        // Disconnected in AI Agents means Magic doesn't use it either.
+        AgentConnect.shared.refresh()
+        guard available.contains(kind) else {
+            log("MAGIC AI \(kind.rawValue) isn't connected")
+            return
+        }
         let cli: URL? = kind == .claude ? AgentConnect.shared.claudeCLI : AgentConnect.shared.codexCLI
         guard let cli else { return }
         self.model = model
+        // Nothing plays while the AI works out the edit.
+        model.pause()
         stopped = false
         running = true
         agent = kind
@@ -259,6 +329,8 @@ final class MagicAgent: ObservableObject {
                 "--allowedTools", "mcp__editroom",
                 "--disallowedTools", "mcp__editroom__auto_edit", "mcp__editroom__import_media", "mcp__editroom__save_project",
             ]
+            if !model(for: kind).isEmpty { p.arguments! += ["--model", model(for: kind)] }
+            if !effort(for: kind).isEmpty { p.arguments! += ["--effort", effort(for: kind)] }
         case .chatgpt:
             p.arguments = [
                 "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config",
@@ -267,8 +339,10 @@ final class MagicAgent: ObservableObject {
                 "-c", "mcp_servers.editroom.tool_timeout_sec=300",
                 "-c", "mcp_servers.editroom.startup_timeout_sec=30",
                 "-c", "approval_policy=\"never\"",
-                "-",
             ]
+            if !model(for: kind).isEmpty { p.arguments! += ["-m", model(for: kind)] }
+            if !effort(for: kind).isEmpty { p.arguments! += ["-c", "model_reasoning_effort=\"\(effort(for: kind))\""] }
+            p.arguments! += ["-"]
         }
         p.environment = Self.environment
         let input = Pipe(), output = Pipe(), errors = Pipe()
