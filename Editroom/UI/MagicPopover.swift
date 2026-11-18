@@ -415,7 +415,8 @@ private struct PromptBox: View {
                 .font(Self.font)
                 .foregroundStyle(Theme.text)
                 .scrollContentBackground(.hidden)
-                .scrollIndicators(.automatic)
+                // A scroller whenever the text is taller than the box, not only while scrolling.
+                .scrollIndicators(.visible)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 9)
                 .focused(focused)
