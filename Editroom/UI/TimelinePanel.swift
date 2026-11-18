@@ -51,11 +51,11 @@ struct TimelineToolbar: View {
                 RangeReadout(model: model).padding(.leading, 4)
             }
             Spacer()
+            ToggleChip(title: "Thumbnails", on: model.thumbnails, help: "Clip Thumbnails: pictures in clips. Off shows clips as flat colour by type") { model.thumbnails.toggle() }
             ToggleChip(title: "Snap", on: model.snapping, help: "Snapping (S)") { model.snapping.toggle() }
             ToggleChip(title: "Sticky", on: model.sticky, help: "Sticky Edges (R): clips touching a clip that changes length move with it") { model.sticky.toggle() }
             ToggleChip(title: "Skim", on: model.skimming, help: "Skimming (K): hover the timeline to preview frames") { model.skimming.toggle() }
             ToggleChip(title: "Audio", on: model.audioScrub, help: "Audio Scrubbing (⇧S): hear sound while dragging the playhead or skimming") { model.audioScrub.toggle() }
-            ToggleChip(title: "Thumbnails", on: model.thumbnails, help: "Clip Thumbnails: pictures in clips. Off shows clips as flat colour by type") { model.thumbnails.toggle() }
             IconButton(symbol: "arrow.left.and.right", help: "Zoom to Fit (⇧Z)") { model.zoomToFit() }
                 .padding(.leading, 4)
         }
@@ -150,12 +150,12 @@ struct ToggleChip: View {
 
     var body: some View {
         Button(action: action) {
-            // On is white text on a lighter key; off is dim and flat.
+            // On is white text, off is dim; neither has a key behind it, only a faint one on hover.
             Text(title).font(.system(size: 11.5, weight: .medium))
             .foregroundStyle(on ? Theme.text : (hovering ? Theme.text.opacity(0.75) : Theme.textFaint))
             .padding(.horizontal, 10)
             .frame(height: 24)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(on ? Color(hex: 0x2A2A2A) : (hovering ? Theme.hover : .clear)))
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hovering ? Theme.hover : .clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
