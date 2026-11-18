@@ -139,6 +139,21 @@ final class AgentConnect: ObservableObject {
         }
     }
 
+    /// Stops waiting for the person to click Install in Claude.
+    func cancelWaiting() {
+        watch?.invalidate()
+        watch = nil
+        if case .waiting = states[.claude] { states[.claude] = nil }
+        states[.claude] = status(of: .claude)
+    }
+
+    /// Opens the Claude extension in Claude again (if its install box was closed).
+    func reopenClaude() {
+        let file = supportFolder.appendingPathComponent("Editroom.mcpb")
+        guard let claude = Self.appURL(Self.claudeBundleID), FileManager.default.fileExists(atPath: file.path) else { return connect(.claude) }
+        NSWorkspace.shared.open([file], withApplicationAt: claude, configuration: NSWorkspace.OpenConfiguration())
+    }
+
     /// Notices when the person clicks Install in Claude.
     private func watchForClaude() {
         watch?.invalidate()

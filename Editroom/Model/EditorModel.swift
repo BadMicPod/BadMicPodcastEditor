@@ -185,7 +185,16 @@ final class EditorModel: ObservableObject {
                 }
                 if args.contains("--magic-ask") {
                     try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    // `--magic-tab claude|chatgpt|local` picks the tab first.
+                    if let k = args.firstIndex(of: "--magic-tab"), args.count > k + 1, let tab = MagicAgent.Tab(rawValue: args[k + 1]) {
+                        MagicAgent.shared.tab = tab
+                    }
                     MagicAgent.shared.asking = true
+                }
+                // `--magic-note` (testing): shows a sample finished note.
+                if args.contains("--magic-note") {
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    MagicAgent.shared.note = MagicAgent.Note(agent: .chatgpt, text: "I cut it from 12 seconds to 8, took out the repeated shots, and timed the cuts to the music. Your library has no sound effects, so I couldn't add any.", changed: true, detail: "GPT-6.2-Sol · Low · 56s")
                 }
                 // `--magic-ai claude|chatgpt "request"` (testing): Magic with an AI, logged to stderr.
                 if let k = args.firstIndex(of: "--magic-ai"), args.count > k + 1,

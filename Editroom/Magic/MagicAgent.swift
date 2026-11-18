@@ -15,6 +15,14 @@ final class MagicAgent: ObservableObject {
         var name: String { self == .claude ? "Claude" : "ChatGPT" }
     }
 
+    /// The Magic popover's tabs: an AI, or the built-in cut on this Mac.
+    enum Tab: String, CaseIterable, Identifiable {
+        case claude, chatgpt, local
+        var id: String { rawValue }
+        var kind: Kind? { self == .claude ? .claude : self == .chatgpt ? .chatgpt : nil }
+        var name: String { kind?.name ?? "Local" }
+    }
+
     /// What an AI said when it finished, shown under the Magic button.
     struct Note: Identifiable {
         let id = UUID()
@@ -22,6 +30,8 @@ final class MagicAgent: ObservableObject {
         let text: String
         /// It changed the timeline (so there's something to undo).
         let changed: Bool
+        /// "Opus 5.5 · Low · 54s"
+        var detail = ""
     }
 
     @Published private(set) var running = false
@@ -34,10 +44,13 @@ final class MagicAgent: ObservableObject {
     /// Finished while the person was in another app: shown on the button until they come back.
     @Published private(set) var ready: String?
     private var whenBack: NSObjectProtocol?
-    /// The AI picked last time, when both are on this Mac.
-    @Published var preferred: Kind = Kind(rawValue: UserDefaults.standard.string(forKey: "magicAgent") ?? "") ?? .claude {
-        didSet { UserDefaults.standard.set(preferred.rawValue, forKey: "magicAgent") }
+    /// The popover's tab, remembered.
+    @Published var tab: Tab = Tab(rawValue: UserDefaults.standard.string(forKey: "magicTab") ?? "") ?? .claude {
+        didSet { UserDefaults.standard.set(tab.rawValue, forKey: "magicTab") }
     }
+    /// The model and effort of the run in progress, for its note.
+    private var runDetail = ""
+    private var lastSeconds = 0.0
 
     private var process: Process?
     private var stopped = false
@@ -54,29 +67,54 @@ final class MagicAgent: ObservableObject {
     /// The AIs on this Mac that Magic can use.
     /// Only the AIs connected in AI Agents (and only while AI Agents is on): Claude through the Claude
     /// app or Claude Code, ChatGPT through Codex.
-    var available: [Kind] {
+    var available: [Kind] { Kind.allCases.filter { connected($0) && runnable($0) } }
+
+    /// Connected in AI Agents (or from the Magic popover), with AI Agents on.
+    func connected(_ kind: Kind) -> Bool {
         let c = AgentConnect.shared
-        guard MCPServer.shared.enabled else { return [] }
-        var out: [Kind] = []
-        if c.states[.claude] == .connected || c.states[.claudeCode] == .connected, c.claudeCLI != nil { out.append(.claude) }
-        if c.states[.chatgpt] == .connected, c.codexCLI != nil { out.append(.chatgpt) }
-        return out
+        guard MCPServer.shared.enabled else { return false }
+        switch kind {
+        case .claude: return c.states[.claude] == .connected || c.states[.claudeCode] == .connected
+        case .chatgpt: return c.states[.chatgpt] == .connected
+        }
+    }
+
+    /// The program Magic runs is on this Mac: Claude Code, or the Codex that comes with ChatGPT.
+    func runnable(_ kind: Kind) -> Bool {
+        kind == .claude ? AgentConnect.shared.claudeCLI != nil : AgentConnect.shared.codexCLI != nil
+    }
+
+    /// The app (or its program) is on this Mac at all.
+    func installed(_ kind: Kind) -> Bool {
+        switch kind {
+        case .claude: return AgentConnect.appURL(AgentConnect.claudeBundleID) != nil || AgentConnect.shared.claudeCLI != nil
+        case .chatgpt: return AgentConnect.chatgptBundleIDs.contains { AgentConnect.appURL($0) != nil } || AgentConnect.shared.codexCLI != nil
+        }
     }
 
     // MARK: Model and effort
 
     struct ModelOption: Identifiable, Hashable {
-        /// What the program is given ("" for its own default).
+        /// What the program is given.
         let id: String
         let name: String
+        var blurb = ""
         let efforts: [String]
+        var defaultEffort = "medium"
     }
 
     static func effortName(_ e: String) -> String {
         switch e {
-        case "": "Default effort"
         case "xhigh": "Extra high"
         default: e.prefix(1).uppercased() + e.dropFirst()
+        }
+    }
+
+    static func effortBlurb(_ e: String) -> String {
+        switch e {
+        case "low": "Quickest"
+        case "max": "Slowest"
+        default: ""
         }
     }
 
@@ -85,28 +123,45 @@ final class MagicAgent: ObservableObject {
         switch kind {
         case .claude:
             let efforts = ["low", "medium", "high", "xhigh", "max"]
-            return [ModelOption(id: "", name: "Default", efforts: efforts)] + [
-                ("claude-opus-5-5", "Opus 5.5"), ("claude-sonnet-5-5", "Sonnet 5.5"),
-                ("claude-haiku-5-5", "Haiku 5.5"), ("claude-fable-5-2", "Fable 5.2"),
-            ].map { ModelOption(id: $0.0, name: $0.1, efforts: efforts) }
+            return [
+                ("claude-opus-5-5", "Opus 5.5", "Best edits"), ("claude-sonnet-5-5", "Sonnet 5.5", "Fast"),
+                ("claude-haiku-5-5", "Haiku 5.5", "Fastest"), ("claude-fable-5-2", "Fable 5.2", "Most capable"),
+            ].map { ModelOption(id: $0.0, name: $0.1, blurb: $0.2, efforts: efforts) }
         case .chatgpt:
             let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/models_cache.json")
-            var out = [ModelOption(id: "", name: "Default", efforts: ["low", "medium", "high", "xhigh"])]
+            var out: [ModelOption] = []
             if let data = try? Data(contentsOf: file),
                let models = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["models"] as? [[String: Any]] {
                 for m in models where m["visibility"] as? String == "list" {
                     guard let slug = m["slug"] as? String else { continue }
                     // Not "ultra": it hands parts of the job to more agents, which costs much more.
                     let efforts = (m["supported_reasoning_levels"] as? [[String: Any]] ?? []).compactMap { $0["effort"] as? String }.filter { $0 != "ultra" }
-                    out.append(ModelOption(id: slug, name: m["display_name"] as? String ?? slug, efforts: efforts))
+                    out.append(ModelOption(id: slug, name: m["display_name"] as? String ?? slug, efforts: efforts,
+                                           defaultEffort: m["default_reasoning_level"] as? String ?? "medium"))
                 }
             }
             return out
         }
     }
 
-    func model(for kind: Kind) -> String { UserDefaults.standard.string(forKey: "magicModel.\(kind.rawValue)") ?? "" }
-    func effort(for kind: Kind) -> String { UserDefaults.standard.string(forKey: "magicEffort.\(kind.rawValue)") ?? "" }
+    /// The chosen model: the one picked last time if it's still offered, or the first.
+    func model(for kind: Kind) -> String {
+        let options = models(for: kind)
+        let saved = UserDefaults.standard.string(forKey: "magicModel.\(kind.rawValue)") ?? ""
+        return options.contains { $0.id == saved } ? saved : options.first?.id ?? ""
+    }
+
+    func effort(for kind: Kind) -> String {
+        let option = models(for: kind).first { $0.id == model(for: kind) }
+        let saved = UserDefaults.standard.string(forKey: "magicEffort.\(kind.rawValue)") ?? ""
+        if let option, option.efforts.contains(saved) { return saved }
+        return option?.defaultEffort ?? ""
+    }
+
+    func modelName(for kind: Kind) -> String {
+        let id = model(for: kind)
+        return models(for: kind).first { $0.id == id }?.name ?? (id.isEmpty ? "Default" : id)
+    }
 
     func setModel(_ id: String, effort: String, for kind: Kind) {
         objectWillChange.send()
@@ -114,18 +169,14 @@ final class MagicAgent: ObservableObject {
         UserDefaults.standard.set(effort, forKey: "magicEffort.\(kind.rawValue)")
     }
 
-    /// "Opus 5.5 · Low", for the popover's menu.
+    /// "Opus 5.5 · Low"
     func modelLabel(for kind: Kind) -> String {
-        let id = model(for: kind), e = effort(for: kind)
-        let name = models(for: kind).first { $0.id == id }?.name ?? (id.isEmpty ? "Default" : id)
-        return e.isEmpty ? name : "\(name) · \(Self.effortName(e))"
+        let e = effort(for: kind)
+        return e.isEmpty ? modelName(for: kind) : "\(modelName(for: kind)) · \(Self.effortName(e))"
     }
 
-    /// The AI to use: the one picked last time if it's still here.
-    var choice: Kind? {
-        let a = available
-        return a.contains(preferred) ? preferred : a.first
-    }
+    /// The AI the popover's tab is on, if it's ready to use.
+    var choice: Kind? { tab.kind.flatMap { available.contains($0) ? $0 : nil } }
 
     // MARK: The brief
 
@@ -210,6 +261,7 @@ final class MagicAgent: ObservableObject {
         note = nil
         status = "\(kind.name) is starting"
         started = Date()
+        runDetail = modelLabel(for: kind)
         log("MAGIC AI \(kind.rawValue) request \"\(request)\"")
         Task {
             guard await serverReady() else {
@@ -457,6 +509,7 @@ final class MagicAgent: ObservableObject {
         let draft = self.draft
         let edits = draft?.edits ?? []
         let seconds = Date().timeIntervalSince(started)
+        lastSeconds = seconds
         done()
         if stopped { return log("MAGIC AI stopped") }
         let stderr = String(data: errorText, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -490,19 +543,24 @@ final class MagicAgent: ObservableObject {
     /// Plays the AI's edits onto the timeline with the swarm, then shows what it said.
     private func reveal(_ kind: Kind, _ edits: [MagicEdit], _ said: String) {
         guard let model, !edits.isEmpty else {
-            note = Note(agent: kind, text: said.isEmpty ? "\(kind.name) didn't change anything." : said, changed: false)
+            note = Note(agent: kind, text: said.isEmpty ? "\(kind.name) didn't change anything." : said, changed: false, detail: noteDetail)
             return
         }
         // Played onto the timeline as it is now (in case it changed while the AI was thinking).
         let plan = MCPDraft.plan(base: model.project, edits: edits)
         log("MAGIC AI playing \(plan.tasks.count) edits")
+        let detail = noteDetail
         let shown = MagicShow.play(model: model, plan: plan) { [weak self] in
-            self?.note = Note(agent: kind, text: said, changed: true)
+            self?.note = Note(agent: kind, text: said, changed: true, detail: detail)
         }
         if !shown {
             model.mutate { p in for e in edits { e.apply(&p, 1) } }
-            note = Note(agent: kind, text: said, changed: true)
+            note = Note(agent: kind, text: said, changed: true, detail: noteDetail)
         }
+    }
+
+    private var noteDetail: String {
+        "\(runDetail) · \(Int(lastSeconds.rounded()))s"
     }
 
     private func alert(_ title: String, _ text: String) {
