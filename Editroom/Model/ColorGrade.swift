@@ -55,8 +55,11 @@ struct GradeRecipe {
     var highlights = (0.0, 0.0, 0.0)
     var lift = (0.0, 0.0, 0.0)
     var fade = 0.0
+    /// A look with its own maths (see LookMath), used instead of the steps above.
+    var custom: (((Double, Double, Double)) -> (Double, Double, Double))?
 
     func apply(_ rgb: (Double, Double, Double)) -> (Double, Double, Double) {
+        if let custom { return custom(rgb) }
         var (r, g, b) = rgb
         let gain = pow(2, exposure)
         r *= gain; g *= gain; b *= gain
@@ -80,16 +83,71 @@ struct GradeRecipe {
 }
 
 enum BuiltInLook {
+    /// The Looks offered in the menu, in order.
     static let all: [(name: String, recipe: GradeRecipe)] = [
         ("Warm film", GradeRecipe(contrast: 8, saturation: -8, temperature: 18, lift: (0.02, 0, -0.02), fade: 0.03)),
+        ("Golden hour", GradeRecipe(custom: LookMath.goldenHour)),
         ("Teal and orange", GradeRecipe(contrast: 12, saturation: 10, shadows: (-0.05, 0.01, 0.05), highlights: (0.06, 0.01, -0.05))),
-        ("Faded", GradeRecipe(contrast: -18, saturation: -20, fade: 0.07)),
+        ("Pastel", GradeRecipe(custom: LookMath.pastel)),
+        ("Bleach bypass", GradeRecipe(custom: LookMath.bleachBypass)),
         ("Mono", GradeRecipe(contrast: 14, saturation: -100)),
         ("Cool night", GradeRecipe(exposure: -0.25, contrast: 6, saturation: -15, temperature: -22)),
     ]
 
+    /// No longer offered, but still read, so projects that used them look the same.
+    private static let retired: [(name: String, recipe: GradeRecipe)] = [
+        ("Faded", GradeRecipe(contrast: -18, saturation: -20, fade: 0.07)),
+    ]
+
     static func named(_ name: String) -> GradeRecipe? {
-        all.first { $0.name == name }?.recipe
+        (all + retired).first { $0.name == name }?.recipe
+    }
+}
+
+/// Looks that need more than GradeRecipe's steps: a soft S-curve, tints weighted toward the
+/// shadows or highlights. Values are Rec.709-encoded 0...1, as in every grade.
+enum LookMath {
+    typealias RGB = (Double, Double, Double)
+
+    private static func clamp(_ x: Double) -> Double { min(1, max(0, x)) }
+    private static func luma(_ c: RGB) -> Double { 0.2126 * c.0 + 0.7152 * c.1 + 0.0722 * c.2 }
+    private static func each(_ c: RGB, _ f: (Double) -> Double) -> RGB { (f(c.0), f(c.1), f(c.2)) }
+    /// Positive adds an S-curve; negative flattens.
+    private static func contrast(_ c: RGB, _ k: Double) -> RGB {
+        each(c) { x in let x = clamp(x), s = x * x * (3 - 2 * x); return clamp(x + k * (s - x) * 2) }
+    }
+    private static func fade(_ c: RGB, _ f: Double) -> RGB { each(c) { f + (1 - f) * $0 } }
+    private static func saturate(_ c: RGB, _ s: Double) -> RGB { let l = luma(c); return each(c) { clamp(l + s * ($0 - l)) } }
+    private static func add(_ c: RGB, _ t: RGB, _ w: Double = 1) -> RGB {
+        (clamp(c.0 + t.0 * w), clamp(c.1 + t.1 * w), clamp(c.2 + t.2 * w))
+    }
+    /// Tints that land mostly in the shadows and mostly in the highlights.
+    private static func split(_ c: RGB, shadows: RGB, highlights: RGB) -> RGB {
+        let l = clamp(luma(c))
+        return add(add(c, shadows, (1 - l) * (1 - l)), highlights, l * l)
+    }
+
+    /// Amber highlights, slightly cool shadows: late-afternoon light.
+    static func goldenHour(_ c: RGB) -> RGB {
+        var c = split(c, shadows: (-0.012, 0, 0.03), highlights: (0.085, 0.04, -0.06))
+        c = contrast(c, 0.08)
+        return saturate(c, 1.08)
+    }
+
+    /// High contrast and very little colour.
+    static func bleachBypass(_ c: RGB) -> RGB {
+        var c = saturate(each(c, clamp), 0.42)
+        c = contrast(c, 0.42)
+        return add(c, (-0.01, 0, 0.008))
+    }
+
+    /// Lifted shadows, soft bright colours.
+    static func pastel(_ c: RGB) -> RGB {
+        var c = each(c) { pow(clamp($0), 0.8) }
+        c = contrast(c, -0.36)
+        c = fade(c, 0.14)
+        c = split(c, shadows: (0.03, 0, 0.05), highlights: (0.01, 0, 0.012))
+        return saturate(c, 0.8)
     }
 }
 
