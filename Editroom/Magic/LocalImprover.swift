@@ -64,10 +64,24 @@ enum LocalImprover {
             return inside.isEmpty ? 0.5 : inside.reduce(0, +) / Double(inside.count)
         }
 
-        // 1. Repeats: the same file, mostly the same part. Keep the better-scoring one.
+        // 0. Media they named: only those, or not those. A request like that is done on its own: nothing
+        // else unasked (no repeats or weak shots out, no trimming, no look), just the gaps closed.
+        let focused = recipe.isFocused
         var keep = shots
         var dropped: [Clip] = []
-        var i = 0
+        if !recipe.keepOnly.isEmpty {
+            dropped += keep.filter { !recipe.keepOnly.contains($0.assetID ?? UUID()) }
+            keep.removeAll { !recipe.keepOnly.contains($0.assetID ?? UUID()) }
+        }
+        if !recipe.takeOut.isEmpty {
+            dropped += keep.filter { recipe.takeOut.contains($0.assetID ?? UUID()) }
+            keep.removeAll { recipe.takeOut.contains($0.assetID ?? UUID()) }
+        }
+        let named = dropped.count
+        guard !keep.isEmpty else { return nil }
+
+        // 1. Repeats: the same file, mostly the same part. Keep the better-scoring one.
+        var i = focused ? keep.count : 0
         while i < keep.count {
             var j = i + 1
             while j < keep.count {
@@ -85,10 +99,10 @@ enum LocalImprover {
             }
             i += 1
         }
-        let repeats = dropped.count
+        let repeats = dropped.count - named
 
         // 2. The weakest shots, when there are enough to spare: at most a quarter, never below four.
-        if keep.count > 4 {
+        if keep.count > 4, !focused {
             let scores = keep.map(shotScore)
             let floor = AutoPlanner.percentile(scores, 0.15) - 0.05
             let weak = keep.indices.filter { scores[$0] < floor }.sorted { scores[$0] < scores[$1] }
@@ -106,7 +120,9 @@ enum LocalImprover {
             switch recipe.pace {
             case .calm: return c.duration > 6 ? max(4, c.duration * 0.8) : c.duration
             case .fast: return c.duration > 2 ? max(1.2, min(2.5, c.duration * 0.5)) : c.duration
-            case .unchanged: return c.duration > 3.5 ? min(c.duration, max(2.5, min(4.5, c.duration * 0.6))) : c.duration
+            case .unchanged:
+                if focused { return c.duration }
+                return c.duration > 3.5 ? min(c.duration, max(2.5, min(4.5, c.duration * 0.6))) : c.duration
             }
         }
         // A length they asked for. Shorter: the weakest shots go while even shorter shots couldn't get
@@ -154,7 +170,7 @@ enum LocalImprover {
             }
         }
         func wanted(_ c: Clip) -> Double { planned[c.id] ?? paced(c) }
-        let weakOut = dropped.count - repeats
+        let weakOut = dropped.count - repeats - named
 
         // The song: the longest sound-only clip from a music file; none if they asked for no music; or a
         // song from the library put under the edit if they asked for music and there wasn't any.
@@ -176,7 +192,9 @@ enum LocalImprover {
         }
         var cuts: [Double] = [firstStart]   // where each kept shot starts, then where the last one ends
         var lengths: [Double] = []
-        if let song, let m = music, m.beats.count > 8 {
+        // Cut to the beat, unless it's a focused request that didn't ask for a length or pace.
+        let snap = !focused || recipe.seconds != nil || recipe.pace != .unchanged || placing != nil
+        if snap, let song, let m = music, m.beats.count > 8 {
             // Beats on the timeline.
             let beats = m.beats.map { song.start + ($0 - song.sourceStart) / max(0.01, song.speed) }.filter { $0 > firstStart + 0.2 }
             let minLen = max(0.8, 2 * m.period)
@@ -289,7 +307,15 @@ enum LocalImprover {
         let order = Dictionary(p.videoTracks.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { a, _ in a })
         let titles = p.clips.filter { $0.kind == .text }.sorted { (order[$0.trackID] ?? 0) < (order[$1.trackID] ?? 0) }
         var doubled = Set<UUID>()
-        for (k, t) in titles.enumerated() where !doubled.contains(t.id) {
+        // "Nothing else on the timeline": titles and overlays go.
+        if recipe.clearRest {
+            for c in p.clips where c.trackID != track.id && p.videoTracks.contains(where: { $0.id == c.trackID })
+                && !p.isLocked(c.trackID) && !recipe.keepOnly.contains(c.assetID ?? UUID()) {
+                doubled.insert(c.id)
+                edits.append(.remove([c.id]))
+            }
+        }
+        for (k, t) in titles.enumerated() where !doubled.contains(t.id) && !focused {
             for u in titles[(k + 1)...] where !doubled.contains(u.id) && u.text.string == t.text.string
                 && u.start < t.end && u.end > t.start && !p.isLocked(u.trackID) {
                 doubled.insert(u.id)
@@ -309,7 +335,9 @@ enum LocalImprover {
         // sound under it.
         let keptIDs = Set(keep.map(\.id))
         let keptAudio = p.clips.filter { a in a.kind == .audio && a.linkID != nil && keep.contains { $0.linkID == a.linkID } }
-        if recipe.music == .off, let s = songOnTimeline, !p.isLocked(s.trackID) {
+        // (Music goes too for "nothing else", unless it's one of the files they named.)
+        let musicGoes = recipe.music == .off || (recipe.clearRest && recipe.music != .add && !recipe.keepOnly.contains(songOnTimeline?.assetID ?? UUID()))
+        if musicGoes, let s = songOnTimeline, !p.isLocked(s.trackID) {
             edits.append(.remove([s.id]))
         }
         if var c = placing, let newSong {
@@ -329,13 +357,13 @@ enum LocalImprover {
             edits.append(.place([c], asset: newSong.id))
             edits.append(.fadeOut(c.id, to: min(2, c.duration * 0.15)))
             for a in keptAudio where a.gainDB > -10 { edits.append(.gain(a.id, from: a.gainDB, to: -16)) }
-        } else if let song, !p.isLocked(song.trackID) {
+        } else if let song, !musicGoes, !p.isLocked(song.trackID) {
             if song.end > newEnd + 1e-3 { edits.append(.trimTail([song.id], from: song.end, to: newEnd)) }
             if song.fadeOut < 1.5 { edits.append(.fadeOut(song.id, to: min(2, max(0.5, (min(song.end, newEnd) - song.start) * 0.15)))) }
             for a in keptAudio where a.gainDB > -10 {
                 edits.append(.gain(a.id, from: a.gainDB, to: -16))
             }
-        } else if let first = keptAudio.min(by: { $0.start < $1.start }), let last = keptAudio.max(by: { $0.start < $1.start }) {
+        } else if !focused, let first = keptAudio.min(by: { $0.start < $1.start }), let last = keptAudio.max(by: { $0.start < $1.start }) {
             if first.fadeIn < 0.2 { edits.append(.fadeIn(first.id, to: 0.3)) }
             if last.fadeOut < 0.3 { edits.append(.fadeOut(last.id, to: 0.6)) }
         }
@@ -343,7 +371,7 @@ enum LocalImprover {
         // 7. One look: the one they asked for, or the one most of the shots have, on all of them (or looks
         // off, if they asked); and exposure evened out.
         let looks = keep.compactMap { $0.grade?.look }
-        let common = recipe.look ?? Dictionary(looks.map { ($0, 1) }, uniquingKeysWith: +).max { $0.value < $1.value }?.key
+        let common = recipe.look ?? (focused ? nil : Dictionary(looks.map { ($0, 1) }, uniquingKeysWith: +).max { $0.value < $1.value }?.key)
         var graded = 0
         for c in keep where keptIDs.contains(c.id) && c.kind != .audio {
             if common == "none" {
@@ -358,7 +386,7 @@ enum LocalImprover {
                 edits.append(.look(c.id, name: common))
                 graded += 1
             }
-            if (c.grade?.exposure ?? 0) == 0, let id = c.assetID, let a = analyses[id] {
+            if !focused, (c.grade?.exposure ?? 0) == 0, let id = c.assetID, let a = analyses[id] {
                 let r = sourceRange(c)
                 let lumas = a.samples.filter { c.kind == .image || r.contains($0.time) }.map(\.luma)
                 if !lumas.isEmpty {
@@ -371,12 +399,15 @@ enum LocalImprover {
 
         guard !edits.isEmpty else { return nil }
         var parts: [String] = [String(format: "%.1fs to %.1fs", oldEnd - firstStart, newEnd - firstStart)]
+        if !recipe.keepOnly.isEmpty { parts.append("only \(recipe.mediaNames.joined(separator: ", ")) kept (\(named) shot\(named == 1 ? "" : "s") out)") }
+        if !recipe.takeOut.isEmpty { parts.append("\(recipe.mediaNames.joined(separator: ", ")) out (\(named) shot\(named == 1 ? "" : "s"))") }
+        if recipe.clearRest { parts.append("everything else off the timeline") }
         if repeats > 0 { parts.append("\(repeats) repeat\(repeats == 1 ? "" : "s") out") }
-        if !doubled.isEmpty { parts.append("\(doubled.count) doubled title\(doubled.count == 1 ? "" : "s") out") }
+        if !doubled.isEmpty, !recipe.clearRest { parts.append("\(doubled.count) doubled title\(doubled.count == 1 ? "" : "s") out") }
         if weakOut > 0 { parts.append("\(weakOut) weak shot\(weakOut == 1 ? "" : "s") out") }
         if trimmed > 0 { parts.append("\(trimmed) shot\(trimmed == 1 ? "" : "s") \(growing ? "lengthened" : "trimmed")") }
         if placing != nil { parts.append("music added") } else if recipe.music == .off && songOnTimeline != nil { parts.append("music out") }
-        if song != nil && music != nil { parts.append("cut to the beat") }
+        if snap, !musicGoes, song != nil, music != nil { parts.append("cut to the beat") }
         if graded > 0 { parts.append(common == "none" ? "looks off" : "one look (\(common ?? ""))") }
         if recipe.frame != .unchanged, size != nil { parts.append(recipe.frame.rawValue) }
         return Outcome(plan: MCPDraft.plan(base: p, edits: edits), summary: parts.joined(separator: ", "), notes: notes)

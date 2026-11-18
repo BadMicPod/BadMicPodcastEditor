@@ -19,6 +19,14 @@ struct LocalRecipe: Equatable {
     var frame: Frame = .unchanged
     /// Anything they asked for that these settings can't do.
     var cannotDo = ""
+    /// Media they named: only use these, or take these out (library ids), with their names for the note.
+    var keepOnly: Set<UUID> = []
+    var takeOut: Set<UUID> = []
+    var mediaNames: [String] = []
+    /// "Nothing else on the timeline": with keepOnly, titles, overlays and music go too.
+    var clearRest = false
+    /// About which media to use: then Local does just that (and closes gaps), nothing else unasked.
+    var isFocused: Bool { !keepOnly.isEmpty || !takeOut.isEmpty }
 
     static let plain = LocalRecipe()
 
@@ -30,6 +38,8 @@ struct LocalRecipe: Equatable {
         if let look { parts.append(look == "none" ? "no look" : look) }
         if music == .off { parts.append("no music") } else if music == .add { parts.append("music added") }
         if frame != .unchanged { parts.append(frame.rawValue) }
+        if !keepOnly.isEmpty { parts.append("only " + mediaNames.joined(separator: ", ")) }
+        if !takeOut.isEmpty { parts.append(mediaNames.joined(separator: ", ") + " out") }
         return parts.joined(separator: ", ")
     }
 }
@@ -57,6 +67,23 @@ enum LocalBrain {
     static var available: Bool { unavailableReason == nil }
 
     struct Failure: Error { let message: String }
+
+    /// Media the request names, kept only or taken out. The words decide when they're clear ("only",
+    /// "just", "nothing else" / "remove", "without"…); otherwise the model's reading.
+    static func applyMedia(_ r: inout LocalRecipe, named: [MediaAsset], action: String, request: String) {
+        guard !named.isEmpty else { return }
+        let text = request.lowercased()
+        let only = ["only", "just ", "nothing else", "nothing but", "except", "solely", "keep "].contains { text.contains($0) }
+        let remove = ["remove", "take out", "without", "delete", "drop", "get rid", "cut out", "no more", "lose "].contains { text.contains($0) }
+        let mode = only && !remove ? "only" : remove && !only ? "remove" : action
+        let ids = Set(named.map(\.id))
+        if mode == "only" { r.keepOnly = ids } else if mode == "remove" { r.takeOut = ids } else { return }
+        r.mediaNames = named.map(\.name)
+        r.clearRest = mode == "only" && ["nothing else", "everything else", "anything else", "on the timeline", "on timeline"].contains { text.contains($0) }
+        // Their names aren't something it couldn't do.
+        let lower = named.map { $0.name.lowercased() }
+        if lower.contains(where: { r.cannotDo.lowercased().contains($0) }) { r.cannotDo = "" }
+    }
 
     /// The small model tends to fill in settings nobody asked for. A setting only stands if the request
     /// talks about that kind of thing; a "can't do" only if it's about something they said that the
@@ -94,7 +121,23 @@ enum LocalBrain {
         return out
     }
 
-    static func recipe(for request: String) async throws -> LocalRecipe {
+    /// Library items a request names: "IMG_1607", "img_1607", "IMG_1607.mov" or just "1607".
+    static func named(in request: String, media: [MediaAsset]) -> [MediaAsset] {
+        let text = request.lowercased()
+        let words = Set(text.split { !$0.isLetter && !$0.isNumber && $0 != "_" && $0 != "-" }.map(String.init))
+        return media.filter { a in
+            let name = a.name.lowercased()
+            let bare = (name as NSString).deletingPathExtension
+            if text.contains(bare) && bare.count >= 3 { return true }
+            // A number in the name on its own, like "1607" for IMG_1607 (three digits or more).
+            let numbers = bare.split { !$0.isNumber }.map(String.init).filter { $0.count >= 3 }
+            return numbers.contains { words.contains($0) }
+        }
+    }
+
+    /// Reads a request into a recipe. `media` is the library, so named items can be picked out.
+    static func recipe(for request: String, media: [MediaAsset] = []) async throws -> LocalRecipe {
+        let named = Self.named(in: request, media: media)
         #if canImport(FoundationModels)
         if #available(macOS 26, *), available {
             let session = LanguageModelSession(instructions: """
@@ -104,7 +147,9 @@ enum LocalBrain {
             look on every shot or take looks off, turn music off or add music from their library, and make \
             the frame vertical, horizontal or square. If they ask for something else (sound effects, a title \
             or text, a particular story, effects), write just that in cannotDo, in their words; otherwise \
-            leave cannotDo empty. Never mention anything they didn't ask for.
+            leave cannotDo empty. Never mention anything they didn't ask for. Their media files are: \
+            \(media.map(\.name).joined(separator: ", ")). If they name files to use only those, mediaAction is \
+            "only"; to take them out, "remove". Naming files isn't something to put in cannotDo.
             """)
             do {
                 let out = try await session.respond(to: request, generating: RecipeOut.self).content
@@ -115,7 +160,9 @@ enum LocalBrain {
                 r.music = LocalRecipe.Music(rawValue: out.music) ?? .unchanged
                 r.frame = LocalRecipe.Frame(rawValue: out.frame) ?? .unchanged
                 r.cannotDo = out.cannotDo.trimmingCharacters(in: .whitespacesAndNewlines)
-                return checked(r, against: request)
+                r = checked(r, against: request)
+                applyMedia(&r, named: named, action: out.mediaAction, request: request)
+                return r
             } catch {
                 throw Failure(message: "Apple Intelligence couldn't read that: \(error.localizedDescription)")
             }
@@ -143,5 +190,7 @@ struct RecipeOut {
     var frame: String
     @Guide(description: "What they asked for that these settings can't do, in a few plain words; empty if nothing")
     var cannotDo: String
+    @Guide(description: "If they name media files: only (use just those), remove (take those out), or unchanged", .anyOf(["unchanged", "only", "remove"]))
+    var mediaAction: String
 }
 #endif

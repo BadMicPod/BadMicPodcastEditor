@@ -1174,6 +1174,29 @@ enum SelfTest {
                 good = false
                 detail += " | longer: no plan"
             }
+            // Named media: "i only want img_1607 video. nothing else on timeline" keeps just that file's shots
+            // (both copies: nothing else unasked), closes the gaps, and clears titles and music.
+            let lib = [MediaAsset(path: "/tmp/IMG_1607.MOV", name: "IMG_1607", kind: .video, duration: 10, width: 1920, height: 1080, fps: 30, hasAudio: false),
+                       MediaAsset(path: "/tmp/IMG_1818.MOV", name: "IMG_1818", kind: .video, duration: 10, width: 1920, height: 1080, fps: 30, hasAudio: false)]
+            let ask = "i only want img_1607 video. nothing else on timeline"
+            let found = LocalBrain.named(in: ask, media: lib)
+            var onlyA = LocalRecipe()
+            LocalBrain.applyMedia(&onlyA, named: [a], action: "unchanged", request: ask)
+            let readOK = found.map(\.name) == ["IMG_1607"] && LocalBrain.named(in: "take out 1818", media: lib).map(\.name) == ["IMG_1818"]
+                && onlyA.keepOnly == [a.id] && onlyA.clearRest
+            if let outcome = LocalImprover.plan(project: p, analyses: [a.id: analysis(), b.id: analysis()], music: music, recipe: onlyA) {
+                var q = p
+                for task in outcome.plan.tasks { task.edit.apply(&q, 1) }
+                let kept = q.clips.filter { $0.trackID == v1 }.sorted { $0.start < $1.start }
+                let onlyOK = readOK && kept.count == 2 && kept.allSatisfy { $0.assetID == a.id } && abs(kept[0].start) < 1e-6
+                    && abs(kept[0].end - kept[1].start) < 1e-6 && abs(kept[1].duration - 5) < 1e-6
+                    && !q.clips.contains { $0.kind == .text } && !q.clips.contains { $0.assetID == songAsset.id }
+                good = good && onlyOK
+                detail += " | only=\(onlyOK) read=\(readOK) \(outcome.summary)"
+            } else {
+                good = false
+                detail += " | only: no plan (read=\(readOK))"
+            }
             // The request check: settings the request doesn't mention are dropped (the on-device model over-fills).
             var noisy = LocalRecipe()
             noisy.seconds = 20; noisy.pace = .calm; noisy.look = "none"; noisy.music = .off; noisy.frame = .square

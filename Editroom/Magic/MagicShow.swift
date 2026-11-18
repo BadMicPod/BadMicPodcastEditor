@@ -108,9 +108,15 @@ final class MagicShow: NSObject {
         let visuals = project.assets.filter { a in
             !offline.contains(a.id) && (a.kind == .image || (a.kind == .video && a.duration >= 1))
                 && (!improving || onTimeline.contains(a.id))
+                // Media they named: only those, or not those.
+                && (recipe.keepOnly.isEmpty || recipe.keepOnly.contains(a.id)) && !recipe.takeOut.contains(a.id)
         }
         guard !visuals.isEmpty else {
-            NSSound.beep()
+            if let done, recipe.isFocused {
+                done("\(recipe.mediaNames.joined(separator: ", ")) \(recipe.mediaNames.count == 1 ? "isn't" : "aren't") in your \(improving ? "edit" : "Media"), so there was nothing to keep.")
+            } else {
+                NSSound.beep()
+            }
             return
         }
         // The song: the one the edit uses, or (for a new cut) the longest in the library.

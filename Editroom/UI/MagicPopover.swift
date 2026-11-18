@@ -610,7 +610,7 @@ enum LocalMagic {
         Task {
             let recipe: LocalRecipe
             do {
-                recipe = try await LocalBrain.recipe(for: request)
+                recipe = try await LocalBrain.recipe(for: request, media: model.project.assets)
             } catch {
                 state.busy = false
                 state.status = nil
