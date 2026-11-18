@@ -207,8 +207,14 @@ struct EditroomApp: App {
                 Button("Zoom Out") { model.zoom(by: 1 / 1.4) }.keyboardShortcut("-")
                 Button("Zoom to Fit") { model.zoomToFit() }.keyboardShortcut("0")
                 Divider()
-                Button(model.snapping ? "Turn Snapping Off" : "Turn Snapping On") { model.snapping.toggle() }
-                Button(model.thumbnails ? "Hide Filmstrips" : "Show Filmstrips") { model.thumbnails.toggle() }
+                // The timeline toolbar's toggles, in the same order, ticked when on. Their single-key
+                // shortcuts are handled by the window, so they're written into the title (as in Mark)
+                // rather than set as menu shortcuts that would take the key from text fields.
+                Toggle("Filmstrips", isOn: $model.thumbnails)
+                Toggle("Snapping   S", isOn: $model.snapping)
+                Toggle("Sticky Edges   R", isOn: $model.sticky)
+                Toggle("Skimming   K", isOn: $model.skimming)
+                Toggle("Audio Scrubbing   ⇧S", isOn: $model.audioScrub)
                 Divider()
             }
         }
