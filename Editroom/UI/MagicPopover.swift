@@ -282,6 +282,14 @@ private struct PromptForm: View {
     let manage: () -> Void
     let go: () -> Void
     @FocusState private var focused: Bool
+    /// A height the person dragged the box to (0: not set), kept for next time.
+    @AppStorage("magicPromptHeight") private var setHeight: Double = 0
+    @State private var fieldHeight: Double = 0
+    @State private var dragFrom: Double?
+
+    /// Three lines to start; it grows as you type, up to three times that, then scrolls.
+    private static let baseHeight = 66.0
+    private static let maxHeight = baseHeight * 3
 
     /// A name for the menu, and the prompt it fills the box with (to send as it is, or change first).
     private typealias Idea = (name: String, symbol: String, prompt: String)
@@ -371,13 +379,31 @@ private struct PromptForm: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.text)
-                .lineLimit(3...6)
+                .lineLimit(3...11)
                 .focused($focused)
                 .padding(.horizontal, 10)
-                .padding(.vertical, 9)
-                .frame(minHeight: 58, alignment: .topLeading)
+                .padding(.top, 9)
+                .padding(.bottom, 14)
+                .frame(minHeight: max(Self.baseHeight, setHeight), maxHeight: Self.maxHeight, alignment: .topLeading)
+                .background(GeometryReader { g in
+                    Color.clear
+                        .onAppear { fieldHeight = g.size.height }
+                        .onChange(of: g.size.height) { _, h in fieldHeight = h }
+                })
                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.field))
                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.stroke))
+                .overlay(alignment: .bottomTrailing) {
+                    ResizeGrip()
+                        .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                            .onChanged { v in
+                                let from = dragFrom ?? fieldHeight
+                                dragFrom = from
+                                setHeight = min(Self.maxHeight, max(Self.baseHeight, from + v.translation.height))
+                            }
+                            .onEnded { _ in dragFrom = nil })
+                        .onTapGesture(count: 2) { setHeight = 0 }
+                        .help("Drag to make the box taller or shorter; double-click to reset")
+                }
                 .onSubmit(go)
                 .padding(.bottom, 11)
             HStack(spacing: 5) {
@@ -394,6 +420,30 @@ private struct PromptForm: View {
     private func use(_ idea: String) {
         request = idea
         focused = true
+    }
+}
+
+/// The corner grip for resizing the prompt box, with the up-down cursor.
+private struct ResizeGrip: View {
+    @State private var hovering = false
+
+    var body: some View {
+        Canvas { ctx, size in
+            for i in 0..<2 {
+                let inset = CGFloat(i) * 4
+                var p = Path()
+                p.move(to: CGPoint(x: size.width - 3, y: 3 + inset))
+                p.addLine(to: CGPoint(x: 3 + inset, y: size.height - 3))
+                ctx.stroke(p, with: .color(Color.white.opacity(hovering ? 0.5 : 0.25)), lineWidth: 1.2)
+            }
+        }
+        .frame(width: 12, height: 12)
+        .padding(4)
+        .contentShape(Rectangle())
+        .onHover { inside in
+            hovering = inside
+            if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+        }
     }
 }
 
