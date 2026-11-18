@@ -25,6 +25,11 @@ final class SourcePreviewState: ObservableObject {
         }
     }
 
+    /// Shows a frame that has already been fetched.
+    func show(_ asset: MediaAsset, at time: Double, image: CGImage) {
+        current = Current(asset: asset, time: time, image: image)
+    }
+
     func clear() {
         if current != nil { current = nil }
     }

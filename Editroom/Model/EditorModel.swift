@@ -177,6 +177,10 @@ final class EditorModel: ObservableObject {
                 }
                 if args.contains("--show-export") { self.showExport = true }
                 if args.contains("--play") { self.play() }
+                if args.contains("--magic") {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    MagicShow.start(model: self, fromMouse: false)
+                }
                 if args.contains("--curve-menu") {
                     try? await Task.sleep(nanoseconds: 500_000_000)
                     let (menu, current) = CurveMenu.menu(selection: .easeIn, rising: true) { _ in }
@@ -367,8 +371,13 @@ final class EditorModel: ObservableObject {
         setNeedsRebuild()
     }
 
+    /// Set while the magic show is building a cut, so the player isn't rebuilt every frame.
+    var rebuildSuspended = false {
+        didSet { if !rebuildSuspended { setNeedsRebuild() } }
+    }
+
     func setNeedsRebuild() {
-        guard !rebuildPending else { return }
+        guard !rebuildPending, !rebuildSuspended else { return }
         rebuildPending = true
         let wait = max(0, 0.03 - (CACurrentMediaTime() - lastRebuild))
         DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in

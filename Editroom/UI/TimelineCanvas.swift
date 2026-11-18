@@ -110,9 +110,13 @@ final class TimelineCanvas: NSView {
 
     // MARK: Setup
 
+    /// The window's timeline, for the magic overlay.
+    static weak var current: TimelineCanvas?
+
     init(model: EditorModel) {
         self.model = model
         super.init(frame: .zero)
+        Self.current = self
         wantsLayer = true
         clipsToBounds = true
         layer?.masksToBounds = true
@@ -1821,4 +1825,23 @@ private struct MarkerRow: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
     }
+}
+
+// MARK: - Magic overlay geometry
+
+extension TimelineCanvas {
+    /// A clip's rectangle in window coordinates, laid out for `project`.
+    func magicWindowRect(of c: Clip, in project: Project) -> NSRect? {
+        let layout = TimelineLayout(project: project, rowHeight: view.rowHeight)
+        guard let band = layout.band(for: c.trackID) else { return nil }
+        let r = CGRect(x: x(c.start), y: TimelineLayout.ruler + band.y - view.scrollY,
+                       width: max(CGFloat(c.duration) * pps, 1), height: band.height)
+        return convert(r, to: nil)
+    }
+
+    /// A time's x position in window coordinates.
+    func magicWindowX(_ time: Double) -> CGFloat { convert(NSPoint(x: x(time), y: 0), to: nil).x }
+
+    /// Where the gain line sits for a level, as a fraction of the clip's height from its top.
+    static func magicGainNorm(_ db: Double) -> CGFloat { gainNorm(db) }
 }

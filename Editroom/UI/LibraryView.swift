@@ -266,6 +266,7 @@ private struct AssetRow: View {
         HStack(spacing: 9) {
             MediaThumb(media: media, preview: model.sourcePreview, asset: asset, offline: offline, compact: true)
                 .frame(width: 64, height: 36)
+                .background(MagicAnchor(key: asset.id.uuidString))
                 .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
                 Text(asset.name)

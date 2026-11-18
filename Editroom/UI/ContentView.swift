@@ -17,6 +17,7 @@ struct ContentView: View {
                 HStack(spacing: 0) {
                     LibraryView(model: model, media: model.media)
                         .frame(width: libraryWidth)
+                        .background(MagicAnchor(key: "library"))
                     Splitter(vertical: true) { x in
                         libraryWidth = min(440, max(190, x - frame.minX))
                     }
@@ -24,6 +25,7 @@ struct ContentView: View {
                     Hairline(vertical: true)
                     InspectorView(model: model)
                         .frame(width: InspectorView.width)
+                        .background(MagicAnchor(key: "inspector"))
                 }
                 Splitter(vertical: false) { y in
                     timelineHeight = min(max(200, geo.size.height - 240), max(170, frame.maxY - y))
@@ -79,6 +81,10 @@ struct ContentView: View {
             }
             .withoutGlass()
             ToolbarItem(placement: .primaryAction) {
+                MagicButton(model: model)
+            }
+            .withoutGlass()
+            ToolbarItem(placement: .primaryAction) {
                 PillButton(title: "Export", prominent: true) { model.showExport = true }
                     .help("Export (⌘E)")
                     .padding(.trailing, 10)
@@ -123,6 +129,8 @@ enum KeyCommands {
 
     private static func handle(_ e: NSEvent, _ model: EditorModel) -> Bool {
         guard let window = NSApp.keyWindow else { return false }
+        // While the magic show runs, keys are handled by the show (any key skips to the end).
+        if MagicShow.isRunning { return false }
         let flags = e.modifierFlags.intersection([.command, .option, .control])
         if let responder = window.firstResponder, responder is NSText {
             // Typing S, R or K goes into the text. Those keys are also View menu shortcuts, and macOS
@@ -184,5 +192,40 @@ extension ToolbarContent {
         } else {
             self
         }
+    }
+}
+
+/// Starts the magic edit: a swarm of cursors builds a cut from the library.
+struct MagicButton: View {
+    @ObservedObject var model: EditorModel
+    @State private var hovering = false
+
+    private var hasMedia: Bool { model.project.assets.contains { $0.kind != .audio } }
+
+    var body: some View {
+        Button {
+            MagicShow.start(model: model, fromMouse: true)
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "wand.and.sparkles")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                Text("Magic")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+            }
+            .padding(.horizontal, 13)
+            .frame(height: 28)
+            .background(Capsule().fill(Color.white.opacity(hovering ? 0.14 : 0.08)))
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.05)))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .background(MagicAnchor(key: "magicButton"))
+        .disabled(!hasMedia)
+        .opacity(hasMedia ? 1 : 0.4)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .help(hasMedia ? "Magic: build a cut from your media" : "Import some clips first")
     }
 }
