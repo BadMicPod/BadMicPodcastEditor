@@ -51,7 +51,7 @@ struct TimelineToolbar: View {
                 RangeReadout(model: model).padding(.leading, 4)
             }
             Spacer()
-            ToggleChip(title: "Thumbnails", on: model.thumbnails, help: "Clip Thumbnails: pictures in clips. Off shows clips as flat colour by type") { model.thumbnails.toggle() }
+            ToggleChip(title: "Strip", on: model.thumbnails, help: "Filmstrip: pictures in clips. Off shows clips as flat colour by type") { model.thumbnails.toggle() }
             ToggleChip(title: "Snap", on: model.snapping, help: "Snapping (S)") { model.snapping.toggle() }
             ToggleChip(title: "Sticky", on: model.sticky, help: "Sticky Edges (R): clips touching a clip that changes length move with it") { model.sticky.toggle() }
             ToggleChip(title: "Skim", on: model.skimming, help: "Skimming (K): hover the timeline to preview frames") { model.skimming.toggle() }
