@@ -203,6 +203,11 @@ final class EditorModel: ObservableObject {
                     try? await Task.sleep(nanoseconds: 1_500_000_000)
                     MagicAgent.shared.note = MagicAgent.Note(agent: .chatgpt, text: "I cut it from 12 seconds to 8, took out the repeated shots, and timed the cuts to the music. Your library has no sound effects, so I couldn't add any.", changed: true, detail: "GPT-6.2-Sol · Low · 56s")
                 }
+                // `--magic-local "request"` (testing): Local Magic with a request, read on this Mac.
+                if let k = args.firstIndex(of: "--magic-local"), args.count > k + 1 {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    LocalMagic.run(args[k + 1], model: self)
+                }
                 // `--magic-ai claude|chatgpt "request"` (testing): Magic with an AI, logged to stderr.
                 if let k = args.firstIndex(of: "--magic-ai"), args.count > k + 1,
                    let kind = MagicAgent.Kind(rawValue: args[k + 1]) {

@@ -93,7 +93,9 @@ final class MagicShow: NSObject {
 
     /// Looks at the media, plans a cut, and plays it. `fromMouse` spawns the cursors from where the
     /// mouse was when this was called; otherwise from the Magic button.
-    static func start(model: EditorModel, fromMouse: Bool) {
+    /// `recipe` is what the person asked for in the Local tab (read by Apple's on-device model); `done` gets
+    /// a sentence on what changed (and anything it couldn't do) once the show is over.
+    static func start(model: EditorModel, fromMouse: Bool, recipe: LocalRecipe = .plain, done: ((String) -> Void)? = nil) {
         let state = MagicState.shared
         guard current == nil, !state.busy, let canvas = TimelineCanvas.current, let window = canvas.window else { return }
         let click = fromMouse ? window.mouseLocationOutsideOfEventStream : nil
@@ -115,9 +117,12 @@ final class MagicShow: NSObject {
         let songOnTimeline = project.clips.filter { $0.kind == .audio && $0.linkID == nil }
             .compactMap { c in project.assets.first { $0.id == c.assetID && $0.kind == .audio } }
             .max { $0.duration < $1.duration }
-        let song = improving
-            ? songOnTimeline.flatMap { offline.contains($0.id) ? nil : $0 }
-            : project.assets.filter { $0.kind == .audio && !offline.contains($0.id) && $0.duration >= 8 }.max { $0.duration < $1.duration }
+        let librarySong = project.assets.filter { $0.kind == .audio && !offline.contains($0.id) && $0.duration >= 8 }.max { $0.duration < $1.duration }
+        // Music they asked to add when the edit has none: the longest song in the library.
+        let newSong = improving && recipe.music == .add && songOnTimeline == nil ? librarySong : nil
+        let song: MediaAsset? = recipe.music == .off ? nil
+            : improving ? (newSong ?? songOnTimeline.flatMap { offline.contains($0.id) ? nil : $0 })
+            : librarySong
         state.busy = true
         state.status = "Watching"
         Task { @MainActor in
@@ -127,29 +132,54 @@ final class MagicShow: NSObject {
             }
             state.status = "Planning"
             var plan: MagicPlan?
+            var said = ""
+            var notes = recipe.cannotDo.isEmpty ? [] : [recipe.cannotDo]
             if improving {
                 let analyses = Dictionary(found.clips.map { ($0.0.id, $0.1) }, uniquingKeysWith: { a, _ in a })
-                let outcome = LocalImprover.plan(project: model.project, analyses: analyses, music: found.music?.1)
+                let outcome = LocalImprover.plan(project: model.project, analyses: analyses, music: found.music?.1,
+                                                 recipe: recipe, newSong: newSong)
                 plan = outcome?.plan
+                said = outcome.map { "Improved your edit: \($0.summary)." } ?? "Your edit already looks good; nothing to change."
+                notes += outcome?.notes ?? []
                 if CommandLine.arguments.contains("--magic") {
-                    FileHandle.standardError.write("MAGIC IMPROVE \(outcome?.summary ?? "nothing to change") (\(outcome?.plan.tasks.count ?? 0) edits)\n".data(using: .utf8)!)
+                    FileHandle.standardError.write("MAGIC IMPROVE \(outcome?.summary ?? "nothing to change") (\(outcome?.plan.tasks.count ?? 0) edits) recipe: \(recipe.summary)\n".data(using: .utf8)!)
                 }
             } else {
-                let decision = AutoPlanner.decide(project: model.project, clips: found.clips, music: found.music)
+                let decision = AutoPlanner.decide(project: model.project, clips: found.clips, music: found.music, recipe: recipe)
                 plan = decision.flatMap { Choreographer.plan(project: model.project, decision: $0) }
+                if let decision {
+                    let length = decision.shots.reduce(0) { $0 + $1.duration }
+                    said = String(format: "Made a %.0f-second cut from %d shots%@.", length, decision.shots.count,
+                                  decision.music == nil ? "" : ", cut to the beat")
+                    if let s = recipe.seconds, length < s - 1 { notes.append("your Media only had enough good footage for about \(Int(length.rounded())) seconds") }
+                }
+                // The frame shape they asked for, from the start.
+                let size: (Int, Int)? = switch recipe.frame {
+                case .vertical: (1080, 1920)
+                case .horizontal: (1920, 1080)
+                case .square: (1080, 1080)
+                case .unchanged: nil
+                }
+                if let size, plan != nil {
+                    plan!.base.width = size.0
+                    plan!.base.height = size.1
+                    plan!.base.settingsLocked = true
+                }
                 if CommandLine.arguments.contains("--magic"), let decision {
                     log(decision, found.music?.1, seconds: CACurrentMediaTime() - started)
                 }
             }
+            if !notes.isEmpty { said += " It couldn't do everything you asked: " + notes.joined(separator: "; ") + "." }
             guard let plan, current == nil, let canvas = TimelineCanvas.current, let window = canvas.window else {
                 state.busy = false
                 state.status = nil
-                NSSound.beep()
+                if let done, plan == nil { done(said.isEmpty ? "Magic couldn't find anything to make a cut from." : said) } else { NSSound.beep() }
                 return
             }
             // Spawn from the click if it was quick; after a wait, from the button.
             let fromClick = CACurrentMediaTime() - started < 1.5 ? click : nil
             let show = MagicShow(model: model, plan: plan, window: window, canvas: canvas, click: fromClick, performer: nil)
+            if let done { show.onFinish = { done(said) } }
             current = show
             state.status = nil
             show.begin()

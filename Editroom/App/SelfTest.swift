@@ -1136,6 +1136,35 @@ enum SelfTest {
                 good = gapless && onBeats && onBar && repeatsOut && trimmed && songFits && titleOnce
                 detail = "\(outcome.summary) | gapless=\(gapless) beats=\(onBeats) bar=\(onBar) repeats=\(repeatsOut) trimmed=\(trimmed) song=\(songFits) title=\(titleOnce) cuts=\(kept.map { $0.end })"
             }
+            // And following a recipe: 4 seconds, fast, Mono, no music, vertical.
+            var recipe = LocalRecipe()
+            recipe.seconds = 4
+            recipe.pace = .fast
+            recipe.look = "Mono"
+            recipe.music = .off
+            recipe.frame = .vertical
+            if let outcome = LocalImprover.plan(project: p, analyses: [a.id: analysis(), b.id: analysis()], music: nil, recipe: recipe) {
+                var q = p
+                for task in outcome.plan.tasks { task.edit.apply(&q, 1) }
+                let kept = q.clips.filter { $0.trackID == v1 }
+                let length = (kept.map(\.end).max() ?? 0) - (kept.map(\.start).min() ?? 0)
+                let recipeOK = length <= 4.05 && length >= 2 && kept.allSatisfy { $0.grade?.look == "Mono" }
+                    && q.width == 1080 && q.height == 1920 && !q.clips.contains { $0.assetID == songAsset.id }
+                good = good && recipeOK
+                detail += " | recipe=\(recipeOK) length=\(length) \(outcome.summary)"
+            } else {
+                good = false
+                detail += " | recipe: no plan"
+            }
+            // The request check: settings the request doesn't mention are dropped (the on-device model over-fills).
+            var noisy = LocalRecipe()
+            noisy.seconds = 20; noisy.pace = .calm; noisy.look = "none"; noisy.music = .off; noisy.frame = .square
+            noisy.cannotDo = "find new music, sound effects"
+            let checked = LocalBrain.checked(noisy, against: "add sound effects and make it 20 seconds")
+            let checkOK = checked.seconds == 20 && checked.pace == .unchanged && checked.look == nil && checked.music == .unchanged
+                && checked.frame == .unchanged && checked.cannotDo == "sound effects"
+            good = good && checkOK
+            detail += " | check=\(checkOK)"
             log("LOCAL IMPROVE \(good ? "OK" : "FAIL") \(detail)")
             ok = ok && good
         }

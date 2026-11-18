@@ -13,11 +13,17 @@ import Foundation
 enum LocalImprover {
     struct Outcome {
         var plan: MagicPlan
-        /// What changed, in a sentence, for the log (and later a note).
+        /// What changed, in a sentence, for the log and the note.
         var summary: String
+        /// What it couldn't do of what was asked.
+        var notes: [String] = []
     }
 
-    static func plan(project p: Project, analyses: [UUID: ClipAnalysis], music: MusicAnalysis?) -> Outcome? {
+    /// `recipe` is what the person asked for (from Apple's on-device model), if anything. `newSong` is a song
+    /// from the library to put under the edit when they asked for music and it has none; `music` is then
+    /// that song's beats (otherwise the beats of the song already on the timeline).
+    static func plan(project p: Project, analyses: [UUID: ClipAnalysis], music: MusicAnalysis?,
+                     recipe: LocalRecipe = .plain, newSong: MediaAsset? = nil) -> Outcome? {
         // The main picture track: the lowest video track with shots on it.
         guard let track = p.videoTracks.first(where: { t in p.clips.contains { $0.trackID == t.id && isShot($0) } }),
               !p.isLocked(track.id) else { return nil }
@@ -91,19 +97,55 @@ enum LocalImprover {
             dropped += keep.filter { gone.contains($0.id) }
             keep.removeAll { gone.contains($0.id) }
         }
-        let weakDropped = dropped.count - repeats
         // Back in timeline order (keeping the better of a repeat can swap which one stays).
         keep.sort { $0.start < $1.start }
 
-        // 3. How long each shot plays: long ones come down to about their best 60%, never longer than now.
-        func wanted(_ c: Clip) -> Double {
-            c.duration > 3.5 ? min(c.duration, max(2.5, min(4.5, c.duration * 0.6))) : c.duration
+        // 3. How long each shot plays, never longer than now: long ones come down to about their best 60%
+        // (calm keeps more, fast keeps less).
+        func paced(_ c: Clip) -> Double {
+            switch recipe.pace {
+            case .calm: return c.duration > 6 ? max(4, c.duration * 0.8) : c.duration
+            case .fast: return c.duration > 2 ? max(1.2, min(2.5, c.duration * 0.5)) : c.duration
+            case .unchanged: return c.duration > 3.5 ? min(c.duration, max(2.5, min(4.5, c.duration * 0.6))) : c.duration
+            }
         }
-        // The song, if there is one: the longest sound-only clip from a music file.
-        let song = p.clips.filter { $0.kind == .audio && $0.linkID == nil && p.asset($0.assetID ?? UUID())?.kind == .audio }
+        // A length they asked for: the weakest shots go while even shorter shots couldn't get there, then
+        // every shot is shortened evenly.
+        var notes: [String] = []
+        var scale = 1.0
+        if let target = recipe.seconds {
+            var total = keep.map(paced).reduce(0, +)
+            while total * 0.6 > target, keep.count > 2,
+                  let weakest = keep.indices.min(by: { shotScore(keep[$0]) < shotScore(keep[$1]) }) {
+                dropped.append(keep.remove(at: weakest))
+                total = keep.map(paced).reduce(0, +)
+            }
+            scale = min(1, target / max(0.01, total))
+            if total < target - 1 {
+                notes.append("it can't be \(Int(target)) seconds long: your shots only add up to about \(Int(total.rounded()))")
+            }
+        }
+        func wanted(_ c: Clip) -> Double { min(c.duration, max(0.8, paced(c) * scale)) }
+        let weakOut = dropped.count - repeats
+
+        // The song: the longest sound-only clip from a music file; none if they asked for no music; or a
+        // song from the library put under the edit if they asked for music and there wasn't any.
+        let songOnTimeline = p.clips.filter { $0.kind == .audio && $0.linkID == nil && p.asset($0.assetID ?? UUID())?.kind == .audio }
             .max { $0.duration < $1.duration }
         // Where the edit starts: where its first shot was, even if that shot is gone.
         let firstStart = shots.first!.start
+        var song = recipe.music == .off ? nil : songOnTimeline
+        var placing: Clip?
+        if recipe.music == .add, songOnTimeline == nil, let newSong, let m = music {
+            // From its first bar, so the cut starts on a downbeat.
+            let bar = m.beats.indices.first { m.isBarStart($0) }.map { m.beats[$0] } ?? 0
+            var c = Clip(trackID: UUID(), kind: .audio, assetID: newSong.id, start: firstStart, duration: max(1, newSong.duration - bar))
+            c.sourceStart = bar
+            placing = c
+            song = c
+        } else if recipe.music == .add, songOnTimeline == nil {
+            notes.append("there's no music in your Media to add")
+        }
         var cuts: [Double] = [firstStart]   // where each kept shot starts, then where the last one ends
         var lengths: [Double] = []
         if let song, let m = music, m.beats.count > 8 {
@@ -139,9 +181,22 @@ enum LocalImprover {
         let newEnd = cuts.last!
         let oldEnd = shots.map(\.end).max() ?? newEnd
 
-        // 4. The edits, in an order that's always safe: repeats and weak shots out, then each shot trimmed
-        // to its moment and slid left into place, left to right.
+        // 4. The edits, in an order that's always safe: the frame shape first; repeats and weak shots out;
+        // then each shot trimmed to its moment and slid left into place, left to right.
         var edits: [MagicEdit] = []
+        let size: (Int, Int)? = switch recipe.frame {
+        case .vertical: (1080, 1920)
+        case .horizontal: (1920, 1080)
+        case .square: (1080, 1080)
+        case .unchanged: nil
+        }
+        if let size, p.width != size.0 || p.height != size.1 {
+            edits.append(.change(nil, recipe.frame.rawValue.capitalized) { q in
+                q.width = size.0
+                q.height = size.1
+                q.settingsLocked = true
+            })
+        }
         for c in dropped {
             edits.append(.remove(Array(p.unlocked(p.linked([c.id])))))
         }
@@ -188,10 +243,31 @@ enum LocalImprover {
             }
         }
 
-        // 6. Sound: the song trimmed to the new end and faded out; the clips' own sound under it.
+        // 6. Sound: the song trimmed to the new end and faded out (or taken out, or put in); the clips' own
+        // sound under it.
         let keptIDs = Set(keep.map(\.id))
         let keptAudio = p.clips.filter { a in a.kind == .audio && a.linkID != nil && keep.contains { $0.linkID == a.linkID } }
-        if let song, !p.isLocked(song.trackID) {
+        if recipe.music == .off, let s = songOnTimeline, !p.isLocked(s.trackID) {
+            edits.append(.remove([s.id]))
+        }
+        if var c = placing, let newSong {
+            // On a sound track that's free for the whole edit, or a new one.
+            if let free = p.audioTracks.first(where: { t in !p.isLocked(t.id) && !p.clips.contains { $0.trackID == t.id && $0.start < newEnd && $0.end > firstStart } }) {
+                c.trackID = free.id
+            } else {
+                let id = UUID()
+                edits.append(.change(nil, "Add audio track") { q in
+                    var t = Track(kind: .audio)
+                    t.id = id
+                    q.audioTracks.append(t)
+                })
+                c.trackID = id
+            }
+            c.duration = frames(newEnd - firstStart)
+            edits.append(.place([c], asset: newSong.id))
+            edits.append(.fadeOut(c.id, to: min(2, c.duration * 0.15)))
+            for a in keptAudio where a.gainDB > -10 { edits.append(.gain(a.id, from: a.gainDB, to: -16)) }
+        } else if let song, !p.isLocked(song.trackID) {
             if song.end > newEnd + 1e-3 { edits.append(.trimTail([song.id], from: song.end, to: newEnd)) }
             if song.fadeOut < 1.5 { edits.append(.fadeOut(song.id, to: min(2, max(0.5, (min(song.end, newEnd) - song.start) * 0.15)))) }
             for a in keptAudio where a.gainDB > -10 {
@@ -202,12 +278,21 @@ enum LocalImprover {
             if last.fadeOut < 0.3 { edits.append(.fadeOut(last.id, to: 0.6)) }
         }
 
-        // 7. One look: the one most of the shots have, on all of them; and exposure evened out.
+        // 7. One look: the one they asked for, or the one most of the shots have, on all of them (or looks
+        // off, if they asked); and exposure evened out.
         let looks = keep.compactMap { $0.grade?.look }
-        let common = Dictionary(looks.map { ($0, 1) }, uniquingKeysWith: +).max { $0.value < $1.value }?.key
+        let common = recipe.look ?? Dictionary(looks.map { ($0, 1) }, uniquingKeysWith: +).max { $0.value < $1.value }?.key
         var graded = 0
         for c in keep where keptIDs.contains(c.id) && c.kind != .audio {
-            if let common, c.grade?.look != common {
+            if common == "none" {
+                if c.grade?.look != nil {
+                    let id = c.id
+                    edits.append(.change(id, "No look") { q in
+                        if let i = q.index(of: id) { var g = q.clips[i].grade ?? ColorGrade(); g.look = nil; q.clips[i].grade = g.isNeutral ? nil : g }
+                    })
+                    graded += 1
+                }
+            } else if let common, c.grade?.look != common {
                 edits.append(.look(c.id, name: common))
                 graded += 1
             }
@@ -226,11 +311,13 @@ enum LocalImprover {
         var parts: [String] = [String(format: "%.1fs to %.1fs", oldEnd - firstStart, newEnd - firstStart)]
         if repeats > 0 { parts.append("\(repeats) repeat\(repeats == 1 ? "" : "s") out") }
         if !doubled.isEmpty { parts.append("\(doubled.count) doubled title\(doubled.count == 1 ? "" : "s") out") }
-        if weakDropped > 0 { parts.append("\(weakDropped) weak shot\(weakDropped == 1 ? "" : "s") out") }
+        if weakOut > 0 { parts.append("\(weakOut) weak shot\(weakOut == 1 ? "" : "s") out") }
         if trimmed > 0 { parts.append("\(trimmed) shot\(trimmed == 1 ? "" : "s") trimmed") }
+        if placing != nil { parts.append("music added") } else if recipe.music == .off && songOnTimeline != nil { parts.append("music out") }
         if song != nil && music != nil { parts.append("cut to the beat") }
-        if graded > 0 { parts.append("one look") }
-        return Outcome(plan: MCPDraft.plan(base: p, edits: edits), summary: parts.joined(separator: ", "))
+        if graded > 0 { parts.append(common == "none" ? "looks off" : "one look (\(common ?? ""))") }
+        if recipe.frame != .unchanged, size != nil { parts.append(recipe.frame.rawValue) }
+        return Outcome(plan: MCPDraft.plan(base: p, edits: edits), summary: parts.joined(separator: ", "), notes: notes)
     }
 
     /// Video and photo clips that make up the cut (not titles or solids).

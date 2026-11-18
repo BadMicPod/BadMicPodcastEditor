@@ -354,7 +354,7 @@ enum Choreographer {
             if i == cuts.count - 1 { _ = add(.fadeOut(c.video, to: 0.6), after: [c.moved], delay: 0.12) }
             // Grade each shot as soon as it's in place, while others are still being cut: four
             // cursors on its panel. Exposure brings it in line with the others.
-            _ = add(.look(c.video, name: decision.look), after: [c.moved], delay: 0.1)
+            if !decision.look.isEmpty { _ = add(.look(c.video, name: decision.look), after: [c.moved], delay: 0.1) }
             _ = add(.grade(c.video, .exposure, to: s.exposure), after: [c.moved], delay: 0.125)
             _ = add(.grade(c.video, .contrast, to: 12), after: [c.moved], delay: 0.15)
             _ = add(.grade(c.video, .saturation, to: 18), after: [c.moved], delay: 0.175)

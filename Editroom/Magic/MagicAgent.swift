@@ -26,7 +26,8 @@ final class MagicAgent: ObservableObject {
     /// What an AI said when it finished, shown under the Magic button.
     struct Note: Identifiable {
         let id = UUID()
-        let agent: Kind
+        /// Who made the edit: Claude or ChatGPT, or nil for Local.
+        let agent: Kind?
         let text: String
         /// It changed the timeline (so there's something to undo).
         let changed: Bool

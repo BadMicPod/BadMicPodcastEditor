@@ -16,6 +16,7 @@ struct MagicPopover: View {
     @State private var justConnected: MagicAgent.Kind?
     /// Connecting started from here (so finishing it shows "connected").
     @State private var connecting: MagicAgent.Kind?
+    @FocusState private var localFocused: Bool
 
     private var hasEdit: Bool { model.project.clips.contains { $0.kind != .audio } }
 
@@ -97,18 +98,30 @@ struct MagicPopover: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.text)
                 Text(hasEdit
-                     ? "Takes out repeats and weak shots, trims long shots to their best moment, cuts to the beat of your music, and gives it one look. Your shots, order and music stay. A few seconds, no AI."
-                     : "Finds the best moments, cuts to the beat of your music, titles and grades it. A few seconds, no AI, nothing leaves your Mac.")
+                     ? "Takes out repeats and weak shots, trims long shots to their best moment, cuts to the beat of your music, and gives it one look. Your shots, order and music stay. A few seconds, nothing leaves your Mac."
+                     : "Finds the best moments, cuts to the beat of your music, titles and grades it. A few seconds, nothing leaves your Mac.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textDim)
                     .fixedSize(horizontal: false, vertical: true)
+                if LocalBrain.available {
+                    // Apple's on-device model reads the request into settings Local follows.
+                    PromptBox(text: $request,
+                              placeholder: hasEdit
+                                ? "Describe what to change (length, pace, look, music, vertical), or leave this empty to improve the edit."
+                                : "Describe the video you want (length, pace, look, music, vertical), or leave this empty for the best cut.",
+                              focused: $localFocused, submit: goLocal)
+                        .padding(.top, 6)
+                        .onAppear { localFocused = true }
+                } else if let why = LocalBrain.unavailableReason {
+                    Text(why)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textFaint)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 HStack {
                     Spacer()
-                    PillButton(title: "Make it", prominent: true) {
-                        close()
-                        MagicShow.start(model: model, fromMouse: false)
-                    }
-                    .keyboardShortcut(.defaultAction)
+                    PillButton(title: "Make it", prominent: true, action: goLocal)
+                        .keyboardShortcut(.defaultAction)
                 }
                 .padding(.top, 6)
             }
@@ -136,7 +149,7 @@ struct MagicPopover: View {
     }
 
     private var footerText: String {
-        guard let kind = ai.tab.kind else { return "On this Mac" }
+        guard let kind = ai.tab.kind else { return LocalBrain.available ? "On this Mac, with Apple Intelligence" : "On this Mac" }
         if !ai.installed(kind) { return "Free to download" }
         if kind == .claude, connections.states[.claude] == .waiting { return "Waiting for Claude…" }
         if !ai.connected(kind) { return "No API key needed" }
@@ -165,6 +178,13 @@ struct MagicPopover: View {
         } else {
             connections.connect(app)
         }
+    }
+
+    private func goLocal() {
+        close()
+        let text = request.trimmingCharacters(in: .whitespacesAndNewlines)
+        request = ""
+        LocalMagic.run(text, model: model)
     }
 
     private func go(_ kind: MagicAgent.Kind) {
@@ -539,8 +559,12 @@ struct MagicNoteView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 7) {
-                AppLogo(kind: note.agent, size: 18)
-                Text(note.agent.name).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text)
+                if let agent = note.agent {
+                    AppLogo(kind: agent, size: 18)
+                } else {
+                    Image(systemName: "laptopcomputer").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text).frame(width: 18, height: 18)
+                }
+                Text(note.agent?.name ?? "Local").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text)
                 if !note.detail.isEmpty {
                     Text(note.detail).font(.system(size: 11)).foregroundStyle(Theme.textFaint)
                 }
@@ -570,5 +594,46 @@ struct MagicNoteView: View {
         .padding(14)
         .frame(width: 340)
         .background(Theme.panel)
+    }
+}
+
+/// Local Magic with or without a request: the request is read by Apple's on-device model into a recipe,
+/// then Local's own planner makes the edit. With a request, a note says what it did.
+@MainActor
+enum LocalMagic {
+    static func run(_ request: String, model: EditorModel) {
+        guard !request.isEmpty else { return MagicShow.start(model: model, fromMouse: false) }
+        let state = MagicState.shared
+        guard !state.busy, !MagicShow.isRunning else { return }
+        state.busy = true
+        state.status = "Reading your request"
+        Task {
+            let recipe: LocalRecipe
+            do {
+                recipe = try await LocalBrain.recipe(for: request)
+            } catch {
+                state.busy = false
+                state.status = nil
+                let a = NSAlert()
+                a.messageText = "Local couldn't read that"
+                a.informativeText = (error as? LocalBrain.Failure)?.message ?? error.localizedDescription
+                a.runModal()
+                return
+            }
+            if CommandLine.arguments.contains("--magic") || CommandLine.arguments.contains("--magic-local") {
+                FileHandle.standardError.write("MAGIC LOCAL \"\(request)\" -> \(recipe.summary.isEmpty ? "no settings" : recipe.summary)\(recipe.cannotDo.isEmpty ? "" : " | can't: " + recipe.cannotDo)\n".data(using: .utf8)!)
+            }
+            state.busy = false
+            state.status = nil
+            let started = Date()
+            MagicShow.start(model: model, fromMouse: false, recipe: recipe) { said in
+                if CommandLine.arguments.contains("--magic-local") {
+                    FileHandle.standardError.write("MAGIC LOCAL said: \(said)\n".data(using: .utf8)!)
+                }
+                let seconds = Int(Date().timeIntervalSince(started).rounded())
+                MagicAgent.shared.note = MagicAgent.Note(agent: nil, text: said, changed: true,
+                                                        detail: ["On this Mac", recipe.summary, "\(seconds)s"].filter { !$0.isEmpty }.joined(separator: " · "))
+            }
+        }
     }
 }

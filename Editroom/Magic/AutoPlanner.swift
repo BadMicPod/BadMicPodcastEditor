@@ -39,7 +39,7 @@ struct EditDecision {
 /// where it lifts.
 enum AutoPlanner {
     static func decide(project: Project, clips: [(MediaAsset, ClipAnalysis)], music: (MediaAsset, MusicAnalysis)?,
-                       today: Date = Date()) -> EditDecision? {
+                       today: Date = Date(), recipe: LocalRecipe = .plain) -> EditDecision? {
         let usable = clips.filter { !$0.1.samples.isEmpty }
         guard !usable.isEmpty else { return nil }
 
@@ -71,16 +71,18 @@ enum AutoPlanner {
 
         // Shot lengths: whole beats with music, a natural rhythm without.
         let period = music.map { $0.1.period }
+        // Pace they asked for: shorter or longer shots.
+        let pace = recipe.pace == .fast ? 0.55 : recipe.pace == .calm ? 1.7 : 1
         var longBeats = 4, shortBeats = 2
         if let p = period {
-            longBeats = [2, 4, 8].first { Double($0) * p >= 1.5 } ?? 8
+            longBeats = [2, 4, 8, 16].first { Double($0) * p >= 1.5 * pace } ?? 16
             shortBeats = Double(longBeats / 2) * p >= 0.8 ? longBeats / 2 : longBeats
         }
         let rhythm = [true, false, false, true, true, false]
         func beatsFor(_ k: Int) -> Int { rhythm[k % rhythm.count] ? longBeats : shortBeats }
         func lengthFor(_ k: Int) -> Double {
             if let p = period { return Double(beatsFor(k)) * p }
-            return [2.4, 1.8, 2.1, 2.8, 1.7, 2.2][k % 6]
+            return [2.4, 1.8, 2.1, 2.8, 1.7, 2.2][k % 6] * pace
         }
 
         // How long: about half the good footage, between 12 and 40 seconds, and no longer than the song allows.
@@ -88,7 +90,7 @@ enum AutoPlanner {
             let step = s.analysis.samples.count > 1 ? s.analysis.duration / Double(s.analysis.samples.count) : 2.5
             return sum + Double(s.scores.filter { $0 >= floor }.count) * step
         }
-        var target = min(40, max(12, good * 0.5))
+        var target = recipe.seconds ?? min(40, max(12, good * 0.5))
         if let m = music?.1 { target = min(target, m.duration - 2) }
 
         /// The best window of `length` in a source that doesn't overlap what's already been taken from it.
@@ -157,7 +159,7 @@ enum AutoPlanner {
         guard !shots.isEmpty else { return nil }
 
         var decision = EditDecision(shots: shots, music: nil, title: title(for: usable.compactMap(\.1.created), today: today),
-                                    look: "Film print", bpm: nil)
+                                    look: recipe.look.map { $0 == "none" ? "" : $0 } ?? "Film print", bpm: nil)
 
         if let (asset, m) = music, !m.beats.isEmpty {
             decision.bpm = m.bpm
