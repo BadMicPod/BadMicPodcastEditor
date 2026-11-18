@@ -1156,6 +1156,24 @@ enum SelfTest {
                 good = false
                 detail += " | recipe: no plan"
             }
+            // Longer than the edit is now (after repeats come out): shots grow into their files, with no
+            // gaps or overlaps, cuts on the beat, ending near the length asked for.
+            var longer = LocalRecipe()
+            longer.seconds = 25
+            if let outcome = LocalImprover.plan(project: p, analyses: [a.id: analysis(), b.id: analysis()], music: music, recipe: longer) {
+                var q = p
+                for task in outcome.plan.tasks { task.edit.apply(&q, 1) }
+                let kept = q.clips.filter { $0.trackID == v1 }.sorted { $0.start < $1.start }
+                let end = kept.last?.end ?? 0
+                let gapless = zip(kept, kept.dropFirst()).allSatisfy { abs($0.end - $1.start) < 1e-6 }
+                let inFiles = kept.allSatisfy { $0.sourceStart >= -1e-6 && $0.sourceStart + $0.duration * $0.speed <= 10 + 1e-6 }
+                let longOK = kept.count == 3 && gapless && inFiles && abs(end - 25) <= 2 && outcome.notes.isEmpty
+                good = good && longOK
+                detail += " | longer=\(longOK) end=\(end) \(outcome.summary)"
+            } else {
+                good = false
+                detail += " | longer: no plan"
+            }
             // The request check: settings the request doesn't mention are dropped (the on-device model over-fills).
             var noisy = LocalRecipe()
             noisy.seconds = 20; noisy.pace = .calm; noisy.look = "none"; noisy.music = .off; noisy.frame = .square

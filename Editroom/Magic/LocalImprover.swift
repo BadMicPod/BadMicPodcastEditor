@@ -109,23 +109,51 @@ enum LocalImprover {
             case .unchanged: return c.duration > 3.5 ? min(c.duration, max(2.5, min(4.5, c.duration * 0.6))) : c.duration
             }
         }
-        // A length they asked for: the weakest shots go while even shorter shots couldn't get there, then
-        // every shot is shortened evenly.
+        // A length they asked for. Shorter: the weakest shots go while even shorter shots couldn't get
+        // there, then every shot comes down evenly. Longer than the shots are now: they grow into the rest
+        // of their files, the best parts.
         var notes: [String] = []
-        var scale = 1.0
+        var planned = Dictionary(keep.map { ($0.id, paced($0)) }, uniquingKeysWith: { a, _ in a })
+        var growing = false
+        /// The whole file, at the clip's speed.
+        func fileLength(_ c: Clip) -> Double {
+            c.kind == .image ? 30 : max(c.duration, (p.asset(c.assetID ?? UUID())?.duration ?? c.duration) / max(0.01, c.speed))
+        }
         if let target = recipe.seconds {
-            var total = keep.map(paced).reduce(0, +)
-            while total * 0.6 > target, keep.count > 2,
+            var pacedTotal = keep.map(paced).reduce(0, +)
+            while pacedTotal * 0.6 > target, keep.count > 2,
                   let weakest = keep.indices.min(by: { shotScore(keep[$0]) < shotScore(keep[$1]) }) {
                 dropped.append(keep.remove(at: weakest))
-                total = keep.map(paced).reduce(0, +)
+                pacedTotal = keep.map(paced).reduce(0, +)
             }
-            scale = min(1, target / max(0.01, total))
-            if total < target - 1 {
-                notes.append("it can't be \(Int(target)) seconds long: your shots only add up to about \(Int(total.rounded()))")
+            let nowTotal = keep.map(\.duration).reduce(0, +)
+            if target <= pacedTotal {
+                for c in keep { planned[c.id] = max(0.8, paced(c) * target / max(0.01, pacedTotal)) }
+            } else if target <= nowTotal {
+                // Between the trimmed and the current lengths.
+                let f = (target - pacedTotal) / max(0.01, nowTotal - pacedTotal)
+                for c in keep { planned[c.id] = paced(c) + (c.duration - paced(c)) * f }
+            } else {
+                growing = true
+                var lengths = Dictionary(keep.map { ($0.id, $0.duration) }, uniquingKeysWith: { a, _ in a })
+                var need = target - nowTotal
+                for _ in 0..<6 where need > 0.05 {
+                    let open = keep.filter { fileLength($0) - lengths[$0.id]! > 0.05 }
+                    guard !open.isEmpty else { break }
+                    let share = need / Double(open.count)
+                    for c in open {
+                        let add = min(share, fileLength(c) - lengths[c.id]!)
+                        lengths[c.id]! += add
+                        need -= add
+                    }
+                }
+                planned = lengths
+                if need > 0.5 {
+                    notes.append("it can't be \(Int(target)) seconds long: all the footage in your shots only adds up to about \(Int((target - need).rounded()))")
+                }
             }
         }
-        func wanted(_ c: Clip) -> Double { min(c.duration, max(0.8, paced(c) * scale)) }
+        func wanted(_ c: Clip) -> Double { planned[c.id] ?? paced(c) }
         let weakOut = dropped.count - repeats
 
         // The song: the longest sound-only clip from a music file; none if they asked for no music; or a
@@ -158,7 +186,7 @@ enum LocalImprover {
                 let target = from + wanted(c)
                 // A beat near where it wants to end, no later than the shot can go (the last shot may stretch
                 // to reach a bar, as far as its file allows).
-                let room = last ? (c.kind == .image ? 3600 : sourceRoom(c, p)) : c.duration
+                let room = growing ? fileLength(c) : last ? (c.kind == .image ? 3600 : sourceRoom(c, p)) : c.duration
                 let options = beats.enumerated().filter { $0.element >= from + minLen - 1e-6 && $0.element <= from + room + 1e-6 }
                 let pick: Double
                 if last {
@@ -201,7 +229,41 @@ enum LocalImprover {
             edits.append(.remove(Array(p.unlocked(p.linked([c.id])))))
         }
         var trimmed = 0
-        for (k, c) in keep.enumerated() {
+        if growing {
+            // Longer shots can't slide into place without landing on each other, so they're lifted off and
+            // laid back down at their new lengths, each the best part of its file that long.
+            for c in keep { edits.append(.remove(Array(p.unlocked(p.linked([c.id]))))) }
+            for (k, c) in keep.enumerated() {
+                let length = lengths[k]
+                var from = c.sourceStart
+                if c.kind == .video, let id = c.assetID, let a = analyses[id], let asset = p.asset(id) {
+                    let span = length * c.speed
+                    var bestScore = -Double.infinity
+                    var s0 = 0.0
+                    while s0 + span <= asset.duration + 1e-6 {
+                        let inside = a.samples.filter { $0.time >= s0 && $0.time <= s0 + span }.map(score)
+                        if !inside.isEmpty {
+                            // The best, nudged towards where the shot already was.
+                            let v = inside.reduce(0, +) / Double(inside.count) * 0.75 + (inside.min() ?? 0) * 0.25 - abs(s0 - c.sourceStart) * 0.01
+                            if v > bestScore { bestScore = v; from = s0 }
+                        }
+                        s0 += 0.1
+                    }
+                    if !bestScore.isFinite { from = min(c.sourceStart, max(0, asset.duration - span)) }
+                }
+                let group = p.clips.filter { $0.id == c.id || (c.linkID != nil && $0.linkID == c.linkID) }.map { g -> Clip in
+                    var n = g
+                    n.start = frames(cuts[k])
+                    n.duration = frames(length)
+                    if n.kind != .image { n.sourceStart = from }
+                    n.clampFades()
+                    return n
+                }
+                edits.append(.place(group, asset: c.assetID))
+                trimmed += 1
+            }
+        }
+        for (k, c) in keep.enumerated() where !growing {
             let ids = Array(p.unlocked(p.linked([c.id])))
             let length = lengths[k]
             var head = c.start
@@ -312,7 +374,7 @@ enum LocalImprover {
         if repeats > 0 { parts.append("\(repeats) repeat\(repeats == 1 ? "" : "s") out") }
         if !doubled.isEmpty { parts.append("\(doubled.count) doubled title\(doubled.count == 1 ? "" : "s") out") }
         if weakOut > 0 { parts.append("\(weakOut) weak shot\(weakOut == 1 ? "" : "s") out") }
-        if trimmed > 0 { parts.append("\(trimmed) shot\(trimmed == 1 ? "" : "s") trimmed") }
+        if trimmed > 0 { parts.append("\(trimmed) shot\(trimmed == 1 ? "" : "s") \(growing ? "lengthened" : "trimmed")") }
         if placing != nil { parts.append("music added") } else if recipe.music == .off && songOnTimeline != nil { parts.append("music out") }
         if song != nil && music != nil { parts.append("cut to the beat") }
         if graded > 0 { parts.append(common == "none" ? "looks off" : "one look (\(common ?? ""))") }

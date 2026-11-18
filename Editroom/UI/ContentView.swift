@@ -264,16 +264,17 @@ struct MagicButton: View {
         } label: {
             ZStack {
                 HStack(spacing: 5) {
+                    // In the toolbar's own colours, like Export; orange only for Stop.
                     if ai.ready != nil {
                         Image(systemName: "sparkles")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Theme.accent)
+                            .foregroundStyle(Theme.text)
                     } else if status != nil {
                         ProgressView().controlSize(.small).scaleEffect(0.55).frame(width: 12, height: 12)
                     } else {
                         Image(systemName: "wand.and.sparkles")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Theme.accent)
+                            .foregroundStyle(Theme.text)
                     }
                     Text(status ?? "Magic")
                         .font(.system(size: 11.5, weight: .semibold))
