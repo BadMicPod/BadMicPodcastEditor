@@ -346,7 +346,7 @@ struct InspectorView: View {
         let done: (Bool) -> Void = { editing in
             if !editing { model.commitLive() }
         }
-        InspectorSection("Color", action: grade.isNeutral ? nil : ("Reset", { once { $0 = ColorGrade() } }),
+        InspectorSection("Grade", action: grade.isNeutral ? nil : ("Reset", { once { $0 = ColorGrade() } }),
                          collapsedByDefault: true, marked: !grade.isNeutral) {
             HStack(alignment: .top, spacing: 0) {
                 ColorWheel(title: "Shadows", point: grade.shadows, onChange: { pt in live { $0.shadows = pt } }, onEnd: { model.commitLive() })
