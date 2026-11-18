@@ -24,7 +24,6 @@ struct MagicPopover: View {
             AITabs(selection: $ai.tab)
             content
                 .padding(.top, 12)
-            footer
         }
         .padding(14)
         .frame(width: 380)
@@ -88,7 +87,8 @@ struct MagicPopover: View {
                     }
                 }
             } else {
-                PromptForm(model: model, ai: ai, kind: kind, request: $request, hasEdit: hasEdit) { go(kind) }
+                PromptForm(model: model, ai: ai, kind: kind, request: $request, hasEdit: hasEdit,
+                           manage: { close(); model.showAgents = true }) { go(kind) }
             }
         } else {
             VStack(alignment: .leading, spacing: 6) {
@@ -110,33 +110,6 @@ struct MagicPopover: View {
                 .padding(.top, 6)
             }
         }
-    }
-
-    private var footer: some View {
-        HStack {
-            Text(footerText)
-            Spacer()
-            if ai.tab != .local {
-                Button("Manage AI Agents") {
-                    close()
-                    model.showAgents = true
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .font(.system(size: 10.5))
-        .foregroundStyle(Theme.textFaint)
-        .padding(.top, 10)
-        .overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.07)).frame(height: 0.5).padding(.top, 0) }
-        .padding(.top, 11)
-    }
-
-    private var footerText: String {
-        guard let kind = ai.tab.kind else { return "Always available" }
-        if !ai.installed(kind) { return "Free to download" }
-        if kind == .claude, connections.states[.claude] == .waiting { return "Waiting for Claude…" }
-        if !ai.connected(kind) { return "No API key needed" }
-        return "Uses your \(kind.name) plan"
     }
 
     // MARK: Actions
@@ -277,22 +250,57 @@ private struct PromptForm: View {
     let kind: MagicAgent.Kind
     @Binding var request: String
     let hasEdit: Bool
+    let manage: () -> Void
     let go: () -> Void
     @FocusState private var focused: Bool
 
-    private var ideas: [String] {
+    private static let forThisEdit = ["Make this shorter so people keep watching", "Cut it to the beat of the music",
+                                      "Give it a warm film look", "Open on the strongest moment"]
+    private static let startFresh = ["A 30-second highlight reel cut to the music", "A calm, slow story of the day",
+                                     "Fast and punchy, vertical for Reels"]
+
+    private var placeholder: String {
         hasEdit
-            ? ["Make this shorter so people keep watching", "Cut it to the beat of the music", "Give it a warm film look"]
-            : ["A 30-second highlight reel cut to the music", "A calm, slow story of the day", "Fast and punchy, vertical for Reels"]
+            ? "Describe what to change, or leave this empty and \(kind.name) will make the best video it can from your Media."
+            : "Describe the video you want, or leave this empty and \(kind.name) will make the best video it can from the clips and music in your Media."
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(hasEdit ? "What should change?" : "What should it make?")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Theme.text)
-                .padding(.bottom, 8)
-            TextField(hasEdit ? "Leave empty to make it better" : "Leave empty for the best cut", text: $request, axis: .vertical)
+            HStack {
+                Text(hasEdit ? "What should change?" : "What should it make?")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                Spacer()
+                // Ideas fill the box, to send as they are or change first.
+                Menu {
+                    if hasEdit {
+                        Section("For this edit") {
+                            ForEach(Self.forThisEdit, id: \.self) { idea in Button(idea) { use(idea) } }
+                        }
+                    }
+                    Section(hasEdit ? "Start fresh" : "Ideas") {
+                        ForEach(Self.startFresh, id: \.self) { idea in Button(idea) { use(idea) } }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "lightbulb").font(.system(size: 10, weight: .semibold))
+                        Text("Ideas").font(.system(size: 11, weight: .medium))
+                        Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).opacity(0.7)
+                    }
+                    .foregroundStyle(Theme.textDim)
+                    .padding(.horizontal, 8)
+                    .frame(height: 22)
+                    .contentShape(Capsule())
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Ideas to start from")
+            }
+            .padding(.bottom, 8)
+            TextField(placeholder, text: $request, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.text)
@@ -304,25 +312,9 @@ private struct PromptForm: View {
                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.field))
                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.stroke))
                 .onSubmit(go)
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(ideas, id: \.self) { idea in
-                    Button {
-                        request = idea
-                        focused = true
-                    } label: {
-                        Text(idea)
-                            .font(.system(size: 11))
-                            .foregroundStyle(Theme.textDim)
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 4)
-                            .background(Capsule().fill(Color.white.opacity(0.06)))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.vertical, 10)
+                .padding(.bottom, 11)
             HStack(spacing: 5) {
-                ModelChip(ai: ai, kind: kind)
+                ModelChip(ai: ai, kind: kind, manage: manage)
                 EffortChip(ai: ai, kind: kind)
                 Spacer()
                 PillButton(title: "Make it", prominent: true, action: go)
@@ -330,6 +322,11 @@ private struct PromptForm: View {
             }
         }
         .onAppear { focused = true }
+    }
+
+    private func use(_ idea: String) {
+        request = idea
+        focused = true
     }
 }
 
@@ -355,6 +352,7 @@ private struct ChipLabel: View {
 private struct ModelChip: View {
     @ObservedObject var ai: MagicAgent
     let kind: MagicAgent.Kind
+    let manage: () -> Void
 
     var body: some View {
         let options = ai.models(for: kind)
@@ -372,6 +370,10 @@ private struct ModelChip: View {
                 }
             }
             .pickerStyle(.inline)
+            Divider()
+            Section("Uses your \(kind.name) plan") {
+                Button("Manage AI Agents…", action: manage)
+            }
         } label: {
             ChipLabel(title: ai.modelName(for: kind))
         }

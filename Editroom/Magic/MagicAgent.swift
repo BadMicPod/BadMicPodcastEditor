@@ -128,19 +128,24 @@ final class MagicAgent: ObservableObject {
                 ("claude-haiku-5-5", "Haiku 5.5", "Fastest"), ("claude-fable-5-2", "Fable 5.2", "Most capable"),
             ].map { ModelOption(id: $0.0, name: $0.1, blurb: $0.2, efforts: efforts) }
         case .chatgpt:
+            // Just these, in this order. Names and efforts come from Codex's own list when it has them.
+            let picks = [("gpt-6.2-sol", "GPT-6.2-Sol"), ("gpt-6.2-astra", "GPT-6.2-Astra"),
+                         ("gpt-6.1-terra", "GPT-6.1-Terra"), ("gpt-6-luna", "GPT-6-Luna")]
             let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/models_cache.json")
-            var out: [ModelOption] = []
+            var known: [String: [String: Any]] = [:]
             if let data = try? Data(contentsOf: file),
                let models = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["models"] as? [[String: Any]] {
-                for m in models where m["visibility"] as? String == "list" {
-                    guard let slug = m["slug"] as? String else { continue }
-                    // Not "ultra": it hands parts of the job to more agents, which costs much more.
-                    let efforts = (m["supported_reasoning_levels"] as? [[String: Any]] ?? []).compactMap { $0["effort"] as? String }.filter { $0 != "ultra" }
-                    out.append(ModelOption(id: slug, name: m["display_name"] as? String ?? slug, efforts: efforts,
-                                           defaultEffort: m["default_reasoning_level"] as? String ?? "medium"))
-                }
+                for m in models { if let slug = m["slug"] as? String { known[slug] = m } }
             }
-            return out
+            return picks.compactMap { slug, name in
+                let m = known[slug]
+                // Not listed by Codex on this Mac: this plan doesn't offer it.
+                if !known.isEmpty, m == nil { return nil }
+                // Not "ultra": it hands parts of the job to more agents, which costs much more.
+                let efforts = (m?["supported_reasoning_levels"] as? [[String: Any]])?.compactMap { $0["effort"] as? String }.filter { $0 != "ultra" }
+                return ModelOption(id: slug, name: name, efforts: efforts ?? ["low", "medium", "high", "xhigh"],
+                                   defaultEffort: m?["default_reasoning_level"] as? String ?? "medium")
+            }
         }
     }
 
