@@ -333,13 +333,13 @@ private struct PromptForm: View {
                 // Ideas fill the box, to send as they are or change first.
                 Menu {
                     if hasEdit {
-                        Section("Improve this edit") {
+                        Section("Improve") {
                             ForEach(Self.improve, id: \.name) { idea in
                                 Button { use(idea.prompt) } label: { Label(idea.name, systemImage: idea.symbol) }
                             }
                         }
                     }
-                    Section(hasEdit ? "Make something new" : "Make") {
+                    Section("Create") {
                         ForEach(Self.make, id: \.name) { idea in
                             Button { use(idea.prompt) } label: { Label(idea.name, systemImage: idea.symbol) }
                         }
