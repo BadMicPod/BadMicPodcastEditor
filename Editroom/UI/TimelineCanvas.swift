@@ -896,6 +896,10 @@ final class TimelineCanvas: NSView {
                     }
                 })
             }
+            if h.clip.kind == .video, let asset = model.project.asset(h.clip.assetID ?? UUID()) {
+                menu.addItem(.separator())
+                menu.addItem(ActionItem("Match Sequence to Clip", enabled: !model.sequenceMatches(asset)) { model.matchSequence(to: asset) })
+            }
             menu.addItem(.separator())
             menu.addItem(ActionItem("Delete") { model.deleteSelection() })
             menu.addItem(ActionItem("Ripple Delete") { model.deleteSelection(ripple: true) })

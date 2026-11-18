@@ -229,6 +229,10 @@ private struct AssetActions: ViewModifier {
                     Divider()
                 }
                 Button("Add to Timeline") { model.addAtPlayhead(.asset(asset.id)) }
+                if asset.kind == .video {
+                    Button("Match Sequence to Clip") { model.matchSequence(to: asset) }
+                        .disabled(model.sequenceMatches(asset))
+                }
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: asset.path)]) }
                 Divider()
                 Button("Remove") { model.removeAsset(asset.id) }

@@ -168,6 +168,8 @@ struct EditroomApp: App {
                 Button("Duplicate") { model.duplicateSelection() }.keyboardShortcut("d", modifiers: [.command, .shift])
                 Button("Freeze Frame") { model.freezeFrame() }.keyboardShortcut("f", modifiers: [.option])
                 Button("Reverse") { model.reverseSelection() }.keyboardShortcut("r", modifiers: [.option])
+                Button("Match Sequence to Clip") { if let a = model.matchableAsset { model.matchSequence(to: a) } }
+                    .disabled(model.matchableAsset.map { model.sequenceMatches($0) } ?? true)
                 Divider()
                 Button("Delete") { model.deleteSelection() }
                 Button("Ripple Delete") { model.deleteSelection(ripple: true) }

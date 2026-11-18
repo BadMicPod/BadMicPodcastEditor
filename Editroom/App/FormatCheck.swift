@@ -79,7 +79,7 @@ enum FormatCheck {
         guard a.kind == .video else { return a }
 
         var p = Project()
-        p.width = a.width; p.height = a.height; p.fps = 30
+        p.width = a.width; p.height = a.height; p.fps = EditorModel.standardFPS(a.fps)
         p.assets = [a]
         let clip = Clip(trackID: p.videoTracks[0].id, kind: .video, assetID: a.id, start: 0, duration: min(a.duration, 1.5))
         p.clips = [clip]

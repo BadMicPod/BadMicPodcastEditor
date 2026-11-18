@@ -846,11 +846,10 @@ final class EditorModel: ObservableObject {
         insert(makeClips(payload, at: start, videoTrack: v, audioTrack: a))
     }
 
-    static let frameRates: [Double] = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60]
+    static let frameRates: [Double] = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60, 100, 119.88, 120]
 
     static func standardFPS(_ fps: Double) -> Double {
         guard fps > 1 else { return 30 }
-        if fps > 61 { return 60 }
         return frameRates.min { abs($0 - fps) < abs($1 - fps) } ?? 30
     }
 
@@ -1099,6 +1098,29 @@ final class EditorModel: ObservableObject {
         mutate { p in
             p.width = width
             p.height = height
+            p.settingsLocked = true
+        }
+    }
+
+    /// The video a "match sequence" command would use: the selected clip's, if it's a video clip.
+    var matchableAsset: MediaAsset? {
+        guard let clip = project.clips.first(where: { selection.contains($0.id) && $0.kind == .video }),
+              let asset = project.asset(clip.assetID ?? UUID()), asset.width > 0 else { return nil }
+        return asset
+    }
+
+    /// Whether the sequence already has a video's frame size and rate.
+    func sequenceMatches(_ asset: MediaAsset) -> Bool {
+        asset.width == project.width && asset.height == project.height && Self.standardFPS(asset.fps) == project.fps
+    }
+
+    /// Sets the sequence's frame size and rate to a video's (an undoable edit).
+    func matchSequence(to asset: MediaAsset) {
+        guard asset.kind == .video, asset.width > 0, asset.height > 0 else { return }
+        mutate { p in
+            p.width = asset.width
+            p.height = asset.height
+            p.fps = Self.standardFPS(asset.fps)
             p.settingsLocked = true
         }
     }
