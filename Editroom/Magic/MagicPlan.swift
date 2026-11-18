@@ -205,71 +205,58 @@ struct MagicPlan {
     var tasks: [MagicTask]
 }
 
-/// Step 1's stand-in for a real planner: a quick montage from whatever is in the library, built the
-/// way an editor would by hand. A rough cut goes down first, shots long and in no particular order,
-/// on V2. Handles are trimmed (some heads cut off with the blade) and each shot is dragged down into
-/// its place on V1. Then a title, dissolves, sound levels and fades, and a grade on every shot.
-enum ScriptedPlanner {
-    static func plan(for project: Project, offline: Set<UUID>) -> MagicPlan? {
-        let visuals = project.assets.filter { a in
-            !offline.contains(a.id) && (a.kind == .image || (a.kind == .video && a.duration >= 1))
-        }
-        guard !visuals.isEmpty else { return nil }
-        let music = project.assets.first { $0.kind == .audio && !offline.contains($0.id) && $0.duration >= 4 }
-
+/// Turns an edit decision into the edits the cursors perform, the way an editor would build it by
+/// hand. A rough cut goes down first: shots long, in no particular order, on V2. Handles are trimmed
+/// (some heads cut off with the blade) and each shot is dragged down into its place on V1. Then a
+/// title, dissolves, sound levels and fades, and a grade on each shot as soon as it's in place.
+enum Choreographer {
+    static func plan(project: Project, decision: EditDecision) -> MagicPlan? {
+        guard !decision.shots.isEmpty else { return nil }
         var base = project
         base.clips = []
         base.inPoint = nil
         base.outPoint = nil
         while base.videoTracks.count < 2 { base.videoTracks.append(Track(kind: .video)) }
-        while base.audioTracks.count < (music == nil ? 2 : 3) { base.audioTracks.append(Track(kind: .audio)) }
+        while base.audioTracks.count < (decision.music == nil ? 2 : 3) { base.audioTracks.append(Track(kind: .audio)) }
         for i in base.videoTracks.indices { base.videoTracks[i].locked = false }
         for i in base.audioTracks.indices { base.audioTracks[i].locked = false }
         let v1 = base.videoTracks[0].id, v2 = base.videoTracks[1].id
         let a1 = base.audioTracks[0].id, a2 = base.audioTracks[1].id
         let fps = base.fps
         func frames(_ t: Double) -> Double { (t * fps).rounded() / fps }
+        var rng = SeededRandom(seed: UInt64(decision.shots.count * 7919 + project.assets.count))
 
-        // Shots: each clip used a few times, at different moments.
-        var rng = SeededRandom(seed: UInt64(visuals.count * 7919 + project.assets.count))
-        let shotCount = min(16, max(8, visuals.count * 3))
-        let perAsset = Int((Double(shotCount) / Double(visuals.count)).rounded(.up))
-        struct Shot { var asset: MediaAsset; var duration: Double; var source = 0.0; var head = 0.0; var tail = 0.0 }
-        var shots: [Shot] = []
-        var uses: [UUID: Int] = [:]
-        for i in 0..<shotCount {
-            let a = visuals[i % visuals.count]
-            let n = uses[a.id, default: 0]
-            uses[a.id] = n + 1
-            var d = 1.3 + rng.next() * 0.9
-            var shot = Shot(asset: a, duration: 0)
-            // Generous handles: shots go down long and get trimmed.
-            var head = 0.35 + rng.next() * 0.45, tail = 0.35 + rng.next() * 0.5
-            if a.kind == .video {
-                let slot = a.duration / Double(perAsset)
-                d = min(d, max(0.6, slot - 0.1))
-                shot.source = min(max(0, Double(n) * slot + max(0, (slot - d) / 2)), max(0, a.duration - d))
-                head = min(head, shot.source)
-                tail = min(tail, a.duration - shot.source - d)
-            }
-            shot.duration = frames(d)
-            shot.head = max(0, (head * fps).rounded(.down) / fps)
-            shot.tail = max(0, (tail * fps).rounded(.down) / fps)
-            shots.append(shot)
-        }
-
-        // Where each shot ends up, in order on V1.
+        // Where each shot ends up on V1: cuts on whole frames, as close to the plan (the beat) as can be.
+        let shots = decision.shots
         var finalStart: [Double] = []
+        var finalLength: [Double] = []
         var t = 0.0
-        for s in shots { finalStart.append(t); t += s.duration }
-        let total = t
+        for s in shots {
+            let a = frames(t), b = frames(t + s.duration)
+            finalStart.append(a)
+            finalLength.append(max(1 / fps, b - a))
+            t += s.duration
+        }
+        let total = frames(t)
+
+        // Handles: shots go down long and get trimmed, with what the file has either side.
+        var head: [Double] = [], tail: [Double] = []
+        for (i, s) in shots.enumerated() {
+            var h = 0.35 + rng.next() * 0.45, tl = 0.35 + rng.next() * 0.5
+            if s.asset.kind == .video {
+                h = min(h, s.source)
+                tl = min(tl, s.asset.duration - s.source - finalLength[i])
+            }
+            head.append(max(0, (h * fps).rounded(.down) / fps))
+            tail.append(max(0, (tl * fps).rounded(.down) / fps))
+        }
 
         // The rough cut: the same shots, long, shuffled, one after another on V2.
         var rough = Array(shots.indices)
         for i in stride(from: rough.count - 1, to: 0, by: -1) { rough.swapAt(i, Int(rng.next() * Double(i + 1))) }
         var roughStart = Array(repeating: 0.0, count: shots.count)
         t = 0
-        for i in rough { roughStart[i] = t; t += shots[i].head + shots[i].duration + shots[i].tail }
+        for i in rough { roughStart[i] = t; t += head[i] + finalLength[i] + tail[i] }
 
         var tasks: [MagicTask] = []
         func add(_ e: MagicEdit, after: [Int] = [], delay: Double = 0) -> Int {
@@ -278,27 +265,23 @@ enum ScriptedPlanner {
         }
 
         // Music first, so it's under everything from the start.
-        var musicClip: UUID?
-        if let music {
-            let len = min(music.duration, total)
-            let skip = music.duration - len > 20 ? min(30, (music.duration - len) * 0.3) : 0
-            var c = Clip(trackID: base.audioTracks[2].id, kind: .audio, assetID: music.id, start: 0, duration: frames(len))
-            c.sourceStart = skip
-            let p = add(.place([c], asset: music.id))
-            musicClip = c.id
-            _ = add(.fadeIn(c.id, to: 0.5), after: [p], delay: 0.1)
-            _ = add(.fadeOut(c.id, to: min(1.5, len / 4)), after: [p], delay: 0.2)
+        if let m = decision.music {
+            var c = Clip(trackID: base.audioTracks[2].id, kind: .audio, assetID: m.asset.id, start: 0, duration: frames(m.duration))
+            c.sourceStart = m.source
+            let p = add(.place([c], asset: m.asset.id))
+            _ = add(.fadeIn(c.id, to: 0.3), after: [p], delay: 0.1)
+            _ = add(.fadeOut(c.id, to: min(m.fadeOut, m.duration / 3)), after: [p], delay: 0.2)
             _ = add(.gain(c.id, from: 0, to: -2), after: [p], delay: 0.4)
         }
 
-        struct Cut { var video: UUID; var audio: UUID?; var moved: Int; var roughEnd: Double; var roughFrom: Double }
-        var cuts = Array(repeating: Cut(video: UUID(), audio: nil, moved: 0, roughEnd: 0, roughFrom: 0), count: shots.count)
+        struct Cut { var video: UUID; var audio: UUID?; var moved: Int; var roughFrom: Double }
+        var cuts = Array(repeating: Cut(video: UUID(), audio: nil, moved: 0, roughFrom: 0), count: shots.count)
         for (order, i) in rough.enumerated() {
             let s = shots[i]
             let r = roughStart[i]
-            let long = s.head + s.duration + s.tail
+            let long = head[i] + finalLength[i] + tail[i]
             var v = Clip(trackID: v2, kind: s.asset.kind == .image ? .image : .video, assetID: s.asset.id, start: r, duration: long)
-            v.sourceStart = s.source - s.head
+            v.sourceStart = s.asset.kind == .image ? 0 : s.source - head[i]
             var group = [v]
             if s.asset.kind == .video, s.asset.hasAudio {
                 let link = UUID()
@@ -311,8 +294,8 @@ enum ScriptedPlanner {
             var ids = group.map(\.id)
             let place = add(.place(group, asset: s.asset.id), delay: Double(order) * 0.09 + rng.next() * 0.25)
             var ready = [place]
-            let headAt = r + s.head
-            if s.head > 0.2, i % 3 == 1 {
+            let headAt = r + head[i]
+            if head[i] > 0.2, i % 3 == 1 {
                 // Cut the head off with the blade and delete it.
                 var pieces: [UUID: UUID] = [:]
                 for id in ids { pieces[id] = UUID() }
@@ -320,16 +303,16 @@ enum ScriptedPlanner {
                 let remove = add(.remove(ids), after: [blade], delay: 0.03)
                 ids = ids.map { pieces[$0]! }
                 ready = [blade, remove]
-            } else if s.head > 0.5 / fps {
+            } else if head[i] > 0.5 / fps {
                 ready.append(add(.trimHead(ids, from: r, to: headAt), after: [place]))
             }
-            if s.tail > 0.5 / fps {
-                ready.append(add(.trimTail(ids, from: r + long, to: headAt + s.duration), after: ready, delay: 0.02))
+            if tail[i] > 0.5 / fps {
+                ready.append(add(.trimTail(ids, from: r + long, to: headAt + finalLength[i]), after: ready, delay: 0.02))
             }
             var tracks = [ids[0]: v1]
             if ids.count > 1 { tracks[ids[1]] = a1 }
             let moved = add(.move(ids, from: headAt, to: finalStart[i], tracks: tracks), after: ready)
-            cuts[i] = Cut(video: ids[0], audio: ids.count > 1 ? ids[1] : nil, moved: moved, roughEnd: headAt + s.duration, roughFrom: headAt)
+            cuts[i] = Cut(video: ids[0], audio: ids.count > 1 ? ids[1] : nil, moved: moved, roughFrom: headAt)
         }
 
         // A title on V2 once the rough cut has cleared from under it.
@@ -338,40 +321,32 @@ enum ScriptedPlanner {
         var title = Clip(trackID: v2, kind: .text, start: 0, duration: frames(titleLength))
         title.text.string = ""
         title.text.size = 130
-        let titleText = Self.titleText()
         let placed = add(.place([title], asset: nil), after: clearing)
-        let typed = add(.type(title.id, titleText), after: [placed])
+        let typed = add(.type(title.id, decision.title), after: [placed])
         _ = add(.fadeIn(title.id, to: 0.4), after: [typed])
         _ = add(.fadeOut(title.id, to: 0.5), after: [typed], delay: 0.05)
 
-        let look = "Film print"
         for (i, c) in cuts.enumerated() {
-            // Sound: shot audio sits under the music, with little fades on and off.
+            let s = shots[i]
+            // Sound: the shot's level, with little fades on and off.
             if let a = c.audio {
-                if musicClip != nil {
-                    _ = add(.gain(a, from: 0, to: i % 4 == 2 ? -9 : -16), after: [c.moved], delay: 0.03)
-                }
-                _ = add(i % 2 == 0 ? .fadeIn(a, to: 0.25) : .fadeOut(a, to: 0.3), after: [c.moved], delay: 0.08)
+                if s.gainDB != 0 { _ = add(.gain(a, from: 0, to: s.gainDB), after: [c.moved], delay: 0.03) }
+                _ = add(i % 2 == 0 ? .fadeIn(a, to: 0.2) : .fadeOut(a, to: 0.25), after: [c.moved], delay: 0.08)
             }
             // Dissolves picked from the right-click menu.
-            if i > 0, i % 3 == 0 || i == cuts.count - 1 {
+            if i > 0, s.dissolve {
                 _ = add(.transition(c.video, Transition(kind: .dissolve, duration: 0.5)), after: [c.moved, cuts[i - 1].moved], delay: 0.1)
             }
+            // The last shot fades to black.
+            if i == cuts.count - 1 { _ = add(.fadeOut(c.video, to: 0.6), after: [c.moved], delay: 0.12) }
             // Grade each shot as soon as it's in place, while others are still being cut: four
-            // cursors on its panel.
-            _ = add(.look(c.video, name: look), after: [c.moved], delay: 0.1)
-            _ = add(.grade(c.video, .exposure, to: 0.2), after: [c.moved], delay: 0.125)
+            // cursors on its panel. Exposure brings it in line with the others.
+            _ = add(.look(c.video, name: decision.look), after: [c.moved], delay: 0.1)
+            _ = add(.grade(c.video, .exposure, to: s.exposure), after: [c.moved], delay: 0.125)
             _ = add(.grade(c.video, .contrast, to: 12), after: [c.moved], delay: 0.15)
             _ = add(.grade(c.video, .saturation, to: 18), after: [c.moved], delay: 0.175)
         }
         return MagicPlan(base: base, tasks: tasks)
-    }
-
-    /// The title: this month and year.
-    static func titleText() -> String {
-        let f = DateFormatter()
-        f.dateFormat = "MMMM yyyy"
-        return f.string(from: Date())
     }
 }
 

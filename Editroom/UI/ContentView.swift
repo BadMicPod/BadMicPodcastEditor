@@ -198,6 +198,7 @@ extension ToolbarContent {
 /// Starts the magic edit: a swarm of cursors builds a cut from the library.
 struct MagicButton: View {
     @ObservedObject var model: EditorModel
+    @ObservedObject var state = MagicState.shared
     @State private var hovering = false
 
     private var hasMedia: Bool { model.project.assets.contains { $0.kind != .audio } }
@@ -207,22 +208,28 @@ struct MagicButton: View {
             MagicShow.start(model: model, fromMouse: true)
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: "wand.and.sparkles")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
-                Text("Magic")
+                if state.status != nil {
+                    ProgressView().controlSize(.small).scaleEffect(0.55).frame(width: 12, height: 12)
+                } else {
+                    Image(systemName: "wand.and.sparkles")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                }
+                Text(state.status ?? "Magic")
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(Theme.text)
+                    .monospacedDigit()
             }
             .padding(.horizontal, 13)
             .frame(height: 28)
             .background(Capsule().fill(Color.white.opacity(hovering ? 0.14 : 0.08)))
             .overlay(Capsule().strokeBorder(Color.white.opacity(0.05)))
             .contentShape(Capsule())
+            .animation(.easeOut(duration: 0.15), value: state.status)
         }
         .buttonStyle(.plain)
         .background(MagicAnchor(key: "magicButton"))
-        .disabled(!hasMedia)
+        .disabled(!hasMedia || state.busy)
         .opacity(hasMedia ? 1 : 0.4)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)

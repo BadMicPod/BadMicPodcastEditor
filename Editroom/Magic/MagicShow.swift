@@ -38,6 +38,14 @@ enum MagicAnchors {
 
 // MARK: - The show
 
+/// Whether magic is working, and what to say on its button meanwhile.
+@MainActor
+final class MagicState: ObservableObject {
+    static let shared = MagicState()
+    @Published var busy = false
+    @Published var status: String?
+}
+
 private final class FlippedView: NSView {
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -51,19 +59,96 @@ final class MagicShow: NSObject {
     static private(set) var current: MagicShow?
     static var isRunning: Bool { current != nil }
 
-    /// Starts the show. `fromMouse` spawns the cursors from the mouse; otherwise from the Magic button.
-    @discardableResult
-    static func start(model: EditorModel, fromMouse: Bool) -> Bool {
-        guard current == nil, let canvas = TimelineCanvas.current, let window = canvas.window else { return false }
-        let offline = Set(model.project.assets.filter { model.media.isOffline($0) }.map(\.id))
-        guard let plan = ScriptedPlanner.plan(for: model.project, offline: offline) else {
-            NSSound.beep()
-            return false
+    /// Looks at the media, plans a cut, and plays it. `fromMouse` spawns the cursors from where the
+    /// mouse was when this was called; otherwise from the Magic button.
+    static func start(model: EditorModel, fromMouse: Bool) {
+        let state = MagicState.shared
+        guard current == nil, !state.busy, let canvas = TimelineCanvas.current, let window = canvas.window else { return }
+        let click = fromMouse ? window.mouseLocationOutsideOfEventStream : nil
+        let project = model.project
+        let offline = Set(project.assets.filter { model.media.isOffline($0) }.map(\.id))
+        let visuals = project.assets.filter { a in
+            !offline.contains(a.id) && (a.kind == .image || (a.kind == .video && a.duration >= 1))
         }
-        let show = MagicShow(model: model, plan: plan, window: window, canvas: canvas, fromMouse: fromMouse)
-        current = show
-        show.begin()
-        return true
+        guard !visuals.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        // The longest song in the library, if there is one.
+        let song = project.assets.filter { $0.kind == .audio && !offline.contains($0.id) && $0.duration >= 8 }
+            .max { $0.duration < $1.duration }
+        state.busy = true
+        state.status = "Watching"
+        Task { @MainActor in
+            let started = CACurrentMediaTime()
+            let found = await analyze(visuals, song: song) { done, total in
+                state.status = "Watching \(done) of \(total)"
+            }
+            state.status = "Planning"
+            let decision = AutoPlanner.decide(project: model.project, clips: found.clips, music: found.music)
+            let plan = decision.flatMap { Choreographer.plan(project: model.project, decision: $0) }
+            if CommandLine.arguments.contains("--magic"), let decision {
+                log(decision, found.music?.1, seconds: CACurrentMediaTime() - started)
+            }
+            guard let plan, current == nil, let canvas = TimelineCanvas.current, let window = canvas.window else {
+                state.busy = false
+                state.status = nil
+                NSSound.beep()
+                return
+            }
+            // Spawn from the click if it was quick; after a wait, from the button.
+            let fromClick = CACurrentMediaTime() - started < 1.5 ? click : nil
+            let show = MagicShow(model: model, plan: plan, window: window, canvas: canvas, click: fromClick)
+            current = show
+            state.status = nil
+            show.begin()
+        }
+    }
+
+    /// Analyses the clips (a few at a time) and the song, reporting progress.
+    private static func analyze(_ visuals: [MediaAsset], song: MediaAsset?,
+                                progress: @escaping @MainActor (Int, Int) -> Void) async
+        -> (clips: [(MediaAsset, ClipAnalysis)], music: (MediaAsset, MusicAnalysis)?) {
+        let total = visuals.count + (song == nil ? 0 : 1)
+        var done = 0
+        progress(0, total)
+        var clips: [UUID: ClipAnalysis] = [:]
+        var music: MusicAnalysis?
+        await withTaskGroup(of: (UUID, ClipAnalysis?, MusicAnalysis?).self) { group in
+            var queue = visuals.map { ($0.id, $0.url, $0.kind, false) }
+            if let song { queue.insert((song.id, song.url, song.kind, true), at: 0) }
+            var running = 0
+            func next() {
+                guard !queue.isEmpty else { return }
+                let (id, url, kind, isSong) = queue.removeFirst()
+                running += 1
+                group.addTask {
+                    isSong ? (id, nil, await MediaAnalyzer.music(url)) : (id, await MediaAnalyzer.clip(url, kind: kind), nil)
+                }
+            }
+            for _ in 0..<3 { next() }
+            for await (id, clip, beat) in group {
+                if let clip { clips[id] = clip }
+                if let beat { music = beat }
+                done += 1
+                progress(done, total)
+                next()
+            }
+        }
+        return (visuals.compactMap { a in clips[a.id].map { (a, $0) } }, song.flatMap { s in music.map { (s, $0) } })
+    }
+
+    private static func log(_ d: EditDecision, _ m: MusicAnalysis?, seconds: Double) {
+        var lines = [String(format: "MAGIC PLAN %.2fs analysis, %d shots, %.2fs long, title \"%@\"", seconds, d.shots.count,
+                            d.shots.reduce(0) { $0 + $1.duration }, d.title)]
+        if let m, let music = d.music {
+            lines.append(String(format: "MAGIC MUSIC %.1f bpm, %d beats, bar phase %d, starts %.2fs", m.bpm, m.beats.count, m.barPhase, music.source))
+        }
+        for s in d.shots {
+            lines.append(String(format: "MAGIC SHOT %@ %.2f+%.2f score %.2f exp %+.1f%@", s.asset.name, s.source, s.duration, s.score,
+                                s.exposure, s.dissolve ? " dissolve" : ""))
+        }
+        FileHandle.standardError.write((lines.joined(separator: "\n") + "\n").data(using: .utf8)!)
     }
 
     private struct Slot {
@@ -118,7 +203,8 @@ final class MagicShow: NSObject {
     private let plan: MagicPlan
     private let window: NSWindow
     private let canvas: TimelineCanvas
-    private let fromMouse: Bool
+    /// Where the Magic button was clicked, in window coordinates.
+    private let click: NSPoint?
     private var slots: [Slot] = []
     private var order: [Int] = []
     private var agents: [Agent] = []
@@ -166,12 +252,12 @@ final class MagicShow: NSObject {
     static let menuItem = CGPoint(x: 62, y: 20)
     static let menuItems = ["Dissolve", "Dip to Black", "Wipe"]
 
-    private init(model: EditorModel, plan: MagicPlan, window: NSWindow, canvas: TimelineCanvas, fromMouse: Bool) {
+    private init(model: EditorModel, plan: MagicPlan, window: NSWindow, canvas: TimelineCanvas, click: NSPoint?) {
         self.model = model
         self.plan = plan
         self.window = window
         self.canvas = canvas
-        self.fromMouse = fromMouse
+        self.click = click
         overlay = NSWindow(contentRect: window.frame, styleMask: .borderless, backing: .buffered, defer: false)
         super.init()
     }
@@ -563,8 +649,8 @@ final class MagicShow: NSObject {
 
     private func spawnPoint() -> CGPoint {
         let button = MagicAnchors.rect("magicButton").map { toOverlay($0) }
-        if fromMouse {
-            let m = toOverlay(window.mouseLocationOutsideOfEventStream)
+        if let click {
+            let m = toOverlay(click)
             if CGRect(origin: .zero, size: window.frame.size).contains(m) { return m }
         }
         if let button { return CGPoint(x: button.midX, y: button.midY) }
@@ -1117,6 +1203,7 @@ final class MagicShow: NSObject {
         model.rebuildSuspended = false
         model.seek(to: 0)
         Self.current = nil
+        MagicState.shared.busy = false
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [model] in model.play() }
         // `--magic-undo` (testing): check one undo takes the whole cut away.
         if CommandLine.arguments.contains("--magic-undo") {

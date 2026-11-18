@@ -743,6 +743,92 @@ enum SelfTest {
             log("SHAPES \(good ? "OK" : "FAIL") size=\(ls) leftVsRight=\(d)")
             ok = ok && good
         }
+        // Auto planner: finds the beat of a 128 BPM track, cuts the test clips on its beats, never
+        // reuses a moment, ends on a bar; the choreographed edits build exactly that cut, graded,
+        // with a title.
+        do {
+            let rate = 22050.0, bpm = 128.0, seconds = 40.0
+            let format = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1)!
+            let song = outDir.appendingPathComponent("beat128.caf")
+            try? FileManager.default.removeItem(at: song)
+            if let file = try? AVAudioFile(forWriting: song, settings: format.settings),
+               let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(rate * seconds)) {
+                buf.frameLength = buf.frameCapacity
+                let x = buf.floatChannelData![0]
+                let period = 60 / bpm
+                for i in 0..<Int(buf.frameLength) {
+                    let t = Double(i) / rate
+                    let beat = Int(t / period), into = t - Double(beat) * period
+                    // A kick on every beat (harder on the first of each bar) and a quiet hat between.
+                    let kick = exp(-into * 30) * sin(2 * .pi * 55 * into) * (beat % 4 == 0 ? 0.9 : 0.6)
+                    let hatAt = into - period / 2
+                    let hat = hatAt > 0 ? exp(-hatAt * 80) * Double.random(in: -0.15...0.15) : 0
+                    x[i] = Float(kick + hat)
+                }
+                try? file.write(from: buf)
+            }
+            let music = await MediaAnalyzer.music(song)
+            var clips: [(MediaAsset, ClipAnalysis)] = []
+            for a in project.assets where a.kind == .video {
+                if let c = await MediaAnalyzer.clip(a.url, kind: .video) { clips.append((a, c)) }
+            }
+            var songAsset = MediaAsset(path: song.path, name: "beat128", kind: .audio, duration: seconds, width: 0, height: 0, fps: 0, hasAudio: true)
+            songAsset.duration = seconds
+            var plan = project
+            plan.clips = []
+            plan.assets.append(songAsset)
+            let decision = music.flatMap { m in AutoPlanner.decide(project: plan, clips: clips, music: (songAsset, m)) }
+            var good = false
+            var detail = "no plan"
+            if let m = music, let d = decision, let dm = d.music {
+                let tempoOK = abs(m.bpm - bpm) < 1.5
+                let gaps = zip(m.beats.dropFirst(), m.beats).map { $0 - $1 }
+                let steady = gaps.allSatisfy { abs($0 - 60 / bpm) < 0.03 }
+                    // On the kicks, not between them.
+                    && m.beats.allSatisfy { b in
+                        let off = b.truncatingRemainder(dividingBy: 60 / bpm)
+                        return min(off, 60 / bpm - off) < 0.04
+                    }
+                // Every cut is on a beat of the song.
+                var at = 0.0
+                var onBeat = true
+                for s in d.shots {
+                    at += s.duration
+                    let songTime = dm.source + at
+                    onBeat = onBeat && m.beats.contains { abs($0 - songTime) < 0.002 }
+                }
+                let firstBeat = m.beats.firstIndex { abs($0 - dm.source) < 0.002 } ?? -1
+                let lastBeat = m.beats.firstIndex { abs($0 - (dm.source + at)) < 0.002 } ?? -1
+                // Bars start on the accented kick.
+                let barTime = m.beats[m.barPhase].truncatingRemainder(dividingBy: 4 * 60 / bpm)
+                let downbeatOK = min(barTime, 4 * 60 / bpm - barTime) < 0.04
+                let onBar = downbeatOK && firstBeat >= 0 && m.isBarStart(firstBeat) && (lastBeat - firstBeat) % 4 == 0
+                let inside = d.shots.allSatisfy { $0.source >= 0 && $0.source + $0.duration <= $0.asset.duration + 0.001 }
+                var clash = false
+                for (i, a) in d.shots.enumerated() {
+                    for b in d.shots[(i + 1)...] where a.asset.id == b.asset.id {
+                        if a.source < b.source + b.duration && b.source < a.source + a.duration { clash = true }
+                    }
+                }
+                // The choreographed edits, all done, make that cut.
+                var built = false
+                if let choreo = Choreographer.plan(project: plan, decision: d) {
+                    var p = choreo.base
+                    for t in choreo.tasks { t.edit.apply(&p, 1) }
+                    let v1 = p.videoTracks[0].id
+                    let shots = p.clips.filter { $0.trackID == v1 }.sorted { $0.start < $1.start }
+                    let gapless = zip(shots.dropFirst(), shots).allSatisfy { abs($0.start - $1.end) < 1e-6 }
+                    built = shots.count == d.shots.count && gapless && shots.allSatisfy { $0.grade?.look == d.look }
+                        && p.clips.contains { $0.kind == .text && $0.text.string == d.title }
+                        && p.clips.contains { $0.assetID == songAsset.id }
+                }
+                good = tempoOK && steady && onBeat && onBar && inside && !clash && built && d.shots.count >= 2
+                detail = String(format: "bpm=%.1f beats=%d steady=%@ shots=%d onBeat=%@ onBar=%@ inside=%@ clash=%@ built=%@",
+                                m.bpm, m.beats.count, "\(steady)", d.shots.count, "\(onBeat)", "\(onBar)", "\(inside)", "\(clash)", "\(built)")
+            }
+            log("AUTO PLAN \(good ? "OK" : "FAIL") \(detail)")
+            ok = ok && good
+        }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")
     }
 }
