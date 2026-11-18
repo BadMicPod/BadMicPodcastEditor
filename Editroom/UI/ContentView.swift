@@ -166,6 +166,7 @@ enum KeyCommands {
         if e.keyCode == 53, e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty {
             if model.viewerOnly { model.toggleViewerFullScreen(); return true }
             model.selection = []
+            model.mediaSelection = []
             model.tool = .move
             return true
         }
@@ -205,8 +206,8 @@ enum KeyCommands {
         case .reverse: model.reverseSelection()
         case .copyGrade: model.copyGrade()
         case .pasteGrade: model.pasteGrade()
-        case .delete: model.deleteSelection()
-        case .rippleDelete: model.deleteSelection(ripple: true)
+        case .delete: model.deleteSelected()
+        case .rippleDelete: model.deleteSelected(ripple: true)
         case .addText: model.addAtPlayhead(.text)
         case .addMarker: model.addMarker()
         case .setIn: model.setInPoint()

@@ -1069,6 +1069,24 @@ enum SelfTest {
             log("DOWNLOAD \(good ? "OK" : "FAIL") \(detail)")
             ok = ok && good
         }
+        // Deleting from the Media panel: picked items go (with Delete), and one Undo brings them back.
+        do {
+            let m = EditorModel()
+            var p = Project()
+            p.assets = project.assets
+            m.load(p, url: nil)
+            let ids = p.assets.prefix(2).map(\.id)
+            m.mediaSelection = Set(ids)
+            m.deleteSelected()
+            let gone = ids.allSatisfy { id in m.project.asset(id) == nil } && m.mediaSelection.isEmpty
+            m.undo()
+            let back = ids.allSatisfy { id in m.project.asset(id) != nil } && m.project.assets.count == p.assets.count
+            m.redo()
+            let again = ids.allSatisfy { id in m.project.asset(id) == nil } && m.project.assets.count == p.assets.count - 2
+            let good = ids.count == 2 && gone && back && again
+            log("MEDIA DELETE \(good ? "OK" : "FAIL") gone=\(gone) undo=\(back) redo=\(again)")
+            ok = ok && good
+        }
         // Shortcuts: key presses find their action; changing one takes it from whatever had it; resetting
         // brings the defaults back. The person's own shortcuts are put back afterwards.
         do {

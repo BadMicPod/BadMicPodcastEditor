@@ -46,10 +46,14 @@ struct LibraryView: View {
                             .padding(.top, 16)
                     } else {
                         SearchField(text: $search)
+                        let order = shown.map(\.id)
                         VStack(spacing: 3) {
                             ForEach(shown) { asset in
                                 AssetRow(model: model, media: media, asset: asset, offline: media.isOffline(asset), selected: inSelection.contains(asset.id),
+                                         picked: model.mediaSelection.contains(asset.id), pickedCount: model.mediaSelection.count,
                                          matchesSequence: model.sequenceMatches(asset))
+                                    // A click picks it (⇧ for a range, ⌘ to add or take away); a double-click adds it.
+                                    .simultaneousGesture(TapGesture().onEnded { model.clickMedia(asset.id, in: order) })
                             }
                         }
                         if shown.isEmpty {
@@ -217,6 +221,8 @@ private struct AssetActions: ViewModifier {
     let model: EditorModel
     let asset: MediaAsset
     let offline: Bool
+    let picked: Bool
+    let pickedCount: Int
     let matchesSequence: Bool
 
     func body(content: Content) -> some View {
@@ -238,7 +244,12 @@ private struct AssetActions: ViewModifier {
                 }
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: asset.path)]) }
                 Divider()
-                Button("Remove") { model.removeAsset(asset.id) }
+                // The picked items when this is one of them; otherwise just this one.
+                if picked, pickedCount > 1 {
+                    Button("Delete \(pickedCount) Items") { model.removeAssets(model.mediaSelection) }
+                } else {
+                    Button("Delete") { model.removeAssets([asset.id]) }
+                }
             }
     }
 }
@@ -250,6 +261,9 @@ private struct AssetRow: View {
     let offline: Bool
     /// Used by a clip selected on the timeline.
     let selected: Bool
+    /// Picked in the Media panel.
+    let picked: Bool
+    let pickedCount: Int
     /// The sequence already has this video's size and rate. Passed in (rather than read from the
     /// model in the menu) so the row, and its menu, update when the sequence changes.
     let matchesSequence: Bool
@@ -272,7 +286,7 @@ private struct AssetRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(asset.name)
                     .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(hovering || selected ? Theme.text : Theme.textDim)
+                    .foregroundStyle(hovering || selected || picked ? Theme.text : Theme.textDim)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(detail)
@@ -283,11 +297,13 @@ private struct AssetRow: View {
             Spacer(minLength: 0)
         }
         .padding(4)
-        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hovering ? Theme.hover : .clear))
-        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color(hex: 0x3A3A3A).opacity(selected ? 1 : 0), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(picked ? Color.white.opacity(0.12) : hovering ? Theme.hover : .clear))
+        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+            .strokeBorder(picked ? Color.white.opacity(0.18) : Color(hex: 0x3A3A3A).opacity(selected ? 1 : 0), lineWidth: 1))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
-        .modifier(AssetActions(model: model, asset: asset, offline: offline, matchesSequence: matchesSequence))
+        .modifier(AssetActions(model: model, asset: asset, offline: offline, picked: picked, pickedCount: pickedCount,
+                               matchesSequence: matchesSequence))
     }
 }

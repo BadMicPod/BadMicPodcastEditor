@@ -51,6 +51,10 @@ final class EditorModel: ObservableObject {
         didSet { lastEdit = Date() }
     }
     @Published var selection: Set<UUID> = []
+    /// Items picked in the Media panel (click, ⇧-click for a range, ⌘-click to add or take away).
+    /// Delete removes these while there are any; clicking the timeline clears them.
+    @Published var mediaSelection: Set<UUID> = []
+    private var mediaAnchor: UUID?
     @Published var tool: Tool = .move
     @Published var snapping = true
     /// Skimming: hovering over the timeline shows that frame in the viewer without moving the playhead.
@@ -123,6 +127,9 @@ final class EditorModel: ObservableObject {
 
     private var undoStack: [Project] = []
     private var redoStack: [Project] = []
+    /// For each redo step, the library items there were before it: so redoing a deletion takes the
+    /// items away again, without touching anything imported since.
+    private var redoKnown: [Set<UUID>] = []
     private var liveSnapshot: Project?
     private var liveTimer: Timer?
     private var rebuildPending = false
@@ -328,6 +335,7 @@ final class EditorModel: ObservableObject {
         undoStack.append(project)
         if undoStack.count > 200 { undoStack.removeFirst() }
         redoStack.removeAll()
+        redoKnown.removeAll()
         project = p
         didChange()
     }
@@ -358,6 +366,7 @@ final class EditorModel: ObservableObject {
         if snapshot != project {
             undoStack.append(snapshot)
             redoStack.removeAll()
+        redoKnown.removeAll()
         }
     }
 
@@ -365,16 +374,28 @@ final class EditorModel: ObservableObject {
         commitLive()
         guard var prev = undoStack.popLast() else { return }
         redoStack.append(project)
-        prev.assets = project.assets
+        redoKnown.append(Set(prev.assets.map(\.id)))
+        // The library isn't undone (imports and relinks stay), except that items a step deleted come back.
+        prev.assets = Self.restoring(prev.assets, into: project.assets)
         project = prev
         didChange()
+    }
+
+    /// The library now, with any items from `earlier` that are missing put back where they were.
+    private static func restoring(_ earlier: [MediaAsset], into now: [MediaAsset]) -> [MediaAsset] {
+        let current = Dictionary(now.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let earlierIDs = Set(earlier.map(\.id))
+        return earlier.map { current[$0.id] ?? $0 } + now.filter { !earlierIDs.contains($0.id) }
     }
 
     func redo() {
         commitLive()
         guard var next = redoStack.popLast() else { return }
+        let known = redoKnown.popLast() ?? []
         undoStack.append(project)
-        next.assets = project.assets
+        // Items the step deleted go again; everything else in the library stays as it is now.
+        let deleted = known.subtracting(next.assets.map(\.id))
+        next.assets = project.assets.filter { !deleted.contains($0.id) }
         project = next
         didChange()
     }
@@ -812,14 +833,51 @@ final class EditorModel: ObservableObject {
         return NSImage(cgImage: cg, size: .zero)
     }
 
-    func removeAsset(_ id: UUID) {
-        commitLive()
-        project.clips.removeAll { $0.assetID == id }
-        project.assets.removeAll { $0.id == id }
-        media.forget(id)
-        undoStack.removeAll()
-        redoStack.removeAll()
-        didChange()
+    /// A click on a Media panel item. `order` is the items as shown, for ⇧-click ranges.
+    func clickMedia(_ id: UUID, in order: [UUID]) {
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.shift), let anchor = mediaAnchor, let a = order.firstIndex(of: anchor), let b = order.firstIndex(of: id) {
+            mediaSelection = Set(order[min(a, b)...max(a, b)])
+        } else if flags.contains(.command) {
+            if mediaSelection.contains(id) { mediaSelection.remove(id) } else { mediaSelection.insert(id) }
+            mediaAnchor = id
+        } else {
+            mediaSelection = [id]
+            mediaAnchor = id
+        }
+        // One thing selected at a time: Delete then means these.
+        selection = []
+        // Out of the search field, so Delete reaches the editor rather than the text.
+        if NSApp.keyWindow?.firstResponder is NSText { NSApp.keyWindow?.makeFirstResponder(nil) }
+    }
+
+    func removeAsset(_ id: UUID) { removeAssets([id]) }
+
+    /// Takes items out of the project (the files stay where they are), with any clips that use them.
+    /// One undo brings them all back. Asks first when that would take clips off the timeline.
+    func removeAssets(_ ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        let used = project.clips.filter { $0.assetID.map(ids.contains) == true }
+        if !used.isEmpty {
+            let names = project.assets.filter { ids.contains($0.id) }.map(\.name)
+            let alert = NSAlert()
+            alert.messageText = names.count == 1 ? "Delete “\(names[0])”?" : "Delete \(names.count) items?"
+            alert.informativeText = "\(used.count) clip\(used.count == 1 ? " on the timeline uses" : "s on the timeline use") \(names.count == 1 ? "it" : "them") and will be deleted too. The files stay on your Mac, and Undo brings everything back."
+            alert.addButton(withTitle: "Delete")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        mutate { p in
+            p.clips.removeAll { $0.assetID.map(ids.contains) == true }
+            p.assets.removeAll { ids.contains($0.id) }
+        }
+        mediaSelection.subtract(ids)
+        selection = selection.filter { project.clip($0) != nil }
+    }
+
+    /// Delete: the picked Media panel items if there are any, otherwise what's selected on the timeline.
+    func deleteSelected(ripple: Bool = false) {
+        if !mediaSelection.isEmpty { removeAssets(mediaSelection) } else { deleteSelection(ripple: ripple) }
     }
 
     // MARK: Adding clips
@@ -1310,6 +1368,7 @@ final class EditorModel: ObservableObject {
         commitLive()
         undoStack.removeAll()
         redoStack.removeAll()
+        redoKnown.removeAll()
         selection = []
         playhead = 0
         project = p
@@ -1356,6 +1415,7 @@ final class EditorModel: ObservableObject {
         // Undo snapshots still hold the old paths, so they can't be kept.
         undoStack.removeAll()
         redoStack.removeAll()
+        redoKnown.removeAll()
         didChange()
         return true
     }

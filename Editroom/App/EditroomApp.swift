@@ -191,8 +191,8 @@ struct EditroomApp: App {
                 Button("Match Sequence to Clip") { if let a = model.matchableAsset { model.matchSequence(to: a) } }
                     .disabled(model.matchableAsset.map { model.sequenceMatches($0) } ?? true)
                 Divider()
-                Button("Delete") { model.deleteSelection() }.keyboardShortcut(keys.menu(.delete))
-                Button("Ripple Delete") { model.deleteSelection(ripple: true) }.keyboardShortcut(keys.menu(.rippleDelete))
+                Button("Delete") { model.deleteSelected() }.keyboardShortcut(keys.menu(.delete))
+                Button("Ripple Delete") { model.deleteSelected(ripple: true) }.keyboardShortcut(keys.menu(.rippleDelete))
                 Button("Close All Gaps") { model.closeAllGaps() }
                 Divider()
                 Button("Add Text") { model.addAtPlayhead(.text) }.keyboardShortcut(keys.menu(.addText))
