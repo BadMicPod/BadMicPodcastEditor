@@ -1,13 +1,16 @@
 import AppKit
 import QuartzCore
 
-/// The show while Magic works out an edit, before the swarm makes it (Editing), in the swarm's own plain
-/// style. Cursors come out of the Magic button and go through three stages, only ever forwards:
-/// - Looking: they visit the items in the Media panel;
-/// - Analyzing: they sweep a scan across the clips being studied, on the timeline and in Media;
-/// - Thinking: they circle the viewer over a dot field (drifting noise, brightest under each cursor),
-///   while the coming edit appears on the timeline as dashed ghost clips;
-/// then they fade out where they are, and the swarm takes over. Nothing on the timeline moves.
+/// The show while Magic works out an edit, before the swarm makes it (Editing), in the app's plain style.
+/// The whole app dims (the Magic button, which offers Stop, stays bright; esc cancels), and it goes
+/// through three stages, only ever forwards:
+/// - Looking: scans loop over the items in the Media panel;
+/// - Analyzing: scans loop over the clips, the Media items and the viewer, a few at a time. Each item
+///   being scanned gets small corner brackets, which fade once its scan is done; the viewer keeps its own;
+/// - Thinking: a dot field (drifting noise) shimmers over the viewer, while the coming edit appears as
+///   dashed ghost clips (and a clip it goes back to look at gets scanned again);
+/// then it all fades out where it is, and the swarm's cursors make the edit (cursors only appear for
+/// that, doing things). Nothing on the timeline moves.
 @MainActor
 final class MagicThinking: NSObject {
     static private(set) var current: MagicThinking?
@@ -24,23 +27,16 @@ final class MagicThinking: NSObject {
         }
     }
 
-    private final class Cursor {
-        let body = CALayer()
-        let tag = CALayer()
-        let name = CATextLayer()
-        let dots = [CALayer(), CALayer(), CALayer()]
-        var pos: CGPoint
-        var vel = CGPoint.zero
-        var target: CGPoint
-        /// Scouting: the rect it's sweeping, and until when.
-        var watching: CGRect?
-        var watchUntil = 0.0
-        var watchStart = 0.0
-        /// Thinking: off to look at a clip for a moment, until then.
-        var detourUntil = 0.0
-        var seed: Double
-        var born: Double
-        init(at p: CGPoint, seed: Double, born: Double) { pos = p; target = p; self.seed = seed; self.born = born }
+    /// One item being scanned: brackets on its corners, a line sweeping across it, then it fades.
+    private final class Scan {
+        let rect: CGRect
+        let start: Double
+        let sweep: Double
+        let box = CALayer()
+        let bar = CALayer()
+        let brackets = CAShapeLayer()
+        init(_ r: CGRect, start: Double, sweep: Double) { rect = r; self.start = start; self.sweep = sweep }
+        var end: Double { start + sweep + 0.55 }
     }
 
     private final class Ghost {
@@ -48,7 +44,6 @@ final class MagicThinking: NSObject {
         let shape = CAShapeLayer()
         let fill = CALayer()
         var progress = 0.0
-        var done = false
         let born: Double
         init(_ r: CGRect, born: Double) { rect = r; self.born = born }
     }
@@ -57,18 +52,26 @@ final class MagicThinking: NSObject {
     private weak var model: EditorModel?
     private let overlay: NSWindow
     private let root = CALayer()
+    private let dim = CAShapeLayer()
     private let field = DotField()
+    private let ghostLayer = CALayer()
     private let scanLayer = CALayer()
-    private var scans: [ObjectIdentifier: (box: CALayer, bar: CALayer)] = [:]
-    private var cursors: [Cursor] = []
+    private let viewerBrackets = CAShapeLayer()
+    private let hint = CALayer()
+    private let hintText = CATextLayer()
+    private var scans: [Scan] = []
+    private var lastScan = -1.0
+    private var recent: [CGRect] = []
     private var ghosts: [Ghost] = []
     private var ghostKeys: [String] = []
     private var link: CADisplayLink?
+    private var monitor: Any?
     private var t0 = CACurrentMediaTime()
     private var last = CACurrentMediaTime()
     private(set) var stage: Stage = .looking {
         didSet { MagicState.shared.stage = stage.word }
     }
+    /// What the scans loop over, and which of those are wanted first.
     private var targets: [CGRect] = []
     private var focusQueue: [CGRect] = []
     private var fieldAlpha = 0.0
@@ -77,18 +80,21 @@ final class MagicThinking: NSObject {
     private var leaveDone: (() -> Void)?
     private var lastEvent = CACurrentMediaTime()
 
+    static let dimming: CGFloat = 0.45
+
     // MARK: Starting and ending
 
     /// Starts the show over the editor window, or returns nil when there isn't one on screen.
-    static func begin(model: EditorModel, name: String, color: NSColor, count: Int = 7) -> MagicThinking? {
+    @discardableResult
+    static func begin(model: EditorModel, name: String, color: NSColor) -> MagicThinking? {
         current?.cancel()
         guard let window = TimelineCanvas.current?.window, window.isVisible else { return nil }
-        let t = MagicThinking(window: window, model: model, name: name, color: color, count: count)
+        let t = MagicThinking(window: window, model: model, name: name, color: color)
         current = t
         return t
     }
 
-    private init(window: NSWindow, model: EditorModel, name: String, color: NSColor, count: Int) {
+    private init(window: NSWindow, model: EditorModel, name: String, color: NSColor) {
         host = window
         self.model = model
         self.color = color
@@ -104,50 +110,47 @@ final class MagicThinking: NSObject {
         view.wantsLayer = true
         view.layer?.addSublayer(root)
         root.frame = view.bounds
+        dim.fillColor = NSColor.black.withAlphaComponent(Self.dimming).cgColor
+        dim.fillRule = .evenOdd
+        dim.opacity = 0
+        root.addSublayer(dim)
         root.addSublayer(field)
+        root.addSublayer(ghostLayer)
         root.addSublayer(scanLayer)
+        for b in [viewerBrackets] {
+            b.fillColor = nil
+            b.strokeColor = NSColor.white.withAlphaComponent(0.75).cgColor
+            b.lineWidth = 1
+            root.addSublayer(b)
+        }
         overlay.contentView = view
         window.addChildWindow(overlay, ordered: .above)
 
         let scale = window.backingScaleFactor
         field.contentsScale = scale
         field.opacity = 0
-        let start = buttonPoint
-        let image = MagicShow.cursorImage(color, scale: scale)
-        // A light colour (Local's white) gets a dark, see-through tag so its white text and dots read.
-        let light = (color.usingColorSpace(.sRGB).map { 0.3 * $0.redComponent + 0.59 * $0.greenComponent + 0.11 * $0.blueComponent } ?? 0) > 0.7
-        let tagColor = light ? NSColor.black.withAlphaComponent(0.62).cgColor : (color.blended(withFraction: 0.18, of: .black) ?? color).cgColor
-        for i in 0..<count {
-            let c = Cursor(at: start, seed: Double(i) * 1.37 + Double.random(in: 0...1), born: Double(i) * 0.09)
-            c.body.contents = image
-            c.body.contentsScale = scale
-            c.body.bounds = CGRect(x: 0, y: 0, width: 18, height: 24)
-            c.body.anchorPoint = CGPoint(x: 2 / 18, y: 2 / 24)
-            c.tag.backgroundColor = tagColor
-            c.tag.cornerRadius = 4
-            c.tag.bounds = CGRect(x: 0, y: 0, width: 40, height: 16)
-            c.tag.anchorPoint = .zero
-            c.name.string = ""
-            c.name.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
-            c.name.fontSize = 10
-            c.name.foregroundColor = NSColor.white.cgColor
-            c.name.alignmentMode = .left
-            c.name.contentsScale = scale
-            for d in c.dots {
-                d.backgroundColor = NSColor.white.cgColor
-                d.bounds = CGRect(x: 0, y: 0, width: 4, height: 4)
-                d.cornerRadius = 2
-                c.tag.addSublayer(d)
-            }
-            c.tag.addSublayer(c.name)
-            root.addSublayer(c.tag)
-            root.addSublayer(c.body)
-            c.body.opacity = 0
-            c.tag.opacity = 0
-            cursors.append(c)
-        }
-        for c in cursors { c.tag.bounds.size.width = Self.tagWidth(stage.word) }
+        viewerBrackets.contentsScale = scale
+
+        // "Press esc to cancel", small, at the bottom.
+        hint.backgroundColor = NSColor.black.withAlphaComponent(0.7).cgColor
+        hint.cornerRadius = 11
+        hint.opacity = 0
+        hintText.string = "Press esc to cancel"
+        hintText.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        hintText.fontSize = 11
+        hintText.foregroundColor = NSColor.white.withAlphaComponent(0.75).cgColor
+        hintText.alignmentMode = .center
+        hintText.contentsScale = scale
+        hint.addSublayer(hintText)
+
+        root.addSublayer(hint)
         MagicState.shared.stage = stage.word
+        // Esc cancels, any time.
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
+            guard e.keyCode == 53 else { return e }
+            MainActor.assumeIsolated { MagicShow.stopAll() }
+            return nil
+        }
         startLoop()
         look()
     }
@@ -158,6 +161,7 @@ final class MagicThinking: NSObject {
         guard leaveDone == nil, fadeFrom == nil else { return }
         fadeFrom = now
         leaveDone = done
+        removeMonitor()
     }
 
     /// When the fade-out began.
@@ -168,6 +172,7 @@ final class MagicThinking: NSObject {
     func cancel() {
         link?.invalidate()
         link = nil
+        removeMonitor()
         host?.removeChildWindow(overlay)
         overlay.orderOut(nil)
         if Self.current === self {
@@ -176,40 +181,63 @@ final class MagicThinking: NSObject {
         }
     }
 
+    private func removeMonitor() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+
     // MARK: What's happening (stages only move forward)
 
     private func advance(to s: Stage) {
         lastEvent = CACurrentMediaTime()
         guard fadeFrom == nil, s > stage else { return }
         stage = s
-        for c in cursors { c.watching = nil }
     }
 
     /// Looking: the items in the Media panel.
     func look() {
         lastEvent = CACurrentMediaTime()
-        guard let model, stage == .looking else { return }
-        targets = model.project.assets.compactMap { MagicAnchors.rect($0.id.uuidString).map(toOverlay) }.filter { $0.width > 6 }
+        guard model != nil, stage == .looking else { return }
+        targets = mediaRects(nil)
     }
 
-    /// Analyzing: these library items (all of them when nil), on the timeline and in the Media panel.
+    /// Analyzing: the clips on the timeline (of these library items, or all of them when nil), those
+    /// items in the Media panel, and the viewer.
     func analyze(assets: Set<UUID>?) {
         advance(to: .analyzing)
         guard let model, stage == .analyzing else { return }
         var rects: [CGRect] = []
         if let canvas = TimelineCanvas.current {
-            for c in model.project.clips where (c.kind == .video || c.kind == .image) && (assets?.contains(c.assetID ?? UUID()) ?? true) {
-                if let r = canvas.magicWindowRect(of: c, in: model.project).map(toOverlay) { rects.append(r) }
+            let visible = toOverlay(canvas.convert(canvas.bounds, to: nil))
+            for c in model.project.clips {
+                // Every title and sound, and the clips of the items being studied.
+                if let a = c.assetID, let assets, (c.kind == .video || c.kind == .image), !assets.contains(a) { continue }
+                if let r = canvas.magicWindowRect(of: c, in: model.project).map(toOverlay), visible.intersects(r) {
+                    rects.append(r.intersection(visible))
+                }
             }
         }
-        for a in model.project.assets where assets?.contains(a.id) ?? true {
-            if let r = MagicAnchors.rect(a.id.uuidString).map(toOverlay) { rects.append(r) }
-        }
+        rects += mediaRects(assets)
+        rects.append(viewerRect)
         targets = rects.filter { $0.width > 6 && $0.height > 6 }
     }
 
-    /// One library item is being looked at: a cursor goes straight to it (for a moment, if it's already
-    /// thinking: the stage doesn't go back).
+    /// The items in the Media panel (these ones, or all), as far as they're showing.
+    private func mediaRects(_ assets: Set<UUID>?) -> [CGRect] {
+        guard let model else { return [] }
+        let panel = MagicAnchors.rect("library").map(toOverlay)
+        return model.project.assets.filter { assets?.contains($0.id) ?? true }.compactMap { a in
+            guard var r = MagicAnchors.rect(a.id.uuidString).map(toOverlay) else { return nil }
+            if let panel {
+                guard panel.intersects(r) else { return nil }
+                r = r.intersection(panel)
+            }
+            return r.width > 6 && r.height > 6 ? r : nil
+        }
+    }
+
+    /// One library item is being looked at: it's scanned next (once thinking, straight away: the stage
+    /// doesn't go back).
     func focus(asset: UUID) {
         if stage < .analyzing { analyze(assets: nil) }
         lastEvent = CACurrentMediaTime()
@@ -220,11 +248,7 @@ final class MagicThinking: NSObject {
         }
         guard let rect else { return }
         if stage == .thinking {
-            if let c = cursors.min(by: { $0.detourUntil < $1.detourUntil }) {
-                c.watching = rect
-                c.watchStart = now
-                c.detourUntil = now + 1.6
-            }
+            addScan(rect)
         } else {
             focusQueue.append(rect)
         }
@@ -244,8 +268,7 @@ final class MagicThinking: NSObject {
             ghostKeys.append(key)
             // One after another, a little apart.
             let g = Ghost(r.insetBy(dx: 1, dy: 3), born: max(now, (ghosts.last?.born ?? 0) + 0.12))
-            let path = CGPath(roundedRect: CGRect(origin: .zero, size: g.rect.size), cornerWidth: 6, cornerHeight: 6, transform: nil)
-            g.shape.path = path
+            g.shape.path = CGPath(roundedRect: CGRect(origin: .zero, size: g.rect.size), cornerWidth: 6, cornerHeight: 6, transform: nil)
             g.shape.frame = g.rect
             g.shape.fillColor = nil
             g.shape.strokeColor = NSColor.white.withAlphaComponent(0.65).cgColor
@@ -256,8 +279,8 @@ final class MagicThinking: NSObject {
             g.fill.cornerRadius = 6
             g.fill.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
             g.fill.opacity = 0
-            root.insertSublayer(g.fill, below: scanLayer)
-            root.insertSublayer(g.shape, below: scanLayer)
+            ghostLayer.addSublayer(g.fill)
+            ghostLayer.addSublayer(g.shape)
             ghosts.append(g)
         }
     }
@@ -272,14 +295,7 @@ final class MagicThinking: NSObject {
         link = l
     }
 
-    private var buttonPoint: CGPoint {
-        if let r = MagicAnchors.rect("magicButton").map(toOverlay) { return CGPoint(x: r.midX, y: r.midY) }
-        return CGPoint(x: (host?.frame.width ?? 800) - 140, y: 26)
-    }
-
-    private var timelineRect: CGRect {
-        TimelineCanvas.current.map { toOverlay($0.convert($0.bounds, to: nil)) } ?? CGRect(x: 200, y: 500, width: 900, height: 200)
-    }
+    private var buttonRect: CGRect? { MagicAnchors.rect("magicButton").map(toOverlay) }
 
     private var viewerRect: CGRect {
         MagicAnchors.rect("viewer").map(toOverlay)
@@ -298,78 +314,35 @@ final class MagicThinking: NSObject {
         let t = now
         // Analyzing, then a while with nothing new from the AI: it's thinking.
         if fadeFrom == nil, stage == .analyzing, wall - lastEvent > 2.5, focusQueue.isEmpty { think() }
+        let fade = fadeFrom.map { max(0, 1 - (t - $0) / Self.fadeTime) } ?? 1
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        let view = viewerRect
-        let center = CGPoint(x: view.midX, y: view.midY)
-        for (i, c) in cursors.enumerated() {
-            let alive = t >= c.born
-            if !alive { continue }
-            // Where to go.
-            let detouring = stage == .thinking && t < c.detourUntil
-            if stage < .thinking {
-                if c.watching == nil || t > c.watchUntil {
-                    if !focusQueue.isEmpty {
-                        c.watching = focusQueue.removeFirst()
-                    } else if !targets.isEmpty {
-                        c.watching = targets[Int.random(in: 0..<targets.count)]
-                    } else {
-                        c.watching = view.insetBy(dx: view.width * 0.3, dy: view.height * 0.3)
-                    }
-                    c.watchStart = t
-                    c.watchUntil = t + Double.random(in: 1.2...2.2)
-                }
-                if let r = c.watching { c.target = CGPoint(x: r.minX + r.width * 0.55, y: r.midY + 4) }
-            } else if detouring, let r = c.watching {
-                c.target = CGPoint(x: r.minX + r.width * 0.55, y: r.midY + 4)
-            } else {
-                if c.watching != nil, !detouring { c.watching = nil }
-                let ang = t * 0.42 + Double(i) / Double(cursors.count) * .pi * 2
-                let wobble = 1 + 0.08 * sin(t * 1.6 + c.seed)
-                c.target = CGPoint(x: center.x + cos(ang) * view.width * 0.36 * wobble,
-                                   y: center.y + sin(ang) * view.height * 0.36 * wobble)
-            }
-
-            // Smooth easing towards where it's going, no overshoot, like the swarm's cursors.
-            let rate: CGFloat = stage == .thinking && !detouring ? 4 : 5
-            let follow = 1 - exp(-rate * CGFloat(dt))
-            let before = c.pos
-            c.pos.x += (c.target.x - c.pos.x) * follow
-            c.pos.y += (c.target.y - c.pos.y) * follow
-            c.vel = CGPoint(x: (c.pos.x - before.x) / CGFloat(dt), y: (c.pos.y - before.y) / CGFloat(dt))
-
-            let fading = fadeFrom.map { max(0, 1 - (t - $0) / Self.fadeTime) } ?? 1
-            let appear = min(1, (t - c.born) / 0.18) * fading
-            c.body.position = c.pos
-            let opacity = Float(appear)
-            c.body.opacity = opacity
-            c.tag.opacity = opacity
-            c.tag.position = CGPoint(x: c.pos.x + 10, y: c.pos.y + 20)
-            // The tag says what they're doing, with typing dots after it.
-            let word = stage.word
-            if c.name.string as? String != word {
-                c.name.string = word
-                c.tag.bounds.size.width = Self.tagWidth(word)
-            }
-            let textWidth = Self.tagWidth(word) - 30
-            c.name.frame = CGRect(x: 7, y: 1.5, width: textWidth, height: 14)
-            for (d, dot) in c.dots.enumerated() {
-                let b = 0.5 + 0.5 * sin(t * 6 - Double(d) * 0.9 + c.seed)
-                dot.opacity = Float(0.35 + 0.65 * b)
-                dot.position = CGPoint(x: 7 + textWidth + 4 + CGFloat(d) * 6, y: 8.5 - CGFloat(b) * 1.2)
-                dot.bounds = CGRect(x: 0, y: 0, width: 3, height: 3)
-                dot.cornerRadius = 1.5
-            }
+        let size = root.bounds.size
+        // The app dims, all but the Magic button (Stop).
+        let path = CGMutablePath()
+        path.addRect(CGRect(origin: .zero, size: size))
+        if let b = buttonRect {
+            path.addRoundedRect(in: b.insetBy(dx: -3, dy: -3), cornerWidth: b.height / 2 + 3, cornerHeight: b.height / 2 + 3)
         }
-        updateScans(t)
-        updateField(t, view: view, dt: dt)
-        updateGhosts(t)
+        dim.path = path
+        dim.frame = root.bounds
+        let appear = min(1, t / 0.35)
+        dim.opacity = Float(appear * fade)
+        hint.bounds = CGRect(x: 0, y: 0, width: 140, height: 22)
+        hint.position = CGPoint(x: size.width / 2, y: size.height - 26)
+        hintText.frame = CGRect(x: 0, y: 4, width: 140, height: 15)
+        hint.opacity = Float(min(1, max(0, t - 0.6) / 0.4) * fade)
+
+        let view = viewerRect
+        viewerBrackets.path = Self.brackets(view, length: 6)
+        viewerBrackets.opacity = Float(appear * fade)
+
+        updateScans(t, fade: fade)
+        updateField(t, view: view, dt: dt, fade: fade)
+        updateGhosts(t, fade: fade)
         CATransaction.commit()
 
-        let fade = fadeFrom.map { max(0, 1 - (now - $0) / Self.fadeTime) } ?? 1
-        scanLayer.opacity = Float(fade)
-        for g in ghosts { g.shape.opacity = Float(fade); if fade < 1 { g.fill.opacity = Float(fade) * g.fill.opacity } }
         if let f = fadeFrom, now - f >= Self.fadeTime {
             let done = leaveDone
             leaveDone = nil
@@ -378,63 +351,97 @@ final class MagicThinking: NSObject {
         }
     }
 
-    private static func tagWidth(_ word: String) -> CGFloat {
-        ceil((word as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 10, weight: .semibold)]).width) + 30
+    /// Small corner brackets just outside a rect.
+    private static func brackets(_ r: CGRect, length: CGFloat) -> CGPath {
+        let o: CGFloat = 1.5
+        let x0 = r.minX - o, y0 = r.minY - o, x1 = r.maxX + o, y1 = r.maxY + o
+        let l = min(length, r.width / 3, r.height / 3)
+        let p = CGMutablePath()
+        p.move(to: CGPoint(x: x0, y: y0 + l)); p.addLine(to: CGPoint(x: x0, y: y0)); p.addLine(to: CGPoint(x: x0 + l, y: y0))
+        p.move(to: CGPoint(x: x1 - l, y: y0)); p.addLine(to: CGPoint(x: x1, y: y0)); p.addLine(to: CGPoint(x: x1, y: y0 + l))
+        p.move(to: CGPoint(x: x1, y: y1 - l)); p.addLine(to: CGPoint(x: x1, y: y1)); p.addLine(to: CGPoint(x: x1 - l, y: y1))
+        p.move(to: CGPoint(x: x0 + l, y: y1)); p.addLine(to: CGPoint(x: x0, y: y1)); p.addLine(to: CGPoint(x: x0, y: y1 - l))
+        return p
     }
 
     // MARK: Pieces
 
-    private func updateScans(_ t: Double) {
-        var seen = Set<ObjectIdentifier>()
-        for c in cursors {
-            let key = ObjectIdentifier(c)
-            guard let r = c.watching, stage < .thinking || t < c.detourUntil, hypot(c.pos.x - (r.minX + r.width * 0.55), c.pos.y - (r.midY + 4)) < 40 else { continue }
-            seen.insert(key)
-            let s = scans[key] ?? {
-                let box = CALayer()
-                box.borderColor = NSColor.white.withAlphaComponent(0.35).cgColor
-                box.borderWidth = 1.5
-                box.cornerRadius = 5
-                box.backgroundColor = NSColor.white.withAlphaComponent(0.08).cgColor
-                box.masksToBounds = true
-                let bar = CALayer()
-                bar.backgroundColor = NSColor.white.withAlphaComponent(0.75).cgColor
-                box.addSublayer(bar)
-                scanLayer.addSublayer(box)
-                return (box, bar)
-            }()
-            scans[key] = s
-            s.box.frame = r
-            let u = ((t - c.watchStart) * 0.9).truncatingRemainder(dividingBy: 1)
-            s.bar.frame = CGRect(x: r.width * CGFloat(u) - 1, y: 0, width: 2, height: r.height)
-            s.box.opacity = Float(min(1, (t - c.watchStart) * 4))
+    /// A few items at a time get scanned, round and round, wanted ones first. New ones stop once it's
+    /// thinking (bar the clips it goes back to look at).
+    private func updateScans(_ t: Double, fade: Double) {
+        let busy = scans.filter { t < $0.start + $0.sweep }.count
+        let room = min(6, max(1, targets.count / 2 + 1))
+        if fadeFrom == nil, stage < .thinking, busy < room, t - lastScan > 0.18, t > 0.25 {
+            if !focusQueue.isEmpty {
+                addScan(focusQueue.removeFirst())
+            } else if !targets.isEmpty {
+                let active = scans.map(\.rect)
+                let fresh = targets.filter { r in !active.contains(r) && !recent.contains(r) }
+                let pool = fresh.isEmpty ? targets.filter { !active.contains($0) } : fresh
+                if let r = pool.randomElement() {
+                    addScan(r)
+                    recent.append(r)
+                    if recent.count > max(1, targets.count * 2 / 3) { recent.removeFirst() }
+                }
+            }
         }
-        for (key, s) in scans where !seen.contains(key) {
+        for s in scans {
+            let u = (t - s.start) / s.sweep
+            let r = s.rect
+            let width = r.width * CGFloat(min(1, max(0, u)))
+            s.box.frame = CGRect(x: r.minX, y: r.minY, width: width, height: r.height)
+            s.bar.frame = CGRect(x: r.minX + width - 0.75, y: r.minY, width: 1.5, height: r.height)
+            // The fill and line fade once it's across; the brackets a moment later.
+            let after = max(0, t - s.start - s.sweep)
+            let sweepAlpha = u < 1 ? 1 : max(0, 1 - after / 0.3)
+            s.box.opacity = Float(sweepAlpha * fade)
+            s.bar.opacity = Float(sweepAlpha * fade)
+            let bracketIn = min(1, (t - s.start) / 0.15)
+            let bracketOut = max(0, min(1, 1 - (after - 0.25) / 0.3))
+            s.brackets.opacity = Float(bracketIn * bracketOut * fade)
+        }
+        scans.removeAll { s in
+            guard t > s.end else { return false }
             s.box.removeFromSuperlayer()
-            scans[key] = nil
+            s.bar.removeFromSuperlayer()
+            s.brackets.removeFromSuperlayer()
+            return true
         }
     }
 
-    private func updateField(_ t: Double, view: CGRect, dt: Double) {
+    private func addScan(_ r: CGRect) {
+        let t = now
+        let s = Scan(r, start: t, sweep: Double.random(in: 1.0...1.5) * min(1.6, max(0.8, Double(r.width) / 220)))
+        s.box.backgroundColor = NSColor.white.withAlphaComponent(0.07).cgColor
+        s.bar.backgroundColor = NSColor.white.withAlphaComponent(0.8).cgColor
+        s.brackets.path = Self.brackets(r, length: r == viewerRect ? 6 : 3)
+        s.brackets.fillColor = nil
+        s.brackets.strokeColor = NSColor.white.withAlphaComponent(0.75).cgColor
+        s.brackets.lineWidth = 1
+        for l in [s.box, s.bar, s.brackets] as [CALayer] { l.opacity = 0; scanLayer.addSublayer(l) }
+        scans.append(s)
+        lastScan = t
+    }
+
+    private func updateField(_ t: Double, view: CGRect, dt: Double, fade: Double) {
         let want = stage == .thinking ? 1.0 : 0.0
         fieldAlpha += (want - fieldAlpha) * min(1, dt * (want > fieldAlpha ? 1.2 : 3))
         field.frame = view
-        field.opacity = Float(fieldAlpha * (fadeFrom.map { max(0, 1 - (now - $0) / Self.fadeTime) } ?? 1))
+        field.opacity = Float(fieldAlpha * fade)
         guard fieldAlpha > 0.01 else { return }
         field.time = t
         field.tint = color
-        field.glows = cursors.map { CGPoint(x: $0.pos.x - view.minX + 6, y: $0.pos.y - view.minY + 10) }
         field.setNeedsDisplay()
     }
 
     /// Ghosts draw themselves, one after another.
-    private func updateGhosts(_ t: Double) {
+    private func updateGhosts(_ t: Double, fade: Double) {
         for g in ghosts {
             g.progress = min(1, max(0, (t - g.born) / 0.7))
             g.shape.strokeEnd = g.progress
-            g.done = g.progress >= 1
             g.shape.lineDashPhase = CGFloat(-t * 24)
-            g.fill.opacity = Float(max(0, (g.progress - 0.6) / 0.4))
+            g.shape.opacity = Float(fade)
+            g.fill.opacity = Float(max(0, (g.progress - 0.6) / 0.4) * fade)
         }
     }
 
@@ -443,7 +450,7 @@ final class MagicThinking: NSObject {
     }
 }
 
-/// The shimmering dots over the viewer while thinking: a drifting noise, brightest under the cursors.
+/// The shimmering dots over the viewer while thinking: a drifting noise.
 private final class DotField: CALayer {
     var time = 0.0
     var glows: [CGPoint] = []

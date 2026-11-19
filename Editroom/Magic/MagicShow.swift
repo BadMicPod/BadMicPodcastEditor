@@ -60,6 +60,19 @@ private final class FlippedView: NSView {
 final class MagicShow: NSObject {
     static private(set) var current: MagicShow?
     static var isRunning: Bool { current != nil }
+    /// Goes up each time Magic is stopped, so work started before then knows to drop what it found.
+    static private(set) var runID = 0
+
+    /// Stop (the Magic button) or esc: whatever Magic is doing stops. While it's still working out the
+    /// edit nothing has changed; mid-edit, everything the swarm has done so far is put back.
+    static func stopAll() {
+        runID += 1
+        if let show = current, !show.agentMode { show.abort() }
+        MagicAgent.shared.stop()
+        MagicThinking.current?.end()
+        MagicState.shared.busy = false
+        MagicState.shared.status = nil
+    }
 
     /// Someone outside the app (an AI agent connected over MCP) whose edits are played by one named
     /// cursor that stays where it stops.
@@ -138,14 +151,31 @@ final class MagicShow: NSObject {
         let thinking = MagicThinking.current ?? MagicThinking.begin(model: model, name: "Local", color: NSColor(white: 0.95, alpha: 1))
         thinking?.look()
         let visualIDs = Set(visuals.map(\.id))
+        let run = runID
+        // `--magic-stop <seconds>` (testing): Stop that long after starting, as esc or the button would.
+        if let i = CommandLine.arguments.firstIndex(of: "--magic-stop"), i + 1 < CommandLine.arguments.count,
+           let after = Double(CommandLine.arguments[i + 1]) {
+            let before = model.project.clips.count
+            DispatchQueue.main.asyncAfter(deadline: .now() + after) {
+                let mid = current != nil ? "mid-edit" : "while working it out"
+                stopAll()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    FileHandle.standardError.write("MAGIC STOP TEST \(mid): clips \(before) before, \(model.project.clips.count) after, show \(current == nil ? "gone" : "still running"), busy \(state.busy)\n".data(using: .utf8)!)
+                }
+            }
+        }
         Task { @MainActor in
             let started = CACurrentMediaTime()
             // Looking for a moment, then Analyzing (with progress on the button).
             try? await Task.sleep(nanoseconds: 700_000_000)
+            guard run == runID else { return }
             MagicThinking.current?.analyze(assets: visualIDs)
             let found = await analyze(visuals, song: song) { done, total in
+                guard run == runID else { return }
                 state.status = done < total ? "Analyzing \(done) of \(total)" : nil
             }
+            // Stopped meanwhile: nothing to do.
+            guard run == runID else { return }
             state.status = nil
             var plan: MagicPlan?
             var said = ""
@@ -200,6 +230,7 @@ final class MagicShow: NSObject {
             // Spawn from the click if it was quick; after a wait (or after the thinking show), from the button.
             let fromClick = CACurrentMediaTime() - started < 1.5 && MagicThinking.current == nil ? click : nil
             let launch = {
+                guard run == runID else { return }
                 let show = MagicShow(model: model, plan: plan, window: window, canvas: canvas, click: fromClick, performer: nil)
                 if let done { show.onFinish = { done(said) } }
                 current = show
@@ -215,6 +246,7 @@ final class MagicShow: NSObject {
                 for task in plan.tasks { task.edit.apply(&final, 1) }
                 thinking.plan(final)
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard run == runID else { return }
                 state.status = nil
                 thinking.end { launch() }
             } else {
@@ -441,6 +473,16 @@ final class MagicShow: NSObject {
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] e in
             MainActor.assumeIsolated {
                 guard let self, !self.done else { return e }
+                // Esc, or Stop on the Magic button: stop, and put back what it's done so far.
+                if !self.agentMode {
+                    let onButton = e.type == .leftMouseDown && e.window === self.window
+                        && (MagicAnchors.rect("magicButton")?.contains(e.locationInWindow) ?? false)
+                    if (e.type == .keyDown && e.keyCode == 53) || onButton {
+                        Self.stopAll()
+                        return nil
+                    }
+                }
+                // Anything else: skip to the end.
                 self.fastForward()
                 return nil
             }
@@ -1358,6 +1400,31 @@ final class MagicShow: NSObject {
     }
 
     // MARK: End
+
+    /// Stopped part-way: the overlay goes, and the timeline is put back as it was before the show (the
+    /// show's changes were never committed, so there's no undo step either).
+    private func abort() {
+        guard !done else { return }
+        done = true
+        link?.invalidate()
+        link = nil
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        onFinish = nil
+        model.discardLive()
+        model.sourcePreview.clear()
+        canvas.magicMarks = MagicMarks()
+        window.removeChildWindow(overlay)
+        overlay.orderOut(nil)
+        model.rebuildSuspended = false
+        Self.current = nil
+        MagicState.shared.busy = false
+        MagicState.shared.status = nil
+        if MagicThinking.current == nil { MagicState.shared.stage = nil }
+        if CommandLine.arguments.contains("--magic") {
+            FileHandle.standardError.write("MAGIC STOPPED clips back to \(model.project.clips.count), can undo \(model.canUndo)\n".data(using: .utf8)!)
+        }
+    }
 
     private func finish() {
         guard !done else { return }

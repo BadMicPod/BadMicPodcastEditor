@@ -296,11 +296,13 @@ final class MagicAgent: ObservableObject {
         }
     }
 
+    /// Stops the AI (or, once it's finished, its edit from being played), with nothing changed.
     func stop() {
         MagicThinking.current?.end()
         stopped = true
+        ready = nil
         process?.terminate()
-        if process == nil { done() }
+        if process == nil, running { done() }
     }
 
     private func done() {
@@ -566,6 +568,7 @@ final class MagicAgent: ObservableObject {
 
     /// Plays the AI's edits onto the timeline with the swarm, then shows what it said.
     private func reveal(_ kind: Kind, _ edits: [MagicEdit], _ said: String) {
+        guard !stopped else { return }
         guard let model, !edits.isEmpty else {
             note = Note(agent: kind, text: said.isEmpty ? "\(kind.name) didn't change anything." : said, changed: false, detail: noteDetail)
             return
@@ -575,6 +578,7 @@ final class MagicAgent: ObservableObject {
         log("MAGIC AI playing \(plan.tasks.count) edits")
         let detail = noteDetail
         let play = { [weak self] in
+            guard self?.stopped == false else { return }
             let shown = MagicShow.play(model: model, plan: plan) { [weak self] in
                 self?.note = Note(agent: kind, text: said, changed: true, detail: detail)
             }

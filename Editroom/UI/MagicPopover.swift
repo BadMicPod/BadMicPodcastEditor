@@ -609,10 +609,13 @@ enum LocalMagic {
         state.status = "Reading your request"
         // The thinking show (Looking) while Apple's model reads it.
         MagicThinking.begin(model: model, name: "Local", color: NSColor(white: 0.95, alpha: 1))
+        let run = MagicShow.runID
         Task {
             var recipe: LocalRecipe
             do {
                 recipe = try await LocalBrain.recipe(for: request, media: model.project.assets)
+                // Stopped while it was reading: nothing to do.
+                guard run == MagicShow.runID else { return }
                 recipe.speed = LocalBrain.speed(in: request)
                 recipe.soundEffects = LocalBrain.wantsSoundEffects(request)
                 recipe.askedJudgement = LocalBrain.asksJudgement(request)
@@ -629,6 +632,7 @@ enum LocalMagic {
                 // Asked for something specific: do just that, not the general clean-up as well.
                 recipe.onlyAsked = !LocalBrain.isGeneral(request)
             } catch {
+                guard run == MagicShow.runID else { return }
                 state.busy = false
                 state.status = nil
                 MagicThinking.current?.end()

@@ -363,6 +363,16 @@ final class EditorModel: ObservableObject {
         }
     }
 
+    /// Throws away a live change that hasn't been committed: back to how it was, with no undo step.
+    func discardLive() {
+        liveTimer?.invalidate()
+        liveTimer = nil
+        guard let snapshot = liveSnapshot else { return }
+        liveSnapshot = nil
+        project = snapshot
+        setNeedsRebuild()
+    }
+
     func commitLive() {
         liveTimer?.invalidate()
         liveTimer = nil

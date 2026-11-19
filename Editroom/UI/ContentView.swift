@@ -258,11 +258,14 @@ struct MagicButton: View {
     }
     /// While the AI works, hovering offers Stop in the same space (the button keeps its size, so the
     /// pointer never slips off it).
-    private var offerStop: Bool { ai.running && hovering }
+    private var offerStop: Bool { working && hovering }
+    /// Anything Magic is doing that Stop (or esc) can stop: an AI working, Local reading or studying, the
+    /// thinking show, or the swarm.
+    private var working: Bool { ai.running || state.busy || state.stage != nil }
 
     var body: some View {
         Button {
-            if ai.running { ai.stop() }
+            if working { MagicShow.stopAll() }
             else {
                 connections.refresh()
                 ai.note = nil
@@ -308,8 +311,8 @@ struct MagicButton: View {
         }
         .buttonStyle(.plain)
         .background(MagicAnchor(key: "magicButton"))
-        .disabled(!ai.running && (!hasMedia || state.busy || MagicShow.isRunning))
-        .opacity(hasMedia || ai.running ? 1 : 0.4)
+        .disabled(!working && (!hasMedia || MagicShow.isRunning))
+        .opacity(hasMedia || working ? 1 : 0.4)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
         // Which AIs are connected can change in AI Agents or in the apps themselves.
@@ -317,7 +320,7 @@ struct MagicButton: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             connections.refresh()
         }
-        .help(ai.running ? "Stop \(ai.agent?.name ?? "")" : !hasMedia ? "Import some clips first"
+        .help(working ? "Stop Magic (esc)" : !hasMedia ? "Import some clips first"
               : "Magic: have Claude or ChatGPT edit, or make a quick cut")
         // One popover: what to make, or what the AI said when it finished.
         .popover(isPresented: Binding(get: { ai.asking || ai.note != nil },
