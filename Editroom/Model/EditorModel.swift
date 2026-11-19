@@ -213,6 +213,14 @@ final class EditorModel: ObservableObject {
                         MagicAgent.shared.tab = tab
                     }
                     MagicAgent.shared.asking = true
+                    // `--magic-reopen` (testing): close the popover and open it again, as after looking around.
+                    if args.contains("--magic-reopen") {
+                        try? await Task.sleep(nanoseconds: 2_500_000_000)
+                        MagicAgent.shared.asking = false
+                        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                        FileHandle.standardError.write("MAGIC REOPEN kept \"\(MagicAgent.shared.prompt)\"\n".data(using: .utf8)!)
+                        MagicAgent.shared.asking = true
+                    }
                 }
                 // `--magic-note` (testing): shows a sample finished note.
                 if args.contains("--magic-note") {

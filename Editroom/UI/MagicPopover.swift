@@ -11,7 +11,11 @@ struct MagicPopover: View {
     @ObservedObject var server = MCPServer.shared
     let close: () -> Void
 
-    @State private var request = ""
+    /// What they're typing: kept on MagicAgent, so closing the popover to look around doesn't lose it.
+    private var request: String {
+        get { ai.prompt }
+        nonmutating set { ai.prompt = newValue }
+    }
     /// Just connected from here: a moment to say so before the prompt.
     @State private var justConnected: MagicAgent.Kind?
     /// Connecting started from here (so finishing it shows "connected").
@@ -88,7 +92,7 @@ struct MagicPopover: View {
                     }
                 }
             } else {
-                PromptForm(model: model, ai: ai, kind: kind, request: $request, hasEdit: hasEdit,
+                PromptForm(model: model, ai: ai, kind: kind, request: $ai.prompt, hasEdit: hasEdit,
                            manage: { close(); model.showAgents = true }) { go(kind) }
             }
         } else {
@@ -108,7 +112,7 @@ struct MagicPopover: View {
                 .padding(.bottom, 8)
                 if LocalBrain.available {
                     // Apple's on-device model reads the request into settings Local follows.
-                    PromptBox(model: model, text: $request,
+                    PromptBox(model: model, text: $ai.prompt,
                               placeholder: hasEdit
                                 ? "Describe what to change (length, pace, look, music, vertical), or leave this empty to improve the edit."
                                 : "Describe the video you want (length, pace, look, music, vertical), or leave this empty for the best cut.",

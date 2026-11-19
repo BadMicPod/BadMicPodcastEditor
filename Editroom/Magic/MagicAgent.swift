@@ -46,6 +46,8 @@ final class MagicAgent: ObservableObject {
     @Published private(set) var ready: String?
     private var whenBack: NSObjectProtocol?
     /// The popover's tab, remembered.
+    /// The prompt being typed in the Magic box, kept while it's closed and cleared when it's sent.
+    @Published var prompt = ""
     @Published var tab: Tab = Tab(rawValue: UserDefaults.standard.string(forKey: "magicTab") ?? "") ?? .claude {
         didSet { UserDefaults.standard.set(tab.rawValue, forKey: "magicTab") }
     }
