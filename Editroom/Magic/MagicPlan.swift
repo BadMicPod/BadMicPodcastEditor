@@ -371,16 +371,18 @@ enum Choreographer {
             cuts[i] = Cut(video: ids[0], audio: ids.count > 1 ? ids[1] : nil, moved: moved, roughFrom: headAt)
         }
 
-        // A title on V2 once the rough cut has cleared from under it.
-        let titleLength = min(3, max(2, total * 0.12))
-        let clearing = cuts.filter { $0.roughFrom < titleLength }.map(\.moved)
-        var title = Clip(trackID: v2, kind: .text, start: 0, duration: frames(titleLength))
-        title.text.string = ""
-        title.text.size = 130
-        let placed = add(.place([title], asset: nil), after: clearing)
-        let typed = add(.type(title.id, decision.title), after: [placed])
-        _ = add(.fadeIn(title.id, to: 0.4), after: [typed])
-        _ = add(.fadeOut(title.id, to: 0.5), after: [typed], delay: 0.05)
+        // A title on V2 once the rough cut has cleared from under it (only one they asked for).
+        if !decision.title.isEmpty {
+            let titleLength = min(3, max(2, total * 0.12))
+            let clearing = cuts.filter { $0.roughFrom < titleLength }.map(\.moved)
+            var title = Clip(trackID: v2, kind: .text, start: 0, duration: frames(titleLength))
+            title.text.string = ""
+            title.text.size = 130
+            let placed = add(.place([title], asset: nil), after: clearing)
+            let typed = add(.type(title.id, decision.title), after: [placed])
+            _ = add(.fadeIn(title.id, to: 0.4), after: [typed])
+            _ = add(.fadeOut(title.id, to: 0.5), after: [typed], delay: 0.05)
+        }
 
         for (i, c) in cuts.enumerated() {
             let s = shots[i]

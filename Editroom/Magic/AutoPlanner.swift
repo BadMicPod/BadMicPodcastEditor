@@ -158,7 +158,9 @@ enum AutoPlanner {
         }
         guard !shots.isEmpty else { return nil }
 
-        var decision = EditDecision(shots: shots, music: nil, title: title(for: usable.compactMap(\.1.created), today: today),
+        // A title only when they asked for one: their words, or when it was filmed.
+        let asked = recipe.title.map { $0.isEmpty ? title(for: usable.compactMap(\.1.created), today: today) : $0 } ?? ""
+        var decision = EditDecision(shots: shots, music: nil, title: asked,
                                     look: recipe.look.map { $0 == "none" ? "" : $0 } ?? "", bpm: nil)
 
         if let (asset, m) = music, !m.beats.isEmpty {

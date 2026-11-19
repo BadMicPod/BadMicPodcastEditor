@@ -863,6 +863,12 @@ enum LocalMagic {
                 recipe.speed = LocalBrain.speed(in: request)
                 recipe.soundEffects = LocalBrain.wantsSoundEffects(request)
                 recipe.askedJudgement = LocalBrain.asksJudgement(request)
+                recipe.title = LocalBrain.titleAsked(request)
+                if recipe.title != nil {
+                    // A title is handled now, so it isn't something it couldn't do.
+                    recipe.cannotDo = recipe.cannotDo.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                        .filter { p in !["title", "text", "caption", "heading", "name"].contains { p.lowercased().contains($0) } }.joined(separator: ", ")
+                }
                 if LocalBrain.wantsLevels(request) {
                     recipe.levelAudio = true
                     // Every audio clip on a track that's on, measured now, so they all read the same on the output meters.

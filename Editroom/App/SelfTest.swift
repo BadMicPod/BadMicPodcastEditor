@@ -820,7 +820,11 @@ enum SelfTest {
                     let shots = p.clips.filter { $0.trackID == v1 }.sorted { $0.start < $1.start }
                     let gapless = zip(shots.dropFirst(), shots).allSatisfy { abs($0.start - $1.end) < 1e-6 }
                     built = shots.count == d.shots.count && gapless && shots.allSatisfy { ($0.grade?.look ?? "") == d.look }
-                        && p.clips.contains { $0.kind == .text && $0.text.string == d.title }
+                        // No title unless one was asked for.
+                        && (d.title.isEmpty ? !p.clips.contains { $0.kind == .text } : p.clips.contains { $0.kind == .text && $0.text.string == d.title })
+                        && LocalBrain.titleAsked("make a fast cut") == nil && LocalBrain.titleAsked("add a title") == ""
+                        && LocalBrain.titleAsked("put a title saying \"Summer '26\" on it")?.hasPrefix("Summer") == true
+                        && LocalBrain.titleAsked("make it without a title") == nil
                         && p.clips.contains { $0.assetID == songAsset.id }
                 }
                 good = tempoOK && steady && onBeat && onBar && inside && !clash && built && d.shots.count >= 2

@@ -28,7 +28,7 @@ struct LocalRecipe: Equatable {
     /// Asks for nothing Local can do (no setting, no media): it shouldn't edit anything.
     var isEmpty: Bool {
         seconds == nil && pace == .unchanged && look == nil && music == .unchanged && frame == .unchanged
-            && keepOnly.isEmpty && takeOut.isEmpty && speed == nil && !soundEffects && !levelAudio
+            && keepOnly.isEmpty && takeOut.isEmpty && speed == nil && !soundEffects && !levelAudio && title == nil
     }
 
     /// Asks only for the audio levels to match (and maybe a look): nothing about the picture's cut.
@@ -48,6 +48,9 @@ struct LocalRecipe: Equatable {
     /// They asked whether it should ("do you think…", "should I…", "if so"): only where it sees a strong
     /// moment, or not at all, with a note saying why.
     var askedJudgement = false
+    /// A title they asked for: nil if they didn't, "" for one made from when it was filmed, or their
+    /// words when they quote them ("add a title saying \"Summer\"").
+    var title: String?
     /// Bring every audio clip to the same level ("equalize the audio", "same volume"): the clip gain for
     /// each, worked out from the waveforms when the request is read.
     var levelAudio = false
@@ -117,6 +120,21 @@ enum LocalBrain {
         let t = request.lowercased()
         return t.contains("?") || ["do you think", "should i", "should we", "would it", "if so", "if you think", "worth",
                                    "any good", "makes sense", "if it fits", "where it fits", "if needed", "only if"].contains { t.contains($0) }
+    }
+
+    /// The title they asked for, if they did: their quoted words, or "" for one made from the dates.
+    /// No title unless they ask (a title over every cut gets in the way more often than it helps).
+    static func titleAsked(_ request: String) -> String? {
+        let t = request.lowercased()
+        let asks = ["title", "caption", "heading", "text on", "words on", "add text", "put text", "some text", "call it", "name it",
+                    "text saying", "text that says"].contains { t.contains($0) }
+        let refuses = ["no title", "without a title", "without title", "no text", "without text", "remove the title", "take out the title"]
+            .contains { t.contains($0) }
+        guard asks, !refuses else { return nil }
+        if let r = request.range(of: #"["“'‘]([^"”'’]{1,60})["”'’]"#, options: .regularExpression) {
+            return String(request[r].dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+        }
+        return ""
     }
 
     /// Asks for sound effects ("sfx", "sound effects", "whooshes"…).

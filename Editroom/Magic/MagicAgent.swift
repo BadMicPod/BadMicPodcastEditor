@@ -250,8 +250,8 @@ final class MagicAgent: ObservableObject {
         7. Finish. Colour only when they asked for it, or when the footage clearly needs it (look at the frames): \
         shots from different cameras or light that don't match, or shots too dark or washed out. Then one look \
         from list_looks, or small set_grade fixes, on every shot so it feels like one film. Otherwise leave colour \
-        as it is, and on an existing edit don't change colour unless they asked. A short title only if it \
-        helps. Fade music out over the last 2 seconds. A dissolve or dip to black only where it helps, never on \
+        as it is, and on an existing edit don't change colour unless they asked. Titles and text only when \
+        they asked for them, or the kind of video needs them (a vlog's parts); most videos don't. Fade music out over the last 2 seconds. A dissolve or dip to black only where it helps, never on \
         every cut.
         8. Check a few moments with get_frame and fix what's wrong.
 
