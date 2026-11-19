@@ -274,34 +274,49 @@ struct Hairline: View {
     }
 }
 
-/// Draggable splitter between panes.
+/// Draggable splitter between panes. Hovering shows only the resize cursor (like Mac split views); a
+/// line shows while it's dragged. While Magic works (the editor is locked), it doesn't react at all.
 struct Splitter: View {
     let vertical: Bool
     let onDrag: (CGFloat) -> Void
+    @ObservedObject private var magic = MagicState.shared
     @State private var hovering = false
     @State private var dragging = false
 
+    private var locked: Bool { magic.stage != nil }
+
     var body: some View {
         Rectangle()
-            .fill((hovering || dragging) ? Color.white.opacity(0.45) : Theme.stroke)
+            .fill(dragging ? Color.white.opacity(0.45) : Theme.stroke)
             .frame(width: vertical ? 1 : nil, height: vertical ? nil : 1)
             .overlay(
                 Color.clear
                     .frame(width: vertical ? 9 : nil, height: vertical ? nil : 9)
                     .contentShape(Rectangle())
                     .onHover { inside in
+                        guard inside != hovering else { return }
+                        if inside, locked { return }
                         hovering = inside
                         if inside { (vertical ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).push() } else { NSCursor.pop() }
                     }
                     .gesture(
                         DragGesture(minimumDistance: 1, coordinateSpace: .global)
                             .onChanged { v in
+                                guard !locked else { return }
                                 dragging = true
                                 onDrag(vertical ? v.location.x : v.location.y)
                             }
                             .onEnded { _ in dragging = false }
                     )
+                    .allowsHitTesting(!locked)
             )
+            // Magic starting while the pointer is on it: the resize cursor goes.
+            .onChange(of: locked) { _, now in
+                guard now, hovering else { return }
+                hovering = false
+                dragging = false
+                NSCursor.pop()
+            }
             .zIndex(10)
     }
 }
