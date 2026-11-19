@@ -7,6 +7,9 @@ struct ContentView: View {
     @State private var timelineHeight: CGFloat = 360
     @State private var dropTargeted = false
     @AppStorage("magicEnabled") private var magicEnabled = true
+    /// While Magic works the editor is locked: nothing under the mouse reacts (hover, scrubbing).
+    @ObservedObject private var magic = MagicState.shared
+    private var locked: Bool { magic.stage != nil }
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
@@ -29,12 +32,16 @@ struct ContentView: View {
                         .frame(width: InspectorView.width)
                         .background(MagicAnchor(key: "inspector"))
                 }
+                .allowsHitTesting(!locked)
                 Splitter(vertical: false) { y in
                     timelineHeight = min(max(200, geo.size.height - 240), max(170, frame.maxY - y))
                 }
                 TimelinePanel(model: model)
                     .frame(height: min(timelineHeight, max(170, geo.size.height - 240)))
+                    .allowsHitTesting(!locked)
             }
+            // A Media item being scrubbed when Magic starts lets the viewer go back.
+            .onChange(of: locked) { _, now in if now { model.sourcePreview.clear() } }
             // A hairline under the title bar.
             .overlay(alignment: .top) { Hairline() }
             }
