@@ -1182,20 +1182,46 @@ final class EditorModel: ObservableObject {
     /// Sets every selected audio clip (or every audio clip, with none selected) to the same typical
     /// level, so quiet and loud recordings sit together. Clips without a waveform yet are left alone.
     func evenOutLevels() {
-        let target = -20.0
         let chosen = project.clips.filter { selection.contains($0.id) && $0.kind == .audio }
         let clips = (chosen.isEmpty ? project.clips.filter { $0.kind == .audio } : chosen).filter { !project.isLocked($0.trackID) }
-        var gains: [UUID: Double] = [:]
-        for c in clips {
-            guard let level = AudioLevels.envelopeDB(c, media: media) else { continue }
-            gains[c.id] = ((target - level) * 10).rounded() / 10
-        }
+        let gains = levelGains(of: clips)
         guard !gains.isEmpty else { return }
         mutate { p in
             for i in p.clips.indices {
                 if let g = gains[p.clips[i].id] { p.clips[i].gainDB = g.clamped(to: -24...12) }
             }
         }
+    }
+
+    /// The clip gain that brings each audio clip to the same typical level, measured from its waveform
+    /// (clips with no sound, or no waveform yet, are left out), clamped to the gain range.
+    /// - Plain: every clip to -20 dB.
+    /// - `matchOutput`: so they read the same on the output meters, each track's gain counted. The level
+    ///   they meet at is the middle of where they play now, so the whole mix stays about as loud and each
+    ///   clip moves as little as it can; none is turned up past 1 dB under full scale.
+    func levelGains(of clips: [Clip], matchOutput: Bool = false) -> [UUID: Double] {
+        var measured: [(clip: Clip, level: Double, peak: Double, track: Double)] = []
+        for c in clips {
+            guard let level = AudioLevels.envelopeDB(c, media: media) else { continue }
+            let track = matchOutput ? project.track(c.trackID)?.gainDB ?? 0 : 0
+            measured.append((c, level, AudioLevels.peakDB(c, media: media) ?? level, track))
+        }
+        guard !measured.isEmpty else { return [:] }
+        let target: Double
+        if matchOutput {
+            let outputs = measured.map { $0.level + $0.clip.gainDB + $0.track }.sorted()
+            let n = outputs.count
+            target = n % 2 == 1 ? outputs[n / 2] : (outputs[n / 2 - 1] + outputs[n / 2]) / 2
+        } else {
+            target = -20
+        }
+        var gains: [UUID: Double] = [:]
+        for m in measured {
+            var g = target - m.level - m.track
+            if matchOutput { g = min(g, -1 - m.peak - m.track) }
+            gains[m.clip.id] = ((g * 10).rounded() / 10).clamped(to: -24...12)
+        }
+        return gains
     }
 
     /// Turns one audio track down while another has sound (music under a voice); nil stops it.

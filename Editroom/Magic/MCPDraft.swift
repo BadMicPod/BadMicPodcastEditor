@@ -133,6 +133,8 @@ final class MCPDraft {
             var barrier = false
             /// A plain delete: two of them only clash over the same clip.
             var lift = false
+            /// Only a clip's own setting (level, fades, look, grade): two of them only clash over the same clip.
+            var setting = false
         }
         var p = base
         var prints: [Footprint] = []
@@ -142,6 +144,10 @@ final class MCPDraft {
             var f = Footprint()
             if case .change(nil, _, _) = e { f.barrier = true }
             if case .remove(_, false) = e { f.lift = true }
+            switch e {
+            case .gain, .fadeIn, .fadeOut, .look, .grade: f.setting = true
+            default: break
+            }
             if before.videoTracks.map(\.id) != p.videoTracks.map(\.id) || before.audioTracks.map(\.id) != p.audioTracks.map(\.id)
                 || before.width != p.width || before.height != p.height || before.fps != p.fps { f.barrier = true }
             // Every clip the edit changed, added or removed, including ones it overwrote or rippled.
@@ -162,6 +168,8 @@ final class MCPDraft {
             if a.barrier || b.barrier || !a.ids.isDisjoint(with: b.ids) { return true }
             // Deleting clips side by side: one doesn't need the other gone first.
             if a.lift, b.lift { return false }
+            // Setting one clip's level, fades or colour doesn't wait on another's.
+            if a.setting, b.setting { return false }
             // Touching counts: a transition needs the clip before it in place.
             for x in a.spans {
                 for y in b.spans where x.track == y.track && x.from <= y.to + 1e-3 && y.from <= x.to + 1e-3 { return true }

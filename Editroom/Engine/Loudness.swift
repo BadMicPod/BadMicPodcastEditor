@@ -19,6 +19,15 @@ enum AudioLevels {
         return 10 * log10(sum / Double(n))
     }
 
+    /// A clip's loudest peak in dB over its source range.
+    static func peakDB(_ c: Clip, media: MediaStore) -> Double? {
+        guard let wf = media.waveform(c), !wf.peaks.isEmpty else { return nil }
+        let lo = max(0, Int(c.sourceStart * wf.peaksPerSecond))
+        let hi = min(wf.peaks.count, Int((c.sourceStart + c.duration * c.speed) * wf.peaksPerSecond))
+        guard hi > lo, let peak = wf.peaks[lo..<hi].max(), peak > 0 else { return nil }
+        return 20 * log10(Double(peak))
+    }
+
     /// Stretches of time where a track has sound, for ducking another track under it.
     static func activity(on trackID: UUID, project: Project, media: MediaStore) -> [(start: Double, end: Double)] {
         var spans: [(Double, Double)] = []

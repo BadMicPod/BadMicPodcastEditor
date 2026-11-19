@@ -625,6 +625,29 @@ enum LocalMagic {
                 recipe.speed = LocalBrain.speed(in: request)
                 recipe.soundEffects = LocalBrain.wantsSoundEffects(request)
                 recipe.askedJudgement = LocalBrain.asksJudgement(request)
+                if LocalBrain.wantsLevels(request) {
+                    recipe.levelAudio = true
+                    // Every audio clip on a track that's on, measured now, so they all read the same on the output meters.
+                    let clips = model.project.clips.filter { c in
+                        c.kind == .audio && !model.project.isLocked(c.trackID) && (model.project.track(c.trackID)?.muted != true)
+                    }
+                    recipe.levelGains = model.levelGains(of: clips, matchOutput: true)
+                    recipe.levelSilent = Array(Set(clips.filter { recipe.levelGains[$0.id] == nil }
+                        .compactMap { model.project.asset($0.assetID ?? UUID())?.name })).sorted()
+                    if CommandLine.arguments.contains("--magic-local") {
+                        let said = clips.map { c in
+                            let name = model.project.asset(c.assetID ?? UUID())?.name ?? "?"
+                            let level = AudioLevels.envelopeDB(c, media: model.media).map { String(format: "%.1f", $0) } ?? "none"
+                            let peak = AudioLevels.peakDB(c, media: model.media).map { String(format: "%.1f", $0) } ?? "none"
+                            return "\(name)@\(String(format: "%.1f", c.start)) level \(level) peak \(peak) gain \(c.gainDB) -> \(recipe.levelGains[c.id].map { String(format: "%.1f", $0) } ?? "-")"
+                        }
+                        FileHandle.standardError.write("MAGIC LEVELS \(said.joined(separator: "; "))\n".data(using: .utf8)!)
+                    }
+                    // Levels are handled now, so they aren't something it couldn't do.
+                    recipe.cannotDo = recipe.cannotDo.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                        .filter { p in !["level", "volume", "loud", "equaliz", "equalis", "normaliz", "normalis", "balance", "db", "gain", "audio"]
+                            .contains { p.lowercased().contains($0) } }.joined(separator: ", ")
+                }
                 if recipe.soundEffects {
                     // Sound effects are handled now, so they aren't something it couldn't do.
                     recipe.cannotDo = recipe.cannotDo.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }

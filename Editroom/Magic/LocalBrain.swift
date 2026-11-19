@@ -28,6 +28,12 @@ struct LocalRecipe: Equatable {
     /// Asks for nothing Local can do (no setting, no media): it shouldn't edit anything.
     var isEmpty: Bool {
         seconds == nil && pace == .unchanged && look == nil && music == .unchanged && frame == .unchanged
+            && keepOnly.isEmpty && takeOut.isEmpty && speed == nil && !soundEffects && !levelAudio
+    }
+
+    /// Asks only for the audio levels to match (and maybe a look): nothing about the picture's cut.
+    var onlyLevels: Bool {
+        levelAudio && seconds == nil && pace == .unchanged && music == .unchanged && frame == .unchanged
             && keepOnly.isEmpty && takeOut.isEmpty && speed == nil && !soundEffects
     }
 
@@ -42,6 +48,12 @@ struct LocalRecipe: Equatable {
     /// They asked whether it should ("do you think…", "should I…", "if so"): only where it sees a strong
     /// moment, or not at all, with a note saying why.
     var askedJudgement = false
+    /// Bring every audio clip to the same level ("equalize the audio", "same volume"): the clip gain for
+    /// each, worked out from the waveforms when the request is read.
+    var levelAudio = false
+    var levelGains: [UUID: Double] = [:]
+    /// Audio clips with no sound to measure, by name: left as they are.
+    var levelSilent: [String] = []
 
     static let plain = LocalRecipe()
 
@@ -55,6 +67,7 @@ struct LocalRecipe: Equatable {
         if frame != .unchanged { parts.append(frame.rawValue) }
         if let speed { parts.append(String(format: "speed ×%g", speed)) }
         if soundEffects { parts.append("sound effects") }
+        if levelAudio { parts.append("audio levelled") }
         if !keepOnly.isEmpty { parts.append("only " + mediaNames.joined(separator: ", ")) }
         if !takeOut.isEmpty { parts.append(mediaNames.joined(separator: ", ") + " out") }
         return parts.joined(separator: ", ")
@@ -108,6 +121,16 @@ enum LocalBrain {
     static func wantsSoundEffects(_ request: String) -> Bool {
         let t = request.lowercased()
         return ["sfx", "sound effect", "sound fx", "soundfx", "fx sound", "whoosh", "swoosh", "foley", "sound design"].contains { t.contains($0) }
+    }
+
+    /// Asks for the audio clips at one level ("equalize all audio", "same volume", "normalize the sound").
+    static func wantsLevels(_ request: String) -> Bool {
+        let t = request.lowercased()
+        let about = ["audio", "sound", "volume", "loud", "level", "clip", "voice", "music", "db"].contains { t.contains($0) }
+        let even = ["equaliz", "equalis", "normaliz", "normalis", "even out", "same level", "same volume", "same loudness",
+                    "same output", "consistent", "match", "balance", "level out", "level the", "levels the same", "too quiet and"]
+            .contains { t.contains($0) }
+        return about && even
     }
 
     /// Short sound-only files in the library: the sound effects (they can be used more than once).

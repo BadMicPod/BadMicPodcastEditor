@@ -28,6 +28,37 @@ enum LocalImprover {
     /// that song's beats (otherwise the beats of the song already on the timeline).
     static func plan(project p: Project, analyses: [UUID: ClipAnalysis], music: MusicAnalysis?,
                      recipe: LocalRecipe = .plain, newSong: MediaAsset? = nil) -> Outcome? {
+        /// Each audio clip still on the timeline at the level the request asked for (a drag of its level).
+        func levelEdits(_ q: Project) -> [MagicEdit] {
+            q.clips.compactMap { c in
+                guard let g = recipe.levelGains[c.id], abs(g - c.gainDB) > 0.05 else { return nil }
+                return .gain(c.id, from: c.gainDB, to: g)
+            }
+        }
+        func levelPart(_ edits: [MagicEdit]) -> String {
+            let n = edits.filter { if case .gain = $0 { return true } else { return false } }.count
+            let silent = recipe.levelSilent.isEmpty ? ""
+                : " (\(recipe.levelSilent.joined(separator: ", ")) \(recipe.levelSilent.count == 1 ? "has" : "have") no sound, so \(recipe.levelSilent.count == 1 ? "it was" : "they were") left as \(recipe.levelSilent.count == 1 ? "it is" : "they are"))"
+            return "set \(n) audio clip\(n == 1 ? "" : "s") to the same level" + silent
+        }
+        // Only the audio levels (and maybe a look): just that.
+        if recipe.onlyLevels {
+            var edits = levelEdits(p)
+            if let look = recipe.look, look != "none" {
+                for c in p.clips where (c.kind == .video || c.kind == .image) && c.grade?.look != look { edits.append(.look(c.id, name: look)) }
+            }
+            if recipe.levelGains.isEmpty {
+                return Outcome(plan: MagicPlan(base: p, tasks: []), summary: "", focused: true,
+                               message: "There's no audio on the timeline to level.")
+            }
+            guard !edits.isEmpty else {
+                return Outcome(plan: MagicPlan(base: p, tasks: []), summary: "", focused: true,
+                               message: "Your audio clips are already at the same level.")
+            }
+            var parts = levelEdits(p).isEmpty ? [] : [levelPart(edits)]
+            if let look = recipe.look, look != "none" { parts.append("one look (\(look))") }
+            return Outcome(plan: MCPDraft.plan(base: p, edits: edits), summary: parts.joined(separator: ", "), focused: true)
+        }
         // The main picture track: the lowest video track with shots on it.
         guard let track = p.videoTracks.first(where: { t in p.clips.contains { $0.trackID == t.id && isShot($0) } }),
               !p.isLocked(track.id) else { return nil }
@@ -79,13 +110,16 @@ enum LocalImprover {
             if let look = recipe.look, look != "none" {
                 for c in shots where c.grade?.look != look { edits.append(.look(c.id, name: look)) }
             }
-            guard !edits.isEmpty else { return nil }
             var q = p
             for e in edits { e.apply(&q, 1) }
+            let levels = levelEdits(q)
+            edits += levels
+            guard !edits.isEmpty else { return nil }
             let before = (shots.map(\.end).max() ?? 0) - shots.first!.start
             let after = (q.clips.filter { $0.trackID == track.id }.map(\.end).max() ?? 0) - shots.first!.start
             var parts = [String(format: "set every clip to %g%% speed (%.1fs to %.1fs)", speed * 100, before, after)]
             if recipe.look != nil { parts.append("one look (\(recipe.look!))") }
+            if !levels.isEmpty { parts.append(levelPart(levels)) }
             return Outcome(plan: MCPDraft.plan(base: p, edits: edits), summary: parts.joined(separator: ", "), focused: true)
         }
 
@@ -508,6 +542,12 @@ enum LocalImprover {
             }
         }
 
+        // The audio levels, once everything else is in place.
+        var final = p
+        for e in edits { e.apply(&final, 1) }
+        let levels = levelEdits(final)
+        edits += levels
+
         if effectsPlaced == 0, recipe.soundEffects, !judgedNone, notes.isEmpty, recipe.isFocused {
             notes.append("every cut already has a sound effect, so there was nowhere new to put one")
         }
@@ -531,6 +571,7 @@ enum LocalImprover {
         if snap, !musicGoes, song != nil, music != nil { parts.append("cut to the beat") }
         if graded > 0 { parts.append(common == "none" ? "looks off" : "one look (\(common ?? ""))") }
         if recipe.frame != .unchanged, size != nil { parts.append(recipe.frame.rawValue) }
+        if !levels.isEmpty { parts.append(levelPart(levels)) }
         return Outcome(plan: MCPDraft.plan(base: p, edits: edits), summary: parts.joined(separator: ", "), notes: notes, focused: focused)
     }
 
