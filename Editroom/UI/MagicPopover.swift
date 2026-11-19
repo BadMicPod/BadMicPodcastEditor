@@ -612,6 +612,12 @@ enum LocalMagic {
             do {
                 recipe = try await LocalBrain.recipe(for: request, media: model.project.assets)
                 recipe.speed = LocalBrain.speed(in: request)
+                recipe.soundEffects = LocalBrain.wantsSoundEffects(request)
+                if recipe.soundEffects {
+                    // Sound effects are handled now, so they aren't something it couldn't do.
+                    recipe.cannotDo = recipe.cannotDo.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                        .filter { p in !["sound", "sfx", "effect", "whoosh"].contains { p.lowercased().contains($0) } }.joined(separator: ", ")
+                }
                 if recipe.speed != nil {
                     // Speed is handled now, so it isn't something it couldn't do.
                     recipe.cannotDo = recipe.cannotDo.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }

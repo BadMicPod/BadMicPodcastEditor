@@ -28,7 +28,7 @@ struct LocalRecipe: Equatable {
     /// Asks for nothing Local can do (no setting, no media): it shouldn't edit anything.
     var isEmpty: Bool {
         seconds == nil && pace == .unchanged && look == nil && music == .unchanged && frame == .unchanged
-            && keepOnly.isEmpty && takeOut.isEmpty && speed == nil
+            && keepOnly.isEmpty && takeOut.isEmpty && speed == nil && !soundEffects
     }
 
     /// About which media to use: then Local does just that (and closes gaps), nothing else unasked.
@@ -37,6 +37,8 @@ struct LocalRecipe: Equatable {
     var onlyAsked = false
     /// Clip speed for every shot: 10 for "1000%" or "10x", 0.5 for "half speed" or "slow motion".
     var speed: Double?
+    /// Put the short sound files from their Media (sound effects) on the cuts.
+    var soundEffects = false
 
     static let plain = LocalRecipe()
 
@@ -49,6 +51,7 @@ struct LocalRecipe: Equatable {
         if music == .off { parts.append("no music") } else if music == .add { parts.append("music added") }
         if frame != .unchanged { parts.append(frame.rawValue) }
         if let speed { parts.append(String(format: "speed ×%g", speed)) }
+        if soundEffects { parts.append("sound effects") }
         if !keepOnly.isEmpty { parts.append("only " + mediaNames.joined(separator: ", ")) }
         if !takeOut.isEmpty { parts.append(mediaNames.joined(separator: ", ") + " out") }
         return parts.joined(separator: ", ")
@@ -91,6 +94,18 @@ enum LocalBrain {
 
     /// Clip speed a request asks for: "1000%" or "10x" or "10 times" (with speed / faster / slower nearby),
     /// "double speed", "half speed", "slow motion".
+    /// Asks for sound effects ("sfx", "sound effects", "whooshes"…).
+    static func wantsSoundEffects(_ request: String) -> Bool {
+        let t = request.lowercased()
+        return ["sfx", "sound effect", "sound fx", "soundfx", "fx sound", "whoosh", "swoosh", "foley", "sound design"].contains { t.contains($0) }
+    }
+
+    /// Short sound-only files in the library that aren't in the edit: the sound effects.
+    static func soundEffects(in p: Project) -> [MediaAsset] {
+        let used = Set(p.clips.compactMap(\.assetID))
+        return p.assets.filter { $0.kind == .audio && $0.duration > 0.05 && $0.duration < 10 && !used.contains($0.id) }
+    }
+
     static func speed(in request: String) -> Double? {
         let t = request.lowercased()
         let about = ["speed", "faster", "slower", "fast", "slow", "sped", "timelapse", "time lapse", "playback"].contains { t.contains($0) }

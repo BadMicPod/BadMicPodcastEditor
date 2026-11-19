@@ -420,10 +420,68 @@ enum LocalImprover {
             }
         }
 
+        // 8. Sound effects they asked for: the short sound files in their Media, on the cuts. Whooshes and
+        // swishes lead into a cut; hits and impacts land on the first frame; anything else starts on a cut.
+        var effectsPlaced = 0
+        if recipe.soundEffects {
+            let effects = LocalBrain.soundEffects(in: p)
+            if effects.isEmpty {
+                notes.append("there are no short sound effects in your Media (sound files under 10 seconds that aren't in the edit yet)")
+            } else {
+                func named(_ a: MediaAsset, _ words: [String]) -> Bool { words.contains { a.name.lowercased().contains($0) } }
+                let swooshes = effects.filter { named($0, ["whoosh", "swoosh", "swish", "woosh", "transition", "riser", "sweep"]) }
+                let hits = effects.filter { named($0, ["hit", "impact", "boom", "thud", "punch", "slam", "bass drop", "drop"]) }
+                let others = effects.filter { e in !swooshes.contains { $0.id == e.id } && !hits.contains { $0.id == e.id } }
+                var spots: [(time: Double, effect: MediaAsset, lead: Bool)] = []
+                if let hit = hits.first ?? (swooshes.isEmpty && others.isEmpty ? nil : nil) { spots.append((firstStart, hit, false)) }
+                let cutTimes = Array(cuts.dropFirst().dropLast())
+                let pool = swooshes.isEmpty ? (others.isEmpty ? hits : others) : swooshes
+                for (k, t) in cutTimes.enumerated() where spots.count < 8 {
+                    let e = pool[k % pool.count]
+                    spots.append((t, e, swooshes.contains { $0.id == e.id }))
+                }
+                if cutTimes.isEmpty, spots.isEmpty, let e = pool.first { spots.append((firstStart, e, false)) }
+                // One sound track for them all: a free one, or a new one.
+                let spans = spots.map { s -> (Double, Double) in
+                    let start = max(firstStart, s.lead ? s.time - min(0.5, s.effect.duration * 0.6) : s.time - 0.03)
+                    return (start, min(newEnd, start + s.effect.duration))
+                }
+                let lo = spans.map(\.0).min() ?? firstStart, hi = spans.map(\.1).max() ?? newEnd
+                let trackID: UUID
+                if let free = p.audioTracks.first(where: { t in
+                    !p.isLocked(t.id) && t.id != songOnTimeline?.trackID && t.id != placing?.trackID
+                        && !p.clips.contains { $0.trackID == t.id && $0.start < hi && $0.end > lo }
+                }) {
+                    trackID = free.id
+                } else {
+                    let id = UUID()
+                    edits.append(.change(nil, "Add audio track") { q in
+                        var t = Track(kind: .audio)
+                        t.id = id
+                        q.audioTracks.append(t)
+                    })
+                    trackID = id
+                }
+                var lastEnd = -Double.infinity
+                for (k, s) in spots.enumerated() {
+                    var (start, end) = spans[k]
+                    start = max(start, lastEnd)
+                    guard end - start > 0.1 else { continue }
+                    var c = Clip(trackID: trackID, kind: .audio, assetID: s.effect.id, start: frames(start), duration: frames(end - start))
+                    c.gainDB = -6
+                    c.fadeOut = min(0.15, c.duration / 3)
+                    edits.append(.place([c], asset: s.effect.id))
+                    lastEnd = end
+                    effectsPlaced += 1
+                }
+            }
+        }
+
         guard !edits.isEmpty else { return nil }
         // The length only when it was part of the job: a focused request ("only IMG_1607") just says what it did.
         var parts: [String] = focused && recipe.seconds == nil ? []
             : [String(format: "%.1fs to %.1fs", oldEnd - firstStart, newEnd - firstStart)]
+        if effectsPlaced > 0 { parts.append("added \(effectsPlaced) sound effect\(effectsPlaced == 1 ? "" : "s") on the cuts") }
         if !recipe.keepOnly.isEmpty { parts.append("kept only \(recipe.mediaNames.joined(separator: ", ")) (\(named) shot\(named == 1 ? "" : "s") out)") }
         if !recipe.takeOut.isEmpty { parts.append("took out \(recipe.mediaNames.joined(separator: ", ")) (\(named) shot\(named == 1 ? "" : "s"))") }
         if recipe.clearRest { parts.append("cleared everything else off the timeline") }

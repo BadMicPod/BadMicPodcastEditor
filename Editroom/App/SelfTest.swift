@@ -1197,6 +1197,27 @@ enum SelfTest {
                 good = false
                 detail += " | only: no plan (read=\(readOK))"
             }
+            // Sound effects: a whoosh from the library leads into every cut, on a track of its own.
+            var withFX = p
+            let whoosh = MediaAsset(path: "/tmp/Whoosh 1.wav", name: "Whoosh 1", kind: .audio, duration: 1, width: 0, height: 0, fps: 0, hasAudio: true)
+            withFX.assets.append(whoosh)
+            var fx = LocalRecipe()
+            fx.soundEffects = true
+            fx.onlyAsked = true
+            if let outcome = LocalImprover.plan(project: withFX, analyses: [a.id: analysis(), b.id: analysis()], music: music, recipe: fx) {
+                var q = withFX
+                for task in outcome.plan.tasks { task.edit.apply(&q, 1) }
+                let placed = q.clips.filter { $0.assetID == whoosh.id }.sorted { $0.start < $1.start }
+                let cutsNow = q.clips.filter { $0.trackID == v1 }.map(\.end).sorted().dropLast()
+                let leadIn = placed.count == cutsNow.count && zip(placed, cutsNow).allSatisfy { $0.start < $1 && $0.end > $1 - 1e-6 }
+                let ownTrack = Set(placed.map(\.trackID)).count == 1 && !q.clips.contains { c in placed.first.map { c.trackID == $0.trackID && c.assetID != whoosh.id } ?? false }
+                let fxOK = !placed.isEmpty && leadIn && ownTrack
+                good = good && fxOK
+                detail += " | sfx=\(fxOK) placed=\(placed.count) \(outcome.summary)"
+            } else {
+                good = false
+                detail += " | sfx: no plan"
+            }
             // The request check: settings the request doesn't mention are dropped (the on-device model over-fills).
             var noisy = LocalRecipe()
             noisy.seconds = 20; noisy.pace = .calm; noisy.look = "none"; noisy.music = .off; noisy.frame = .square
