@@ -819,7 +819,7 @@ enum SelfTest {
                     let v1 = p.videoTracks[0].id
                     let shots = p.clips.filter { $0.trackID == v1 }.sorted { $0.start < $1.start }
                     let gapless = zip(shots.dropFirst(), shots).allSatisfy { abs($0.start - $1.end) < 1e-6 }
-                    built = shots.count == d.shots.count && gapless && shots.allSatisfy { $0.grade?.look == d.look }
+                    built = shots.count == d.shots.count && gapless && shots.allSatisfy { ($0.grade?.look ?? "") == d.look }
                         && p.clips.contains { $0.kind == .text && $0.text.string == d.title }
                         && p.clips.contains { $0.assetID == songAsset.id }
                 }

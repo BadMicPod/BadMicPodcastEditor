@@ -395,12 +395,14 @@ enum Choreographer {
             }
             // The last shot fades to black.
             if i == cuts.count - 1 { _ = add(.fadeOut(c.video, to: 0.6), after: [c.moved], delay: 0.12) }
-            // Grade each shot as soon as it's in place, while others are still being cut: four
-            // cursors on its panel. Exposure brings it in line with the others.
-            if !decision.look.isEmpty { _ = add(.look(c.video, name: decision.look), after: [c.moved], delay: 0.1) }
-            _ = add(.grade(c.video, .exposure, to: s.exposure), after: [c.moved], delay: 0.125)
-            _ = add(.grade(c.video, .contrast, to: 12), after: [c.moved], delay: 0.15)
-            _ = add(.grade(c.video, .saturation, to: 18), after: [c.moved], delay: 0.175)
+            // Colour only where it's wanted, as soon as the shot is in place: the look they asked for (with a
+            // little punch), and exposure for a shot clearly darker or brighter than the rest.
+            if !decision.look.isEmpty {
+                _ = add(.look(c.video, name: decision.look), after: [c.moved], delay: 0.1)
+                _ = add(.grade(c.video, .contrast, to: 12), after: [c.moved], delay: 0.15)
+                _ = add(.grade(c.video, .saturation, to: 18), after: [c.moved], delay: 0.175)
+            }
+            if abs(s.exposure) >= 0.2 { _ = add(.grade(c.video, .exposure, to: s.exposure), after: [c.moved], delay: 0.125) }
         }
         return MagicPlan(base: base, tasks: tasks)
     }

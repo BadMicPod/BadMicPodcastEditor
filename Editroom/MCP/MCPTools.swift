@@ -78,7 +78,7 @@ enum MCPTools {
             tool("set_sequence", "Set sequence", "The frame size and frame rate of the cut.", ["width": ["type": "integer"], "height": ["type": "integer"], "fps": num("23.976, 24, 25, 29.97, 30, 50, 59.94, 60, 100, 119.88 or 120.")]),
             tool("playback", "Playback", "Play, pause or move the playhead.", ["action": ["type": "string", "enum": ["play", "pause", "seek"]], "time": num("For seek.")], required: ["action"]),
             tool("history", "Undo or redo", "Undoes or redoes the last change (each tool call is one change).", ["action": ["type": "string", "enum": ["undo", "redo"]]], required: ["action"]),
-            tool("auto_edit", "Auto edit", "Builds a whole cut from the library on its own: best moments, cut to the beat of a song if there is one, titled, graded. Replaces what's on the timeline (one undo brings it back)."),
+            tool("auto_edit", "Auto edit", "Builds a whole cut from the library on its own: best moments, cut to the beat of a song if there is one, titled. Replaces what's on the timeline (one undo brings it back)."),
             tool("save_project", "Save project", "Saves the project to its file. A project that's never been saved has to be saved by the person."),
         ]
     }

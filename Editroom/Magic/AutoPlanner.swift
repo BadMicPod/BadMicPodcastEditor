@@ -159,7 +159,7 @@ enum AutoPlanner {
         guard !shots.isEmpty else { return nil }
 
         var decision = EditDecision(shots: shots, music: nil, title: title(for: usable.compactMap(\.1.created), today: today),
-                                    look: recipe.look.map { $0 == "none" ? "" : $0 } ?? "Film print", bpm: nil)
+                                    look: recipe.look.map { $0 == "none" ? "" : $0 } ?? "", bpm: nil)
 
         if let (asset, m) = music, !m.beats.isEmpty {
             decision.bpm = m.bpm
