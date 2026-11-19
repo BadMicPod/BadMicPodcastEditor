@@ -574,7 +574,6 @@ private struct MentionOption: Identifiable {
     let id: String
     /// What goes in the text after the `@`.
     let name: String
-    let symbol: String
     let detail: String
     var enabled = true
     /// `@media:`, which lists every file.
@@ -594,14 +593,15 @@ private struct MentionOption: Identifiable {
             return String(format: "%d:%04.1f", Int(s) / 60, s.truncatingRemainder(dividingBy: 60))
         }
         func file(_ a: MediaAsset) -> MentionOption {
-            let symbol = switch a.kind {
-            case .video: "film"
-            case .image: "photo"
-            case .audio: "music.note"
-            }
             let s = Int(a.duration.rounded())
-            return MentionOption(id: a.id.uuidString, name: a.name, symbol: symbol,
-                                 detail: a.kind == .image ? "Photo" : String(format: "%d:%02d", s / 60, s % 60))
+            let length = String(format: "%d:%02d", s / 60, s % 60)
+            // What kind it is, in words, like the Media list: a length for video, "Audio" and "Photo" said.
+            let detail = switch a.kind {
+            case .video: length
+            case .audio: length + "  ·  Audio"
+            case .image: "Photo"
+            }
+            return MentionOption(id: a.id.uuidString, name: a.name, detail: detail)
         }
         /// Files by name: names starting with it first, then names with it inside.
         func files(matching text: String, in assets: [MediaAsset]) -> [MediaOption] {
@@ -625,17 +625,17 @@ private struct MentionOption: Identifiable {
         }.count
         var pointers: [MentionOption] = []
         if !p.clips.isEmpty {
-            pointers.append(MentionOption(id: "playhead", name: "playhead", symbol: "line.diagonal", detail: clock(model.playhead)))
+            pointers.append(MentionOption(id: "playhead", name: "playhead", detail: clock(model.playhead)))
         }
         if selected > 0 {
-            pointers.append(MentionOption(id: "selected", name: "selected", symbol: "checkmark.square", detail: "\(selected) clip\(selected == 1 ? "" : "s")"))
+            pointers.append(MentionOption(id: "selected", name: "selected", detail: "\(selected) clip\(selected == 1 ? "" : "s")"))
         }
         if let r = p.playRange {
-            pointers.append(MentionOption(id: "in-out", name: "in-out", symbol: "arrow.left.and.right", detail: "\(clock(r.start)) to \(clock(r.end))"))
+            pointers.append(MentionOption(id: "in-out", name: "in-out", detail: "\(clock(r.start)) to \(clock(r.end))"))
         }
         if !p.assets.isEmpty {
             let n = p.assets.count
-            pointers.append(MentionOption(id: "media", name: "media:", symbol: "rectangle.stack", detail: "\(n) file\(n == 1 ? "" : "s")  ›", opensList: true))
+            pointers.append(MentionOption(id: "media", name: "media:", detail: "\(n) file\(n == 1 ? "" : "s")  ›", opensList: true))
         }
         let shown = pointers.filter { $0.name.hasPrefix(q) }
         // Typed a few letters: files by name straight away too.
@@ -674,10 +674,6 @@ private struct MentionList: View {
             ForEach(Array(options.enumerated()), id: \.element.id) { i, option in
                 Button { pick(option) } label: {
                     HStack(spacing: 7) {
-                        Image(systemName: option.symbol)
-                            .font(.system(size: 10, weight: .semibold))
-                            .frame(width: 14)
-                            .foregroundStyle(Theme.textDim)
                         Text("@" + option.name)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(i == picked ? Theme.text : Theme.textDim)
