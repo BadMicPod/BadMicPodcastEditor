@@ -145,7 +145,10 @@ final class MagicShow: NSObject {
                 let outcome = LocalImprover.plan(project: model.project, analyses: analyses, music: found.music?.1,
                                                  recipe: recipe, newSong: newSong)
                 plan = outcome?.plan
-                said = outcome.map { "Improved your edit: \($0.summary)." } ?? "Your edit already looks good; nothing to change."
+                said = outcome.map { o in
+                    // "Kept only IMG_1607 (2 shots out); everything else off the timeline." for a focused request.
+                    o.focused ? o.summary.prefix(1).uppercased() + o.summary.dropFirst() + "." : "Improved your edit: \(o.summary)."
+                } ?? "Your edit already looks good; nothing to change."
                 notes += outcome?.notes ?? []
                 if CommandLine.arguments.contains("--magic") {
                     FileHandle.standardError.write("MAGIC IMPROVE \(outcome?.summary ?? "nothing to change") (\(outcome?.plan.tasks.count ?? 0) edits) recipe: \(recipe.summary)\n".data(using: .utf8)!)

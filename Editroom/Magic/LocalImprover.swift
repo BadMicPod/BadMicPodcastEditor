@@ -17,6 +17,8 @@ enum LocalImprover {
         var summary: String
         /// What it couldn't do of what was asked.
         var notes: [String] = []
+        /// It did just what was asked (named media), rather than a general improvement.
+        var focused = false
     }
 
     /// `recipe` is what the person asked for (from Apple's on-device model), if anything. `newSong` is a song
@@ -398,10 +400,12 @@ enum LocalImprover {
         }
 
         guard !edits.isEmpty else { return nil }
-        var parts: [String] = [String(format: "%.1fs to %.1fs", oldEnd - firstStart, newEnd - firstStart)]
-        if !recipe.keepOnly.isEmpty { parts.append("only \(recipe.mediaNames.joined(separator: ", ")) kept (\(named) shot\(named == 1 ? "" : "s") out)") }
-        if !recipe.takeOut.isEmpty { parts.append("\(recipe.mediaNames.joined(separator: ", ")) out (\(named) shot\(named == 1 ? "" : "s"))") }
-        if recipe.clearRest { parts.append("everything else off the timeline") }
+        // The length only when it was part of the job: a focused request ("only IMG_1607") just says what it did.
+        var parts: [String] = focused && recipe.seconds == nil ? []
+            : [String(format: "%.1fs to %.1fs", oldEnd - firstStart, newEnd - firstStart)]
+        if !recipe.keepOnly.isEmpty { parts.append("kept only \(recipe.mediaNames.joined(separator: ", ")) (\(named) shot\(named == 1 ? "" : "s") out)") }
+        if !recipe.takeOut.isEmpty { parts.append("took out \(recipe.mediaNames.joined(separator: ", ")) (\(named) shot\(named == 1 ? "" : "s"))") }
+        if recipe.clearRest { parts.append("cleared everything else off the timeline") }
         if repeats > 0 { parts.append("\(repeats) repeat\(repeats == 1 ? "" : "s") out") }
         if !doubled.isEmpty, !recipe.clearRest { parts.append("\(doubled.count) doubled title\(doubled.count == 1 ? "" : "s") out") }
         if weakOut > 0 { parts.append("\(weakOut) weak shot\(weakOut == 1 ? "" : "s") out") }
@@ -410,7 +414,7 @@ enum LocalImprover {
         if snap, !musicGoes, song != nil, music != nil { parts.append("cut to the beat") }
         if graded > 0 { parts.append(common == "none" ? "looks off" : "one look (\(common ?? ""))") }
         if recipe.frame != .unchanged, size != nil { parts.append(recipe.frame.rawValue) }
-        return Outcome(plan: MCPDraft.plan(base: p, edits: edits), summary: parts.joined(separator: ", "), notes: notes)
+        return Outcome(plan: MCPDraft.plan(base: p, edits: edits), summary: parts.joined(separator: ", "), notes: notes, focused: focused)
     }
 
     /// Video and photo clips that make up the cut (not titles or solids).
