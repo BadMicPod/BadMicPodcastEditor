@@ -1433,7 +1433,16 @@ final class TimelineCanvas: NSView {
         let base = thumbs ? Theme.NS.clip(c.kind) : Theme.NS.clipType(c.kind)
         let selected = model.selection.contains(c.id) || magicMarks.selected.contains(c.id)
         let hovered = hover?.id == c.id
-        let zone = hovered ? hover?.zone : magicZone(c.id)
+        var zone = hovered ? hover?.zone : magicZone(c.id)
+        // Hovering a selected clip's edge shows that edge on every selected clip too, since a drag trims them
+        // all; and while trimming, every clip being trimmed keeps its edge lit.
+        if !hovered, let h = hover, h.zone == .left || h.zone == .right, model.selection.contains(h.id),
+           model.selection.contains(c.id), !model.project.isLocked(c.trackID) {
+            zone = h.zone
+        }
+        if case .trim(_, let left, _, let originals) = drag, originals.contains(where: { $0.id == c.id }) {
+            zone = left ? .left : .right
+        }
         let radius = min(7, r.width / 2)
         let path = CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius, transform: nil)
         let visible = r.intersection(bounds.insetBy(dx: -2, dy: 0))
