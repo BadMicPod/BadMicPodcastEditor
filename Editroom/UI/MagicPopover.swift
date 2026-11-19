@@ -472,7 +472,8 @@ private struct PromptBox: View {
                 MentionList(options: options, picked: picked) { accept($0) }
             }
         }
-        .onChange(of: query) { _, _ in picked = options.firstIndex(where: \.enabled) ?? 0 }
+        // A new list (typed more, or what's on the timeline changed): the first row that can be picked.
+        .onChange(of: options.map(\.id)) { _, _ in picked = options.firstIndex(where: \.enabled) ?? 0 }
         .onAppear {
             // `--magic-type "text"` (testing): types into the box, as a person would.
             let args = CommandLine.arguments
@@ -652,14 +653,14 @@ private struct MentionOption: Identifiable {
                 // A video's own sound selected with it isn't another clip.
                 && !(c.kind == .audio && c.linkID != nil && p.clips.contains { $0.linkID == c.linkID && $0.id != c.id && model.selection.contains($0.id) })
         }.count
-        var pointers: [MentionOption] = []
+        // First the one people point with most; always there, greyed out with nothing selected, so
+        // people find out it exists.
+        var pointers: [MentionOption] = [selected > 0
+            ? MentionOption(id: "selected", name: "selected", detail: "\(selected) clip\(selected == 1 ? "" : "s")")
+            : MentionOption(id: "selected", name: "selected", detail: "Select clips first", enabled: false)]
         if !p.clips.isEmpty {
             pointers.append(MentionOption(id: "playhead", name: "playhead", detail: clock(model.playhead)))
         }
-        // Always there, greyed out with nothing selected, so people find out it exists.
-        pointers.append(selected > 0
-            ? MentionOption(id: "selected", name: "selected", detail: "\(selected) clip\(selected == 1 ? "" : "s")")
-            : MentionOption(id: "selected", name: "selected", detail: "Select clips first", enabled: false))
         if let r = p.playRange {
             pointers.append(MentionOption(id: "in-out", name: "in-out", detail: "\(clock(r.start)) to \(clock(r.end))"))
         }
