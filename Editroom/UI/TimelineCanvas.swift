@@ -134,6 +134,10 @@ final class TimelineCanvas: NSView {
         model.objectWillChange.sink { [weak self] _ in self?.needsDisplay = true }.store(in: &bag)
         model.$editingMarker.receive(on: DispatchQueue.main).sink { [weak self] id in self?.showMarkerPanel(id) }.store(in: &bag)
         model.view.objectWillChange.sink { [weak self] _ in self?.needsDisplay = true }.store(in: &bag)
+        // Magic starting with the pointer on a clip: its highlight and cursor go.
+        MagicState.shared.$stage.receive(on: DispatchQueue.main).sink { [weak self] stage in
+            if stage != nil { self?.clearHover() }
+        }.store(in: &bag)
         model.media.onVisualUpdate = { [weak self] in self?.needsDisplay = true }
         model.tickHandlers.append { [weak self] in self?.tick() }
 
@@ -303,7 +307,12 @@ final class TimelineCanvas: NSView {
 
     // MARK: Mouse
 
+    /// While Magic works the editor is locked: clips don't react to the pointer (no highlight, no trim
+    /// or level cursors, no skimming).
+    private var magicLocked: Bool { MagicState.shared.stage != nil }
+
     override func mouseMoved(with event: NSEvent) {
+        guard !magicLocked else { return clearHover() }
         let p = convert(event.locationInWindow, from: nil)
         updateHover(at: p)
         if model.skimming, !model.isPlaying {
@@ -325,7 +334,20 @@ final class TimelineCanvas: NSView {
     }
 
     override func cursorUpdate(with event: NSEvent) {
-        cursor.set()
+        (magicLocked ? NSCursor.arrow : cursor).set()
+    }
+
+    private func clearHover() {
+        if model.skimTime != nil { model.skim(to: nil) }
+        if hover != nil || cutHover != nil {
+            hover = nil
+            cutHover = nil
+            needsDisplay = true
+        }
+        cursor = .arrow
+        if window?.isKeyWindow == true, let w = window, bounds.contains(convert(w.mouseLocationOutsideOfEventStream, from: nil)) {
+            NSCursor.arrow.set()
+        }
     }
 
     private func updateHover(at p: CGPoint) {
