@@ -16,7 +16,6 @@ struct MagicPopover: View {
     @State private var justConnected: MagicAgent.Kind?
     /// Connecting started from here (so finishing it shows "connected").
     @State private var connecting: MagicAgent.Kind?
-    @FocusState private var localFocused: Bool
 
     private var hasEdit: Bool { model.project.clips.contains { $0.kind != .audio } }
 
@@ -103,20 +102,18 @@ struct MagicPopover: View {
                     if LocalBrain.available {
                         IdeasMenu(sections: LocalIdeas.sections(hasEdit: hasEdit)) { idea in
                             request = idea
-                            localFocused = true
                         }
                     }
                 }
                 .padding(.bottom, 8)
                 if LocalBrain.available {
                     // Apple's on-device model reads the request into settings Local follows.
-                    PromptBox(text: $request,
+                    PromptBox(model: model, text: $request,
                               placeholder: hasEdit
                                 ? "Describe what to change (length, pace, look, music, vertical), or leave this empty to improve the edit."
                                 : "Describe the video you want (length, pace, look, music, vertical), or leave this empty for the best cut.",
-                              focused: $localFocused, submit: goLocal)
+                              submit: goLocal)
                         .padding(.bottom, 11)
-                        .onAppear { localFocused = true }
                 } else if let why = LocalBrain.unavailableReason {
                     Text(why)
                         .font(.system(size: 11))
@@ -136,7 +133,7 @@ struct MagicPopover: View {
                     }
                     Spacer()
                     PillButton(title: "Make it", prominent: true, action: goLocal)
-                        .keyboardShortcut(.defaultAction)
+                        // Return in the box sends (it's the box's, so the @ list can use it).
                 }
             }
         }
@@ -315,7 +312,6 @@ private struct PromptForm: View {
     let hasEdit: Bool
     let manage: () -> Void
     let go: () -> Void
-    @FocusState private var focused: Bool
 
     private static let make: [Idea] = [
         ("Story", "book",
@@ -366,22 +362,20 @@ private struct PromptForm: View {
                           use: use)
             }
             .padding(.bottom, 8)
-            PromptBox(text: $request, placeholder: placeholder, focused: $focused, submit: go)
+            PromptBox(model: model, text: $request, placeholder: placeholder, submit: go)
                 .padding(.bottom, 11)
             HStack(spacing: 5) {
                 ModelChip(ai: ai, kind: kind, manage: manage)
                 EffortChip(ai: ai, kind: kind)
                 Spacer()
                 PillButton(title: "Make it", prominent: true, action: go)
-                    .keyboardShortcut(.defaultAction)
+                    // Return in the box sends (it's the box's, so the @ list can use it).
             }
         }
-        .onAppear { focused = true }
     }
 
     private func use(_ idea: String) {
         request = idea
-        focused = true
     }
 }
 
@@ -446,22 +440,47 @@ private struct IdeasMenu: View {
 }
 
 /// The prompt box. It's as tall as its text, three lines at least, up to three times that; past that it
-/// scrolls. Return sends; ⇧Return adds a line.
+/// scrolls. Return sends; ⇧Return adds a line. Typing `@` lists what to point at: the playhead, the
+/// selected clips, the in/out range and the files in Media.
 private struct PromptBox: View {
+    @ObservedObject var model: EditorModel
     @Binding var text: String
     let placeholder: String
-    let focused: FocusState<Bool>.Binding
     let submit: () -> Void
 
     @State private var textHeight: Double = 0
+    /// What's typed after an `@` at the caret; nil when there's no list.
+    @State private var query: String?
+    @State private var picked = 0
+    @State private var controller = MentionController()
 
     static let baseHeight = 66.0
     static let maxHeight = baseHeight * 3
     private static let font = Font.system(size: 12.5)
 
     private var height: Double { min(Self.maxHeight, max(Self.baseHeight, textHeight)) }
+    private var options: [MentionOption] { query.map { MentionOption.list(for: $0, model: model) } ?? [] }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            box
+            if !options.isEmpty {
+                MentionList(options: options, picked: picked) { accept($0) }
+            }
+        }
+        .onChange(of: query) { _, _ in picked = options.firstIndex(where: \.enabled) ?? 0 }
+        .onAppear {
+            // `--magic-type "text"` (testing): types into the box, as a person would.
+            let args = CommandLine.arguments
+            if let k = args.firstIndex(of: "--magic-type"), args.count > k + 1 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    controller.textView?.insertText(args[k + 1], replacementRange: controller.textView?.selectedRange() ?? NSRange())
+                }
+            }
+        }
+    }
+
+    private var box: some View {
         ZStack(alignment: .topLeading) {
             if text.isEmpty {
                 Text(placeholder)
@@ -471,20 +490,8 @@ private struct PromptBox: View {
                     .padding(.vertical, 9)
                     .allowsHitTesting(false)
             }
-            TextEditor(text: $text)
-                .font(Self.font)
-                .foregroundStyle(Theme.text)
-                .scrollContentBackground(.hidden)
-                // A scroller whenever the text is taller than the box, not only while scrolling.
-                .scrollIndicators(.visible)
-                .padding(.horizontal, 5)
+            MentionField(text: $text, media: model.project.assets, onQuery: { query = $0 }, onKey: key, controller: controller)
                 .padding(.vertical, 9)
-                .focused(focused)
-                .onKeyPress(.return, phases: .down) { press in
-                    if press.modifiers.contains(.shift) || press.modifiers.contains(.option) { return .ignored }
-                    submit()
-                    return .handled
-                }
         }
         .frame(height: height, alignment: .topLeading)
         // The text laid out at this width, unseen and behind, to measure how tall it wants to be. (Behind,
@@ -506,6 +513,125 @@ private struct PromptBox: View {
         .clipped()
         .transaction { $0.animation = nil }
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.field))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.stroke))
+    }
+
+    private func key(_ k: MentionField.Key) -> Bool {
+        let list = options
+        let open = !list.isEmpty
+        let usable = list.indices.filter { list[$0].enabled }
+        switch k {
+        case .up, .down:
+            guard open else { return false }
+            guard !usable.isEmpty else { return true }
+            let at = usable.firstIndex(of: picked) ?? 0
+            picked = usable[(at + (k == .down ? 1 : usable.count - 1)) % usable.count]
+            return true
+        case .accept:
+            guard open else { return false }
+            if list.indices.contains(picked), list[picked].enabled { accept(list[picked]) } else { query = nil }
+            return true
+        case .escape:
+            guard open else { return false }
+            query = nil
+            return true
+        case .submit:
+            submit()
+            return true
+        }
+    }
+
+    private func accept(_ option: MentionOption) {
+        guard option.enabled else { return }
+        controller.insert(option.name)
+        query = nil
+    }
+}
+
+/// One thing the `@` list offers.
+private struct MentionOption: Identifiable {
+    let id: String
+    /// What goes in the text after the `@`.
+    let name: String
+    let symbol: String
+    let detail: String
+    let enabled: Bool
+
+    @MainActor static func list(for query: String, model: EditorModel) -> [MentionOption] {
+        let p = model.project
+        let selected = p.clips.filter { c in
+            model.selection.contains(c.id)
+                // A video's own sound selected with it isn't another clip.
+                && !(c.kind == .audio && c.linkID != nil && p.clips.contains { $0.linkID == c.linkID && $0.id != c.id && model.selection.contains($0.id) })
+        }.count
+        func clock(_ t: Double) -> String {
+            let s = max(0, t)
+            return String(format: "%d:%04.1f", Int(s) / 60, s.truncatingRemainder(dividingBy: 60))
+        }
+        let fixed: [MentionOption] = [
+            MentionOption(id: "playhead", name: "playhead", symbol: "line.diagonal", detail: clock(model.playhead), enabled: !p.clips.isEmpty),
+            MentionOption(id: "selected", name: "selected", symbol: "checkmark.square",
+                          detail: selected == 0 ? "Nothing selected" : "\(selected) clip\(selected == 1 ? "" : "s")", enabled: selected > 0),
+            MentionOption(id: "in-out", name: "in-out", symbol: "arrow.left.and.right",
+                          detail: p.playRange.map { "\(clock($0.start)) to \(clock($0.end))" } ?? "No range set", enabled: p.playRange != nil),
+        ]
+        let files: [MentionOption] = p.assets.map { a in
+            let symbol = switch a.kind {
+            case .video: "film"
+            case .image: "photo"
+            case .audio: "music.note"
+            }
+            let s = Int(a.duration.rounded())
+            return MentionOption(id: a.id.uuidString, name: a.name, symbol: symbol,
+                                 detail: a.kind == .image ? "Photo" : String(format: "%d:%02d", s / 60, s % 60), enabled: true)
+        }
+        let q = query.lowercased()
+        // A name with spaces can be typed in full; otherwise a space ends the `@`.
+        let starts = (fixed + files).filter { $0.name.lowercased().hasPrefix(q) }
+        let inside = q.isEmpty || q.contains(" ") ? [] : files.filter { !$0.name.lowercased().hasPrefix(q) && $0.name.lowercased().contains(q) }
+        return Array((starts + inside).prefix(7))
+    }
+}
+
+/// The `@` list under the box: arrows move, Return or Tab picks, a click picks.
+private struct MentionList: View {
+    let options: [MentionOption]
+    let picked: Int
+    let pick: (MentionOption) -> Void
+
+    var body: some View {
+        VStack(spacing: 1) {
+            ForEach(Array(options.enumerated()), id: \.element.id) { i, option in
+                Button { pick(option) } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: option.symbol)
+                            .font(.system(size: 10, weight: .semibold))
+                            .frame(width: 14)
+                            .foregroundStyle(Theme.textDim)
+                        Text("@" + option.name)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.accent)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 8)
+                        Text(option.detail)
+                            .font(.system(size: 11).monospacedDigit())
+                            .foregroundStyle(Theme.textFaint)
+                            .lineLimit(1)
+                    }
+                    .opacity(option.enabled ? 1 : 0.4)
+                    .padding(.horizontal, 8)
+                    .frame(height: 24)
+                    .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(i == picked && option.enabled ? Theme.ink.opacity(0.08) : .clear))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!option.enabled)
+            }
+        }
+        .padding(3)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.raised))
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.stroke))
     }
 }
@@ -639,7 +765,15 @@ struct MagicNoteView: View {
 /// then Local's own planner makes the edit. With a request, a note says what it did.
 @MainActor
 enum LocalMagic {
-    static func run(_ request: String, model: EditorModel) {
+    static func run(_ typed: String, model: EditorModel) {
+        // What they're pointing at, before Magic locks the window and clears the selection; and the
+        // request in plain words for Apple's model ("@selected" reads "the selected clips").
+        let pointers = MagicPointers.now(model)
+        let media = model.project.assets
+        let pointed = Set(MagicMention.find(in: typed, media: media).compactMap { m -> UUID? in
+            if case .media(let id) = m.mention { return id } else { return nil }
+        })
+        let request = MagicMention.plain(typed, media: media)
         // No request: Local's own improvement, with the same note at the end (Undo, Done).
         guard !request.isEmpty else {
             let started = Date()
@@ -657,7 +791,7 @@ enum LocalMagic {
         Task {
             var recipe: LocalRecipe
             do {
-                recipe = try await LocalBrain.recipe(for: request, media: model.project.assets)
+                recipe = try await LocalBrain.recipe(for: request, media: media, pointed: pointed)
                 // Stopped while it was reading: nothing to do.
                 guard run == MagicShow.runID else { return }
                 recipe.speed = LocalBrain.speed(in: request)
@@ -714,6 +848,39 @@ enum LocalMagic {
             }
             state.busy = false
             state.status = nil
+            // About the selected clips, the playhead or the in/out range: just that, directly.
+            if let pointedEdit = LocalPointed.plan(request: typed, recipe: recipe, pointers: pointers, project: model.project) {
+                if CommandLine.arguments.contains("--magic-local") {
+                    FileHandle.standardError.write("MAGIC LOCAL pointed: \(pointedEdit.said) (\(pointedEdit.plan?.tasks.count ?? 0) edits)\n".data(using: .utf8)!)
+                }
+                guard let plan = pointedEdit.plan, !plan.tasks.isEmpty else {
+                    MagicThinking.current?.end()
+                    MagicAgent.shared.note = MagicAgent.Note(agent: nil, text: pointedEdit.said, changed: false, detail: "On this Mac")
+                    return
+                }
+                let started = Date()
+                if let thinking = MagicThinking.current {
+                    MagicShow.fit(model: model, plan: plan)
+                    var final = plan.base
+                    for task in plan.tasks { task.edit.apply(&final, 1) }
+                    thinking.plan(final)
+                    let hold = min(2.0, max(0.8, thinking.secondsUntilDrawn + 0.35))
+                    try? await Task.sleep(nanoseconds: UInt64(hold * 1e9))
+                    guard run == MagicShow.runID else { return }
+                    thinking.handOver()
+                }
+                let played = MagicShow.play(model: model, plan: plan) {
+                    if CommandLine.arguments.contains("--magic-local") {
+                        FileHandle.standardError.write("MAGIC LOCAL said: \(pointedEdit.said)\n".data(using: .utf8)!)
+                    }
+                    note(pointedEdit.said, changed: true, detail: ["On this Mac", "\(Int(Date().timeIntervalSince(started).rounded()))s"])
+                }
+                if !played {
+                    model.mutate { q in for task in plan.tasks { task.edit.apply(&q, 1) } }
+                    note(pointedEdit.said, changed: true, detail: ["On this Mac"])
+                }
+                return
+            }
             // Nothing in it Local can do (and it isn't just "make it better"): say so, edit nothing.
             if recipe.isEmpty, !LocalBrain.isGeneral(request) {
                 MagicThinking.current?.end()

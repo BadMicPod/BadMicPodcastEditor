@@ -1229,6 +1229,42 @@ enum SelfTest {
                 && checked.frame == .unchanged && checked.cannotDo == "sound effects"
             good = good && checkOK
             detail += " | check=\(checkOK)"
+            // @ mentions: found by name (with or without the extension, any case), not inside an address;
+            // in plain words for Apple's model; Local's direct edits on what they point at.
+            do {
+                let file = MediaAsset(path: "/tmp/IMG_1607.MOV", name: "IMG_1607.MOV", kind: .video, duration: 10, width: 1920, height: 1080, fps: 30, hasAudio: false)
+                let lib = [file, MediaAsset(path: "/tmp/Beach day.mov", name: "Beach day.mov", kind: .video, duration: 10, width: 1920, height: 1080, fps: 30, hasAudio: false)]
+                let text = "Tighten @Selected, open on @img_1607 then @in-out and @Beach day.mov. me@x.com @nothing @playheads"
+                let found = MagicMention.find(in: text, media: lib).map(\.mention)
+                let findOK = found == [.selected, .media(file.id), .range, .media(lib[1].id)]
+                let plainOK = MagicMention.plain("cut @selected at @playhead with @IMG_1607", media: lib)
+                    == "cut the selected clips at the playhead with IMG_1607.MOV"
+                let first = p.clips.filter { $0.trackID == v1 }.min { $0.start < $1.start }!
+                let ptr = MagicPointers(playhead: 7, selected: [first.id], range: (2, 4))
+                func run(_ ask: String, _ r: LocalRecipe = LocalRecipe()) -> Project? {
+                    guard let o = LocalPointed.plan(request: ask, recipe: r, pointers: ptr, project: p), let plan = o.plan else { return nil }
+                    var q = plan.base
+                    for task in plan.tasks { task.edit.apply(&q, 1) }
+                    return q
+                }
+                let shots = { (q: Project) in q.clips.filter { $0.trackID == v1 }.sorted { $0.start < $1.start } }
+                let removed = run("@selected is no good").map(shots) ?? []
+                let removeOK = removed.count == 3 && !removed.contains { $0.id == first.id } && abs(removed[0].start) < 1e-6
+                let ended = run("end it at @playhead").map(\.duration) ?? 0
+                let endOK = abs(ended - 7) < 1e-6
+                let cut = run("remove @in-out").map(shots) ?? []
+                let rangeOK = cut.count == 5 && abs((cut.last?.end ?? 0) - 15) < 1e-6
+                var mono = LocalRecipe(); mono.look = "Mono"
+                let looked = run("make @selected black and white", mono)
+                let lookOK = looked?.clips.first { $0.id == first.id }?.grade?.look == "Mono"
+                    && looked?.clips.filter { $0.id != first.id && $0.grade?.look == "Mono" }.isEmpty == true
+                let wholeOK = LocalPointed.plan(request: "make it shorter", recipe: LocalRecipe(), pointers: ptr, project: p) == nil
+                let brief = MagicAgent.brief(request: "@selected is weak", project: p, pointers: ptr)
+                let briefOK = brief.contains("@selected means exactly the selected clips") && brief.contains("Playhead: 7.00s")
+                let mOK = findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
+                log("MENTIONS \(mOK ? "OK" : "FAIL") find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
+                good = good && mOK
+            }
             log("LOCAL IMPROVE \(good ? "OK" : "FAIL") \(detail)")
             ok = ok && good
         }

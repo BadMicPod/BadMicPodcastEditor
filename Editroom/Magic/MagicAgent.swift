@@ -186,7 +186,7 @@ final class MagicAgent: ObservableObject {
 
     // MARK: The brief
 
-    static func brief(request: String, project p: Project) -> String {
+    static func brief(request: String, project p: Project, pointers: MagicPointers? = nil) -> String {
         let ask = request.trimmingCharacters(in: .whitespacesAndNewlines)
         let onTimeline = p.clips.filter { $0.kind != .audio }
         let hasEdit = !onTimeline.isEmpty
@@ -202,6 +202,7 @@ final class MagicAgent: ObservableObject {
         } else {
             lines.append("What they asked for: \"\(ask)\"")
         }
+        if let pointers, let said = pointing(pointers, request: ask, project: p) { lines.append(said) }
         if hasEdit {
             lines.append(String(format: """
             The timeline already has an edit (%d clips, about %.0f seconds). Work on that edit: change it to do what they \
@@ -260,6 +261,55 @@ final class MagicAgent: ObservableObject {
         return lines.joined(separator: "\n\n")
     }
 
+    /// Where they were pointing when they asked (the playhead, the selection, the in/out range), and what
+    /// each @ in the request means. Used only when their words point at it.
+    static func pointing(_ ptr: MagicPointers, request: String, project p: Project) -> String? {
+        let mentions = MagicMention.find(in: request, media: p.assets)
+        guard !p.clips.isEmpty || !mentions.isEmpty else { return nil }
+        func t(_ s: Double) -> String { String(format: "%.2fs", s) }
+        func track(_ c: Clip) -> String {
+            if let i = p.videoTracks.firstIndex(where: { $0.id == c.trackID }) { return "V\(i + 1)" }
+            return "A\((p.audioTracks.firstIndex { $0.id == c.trackID } ?? 0) + 1)"
+        }
+        func clip(_ c: Clip) -> String { "\"\(p.name(of: c))\" on \(track(c)) \(t(c.start))-\(t(c.end)) (id \(c.id.uuidString))" }
+        var where_: [String] = []
+        if !p.clips.isEmpty {
+            let under = p.clips.filter { $0.start <= ptr.playhead + 1e-6 && ptr.playhead < $0.end - 1e-6 && $0.kind != .audio }
+                .sorted { p.trackOrder($0.trackID) < p.trackOrder($1.trackID) }
+            where_.append("- Playhead: \(t(ptr.playhead))" + (under.isEmpty ? "" : ", over " + under.map(clip).joined(separator: "; ")))
+            let sel = ptr.selected.compactMap { id in p.clips.first { $0.id == id } }
+            where_.append("- Selected: " + (sel.isEmpty ? "nothing" : "\(sel.count) clip\(sel.count == 1 ? "" : "s"): " + sel.map(clip).joined(separator: "; ")))
+            where_.append("- In/out range: " + (ptr.range.map { "\(t($0.start)) to \(t($0.end))" } ?? "none"))
+        }
+        var meant: [String] = []
+        for m in Set(mentions.map(\.mention)) {
+            switch m {
+            case .playhead: meant.append("@playhead means the playhead above.")
+            case .selected: meant.append(ptr.selected.isEmpty ? "@selected: nothing was selected, so do the best you can from the rest of what they said."
+                                                               : "@selected means exactly the selected clips above, no others.")
+            case .range: meant.append(ptr.range == nil ? "@in-out: no in/out range was set, so do the best you can from the rest of what they said."
+                                                        : "@in-out means the in/out range above.")
+            case .media(let id):
+                if let a = p.assets.first(where: { $0.id == id }) { meant.append("@\(a.name) means the library file \(a.name) (asset_id \(a.id.uuidString)).") }
+            }
+        }
+        var out = ""
+        if !where_.isEmpty {
+            out = "Where they were in the editor when they asked:\n" + where_.joined(separator: "\n") + "\n"
+        }
+        if !meant.isEmpty {
+            out += "They pointed with @: " + meant.sorted().joined(separator: " ") + " Act on exactly what they pointed at.\n"
+        }
+        if !where_.isEmpty {
+            out += """
+            Use the playhead, selection and range only when their words point at them ("here", "this clip", \
+            "these", "this spot", "from here on", or an @). Otherwise the request is about the whole edit, \
+            whatever happens to be selected.
+            """
+        }
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     // MARK: Running
 
     func start(request: String, with kind: Kind, model: EditorModel) {
@@ -273,6 +323,8 @@ final class MagicAgent: ObservableObject {
         let cli: URL? = kind == .claude ? AgentConnect.shared.claudeCLI : AgentConnect.shared.codexCLI
         guard let cli else { return }
         self.model = model
+        // What they're pointing at, before Magic locks the window and clears the selection.
+        let pointers = MagicPointers.now(model)
         // Nothing plays while the AI works out the edit.
         model.pause()
         stopped = false
@@ -291,11 +343,12 @@ final class MagicAgent: ObservableObject {
             guard await signIn(kind, cli) else { return done() }
             guard !stopped, let endpoint = MCPServer.shared.localEndpoint else { return done() }
             let d = MCPDraft.open(model.project, model: model)
+            d.playhead = pointers.playhead
             draft = d
             status = "\(kind.name) is thinking"
             // The thinking show, driven by its tool calls (see MCPHandler).
             MagicThinking.begin(model: model, name: kind.name, color: MCPTools.color(for: kind == .claude ? "Claude" : "ChatGPT"))
-            launch(kind, cli, url: "\(endpoint)?draft=\(d.token)", brief: Self.brief(request: request, project: model.project))
+            launch(kind, cli, url: "\(endpoint)?draft=\(d.token)", brief: Self.brief(request: request, project: model.project, pointers: pointers))
         }
     }
 

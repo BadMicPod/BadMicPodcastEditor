@@ -1,0 +1,174 @@
+import AppKit
+import SwiftUI
+
+/// The Magic prompt's text: plain text where each `@` mention (`@playhead`, `@selected`, `@in-out`,
+/// `@` + a library file) shows in the accent colour. Typing `@` reports what's typed after it, so the
+/// box can offer what to point at; the arrows, Return, Tab and esc work that list while it's open.
+struct MentionField: NSViewRepresentable {
+    enum Key { case up, down, accept, escape, submit }
+
+    @Binding var text: String
+    /// Library files, for colouring their names.
+    let media: [MediaAsset]
+    /// What's typed after an `@` at the caret, or nil when the caret isn't in one.
+    let onQuery: (String?) -> Void
+    /// A key while typing; true if it was used.
+    let onKey: (Key) -> Bool
+    let controller: MentionController
+
+    static let font = NSFont.systemFont(ofSize: 12.5)
+    static let mentionFont = NSFont.systemFont(ofSize: 12.5, weight: .medium)
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSTextView.scrollableTextView()
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.borderType = .noBorder
+        let tv = scroll.documentView as! NSTextView
+        tv.delegate = context.coordinator
+        tv.drawsBackground = false
+        tv.isRichText = false
+        tv.importsGraphics = false
+        tv.allowsUndo = true
+        tv.isAutomaticQuoteSubstitutionEnabled = false
+        tv.isAutomaticDashSubstitutionEnabled = false
+        tv.isAutomaticTextReplacementEnabled = false
+        tv.font = Self.font
+        tv.textColor = Theme.NS.text
+        tv.insertionPointColor = Theme.NS.text
+        tv.textContainerInset = .zero
+        tv.textContainer?.lineFragmentPadding = 5
+        tv.typingAttributes = context.coordinator.plainAttributes
+        tv.string = text
+        context.coordinator.recolor(tv)
+        controller.textView = tv
+        // The cursor in the box as soon as it's shown.
+        DispatchQueue.main.async { tv.window?.makeFirstResponder(tv); tv.setSelectedRange(NSRange(location: (tv.string as NSString).length, length: 0)) }
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        context.coordinator.parent = self
+        guard let tv = scroll.documentView as? NSTextView else { return }
+        controller.textView = tv
+        if tv.string != text {
+            // Set from outside (an idea, or cleared after sending): the cursor at the end, ready to type.
+            tv.string = text
+            tv.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+            tv.window?.makeFirstResponder(tv)
+            context.coordinator.recolor(tv)
+            context.coordinator.report(tv)
+        } else {
+            context.coordinator.recolor(tv)
+        }
+    }
+
+    @MainActor final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: MentionField
+        /// An `@` they closed the list on with esc: no list for it until they type somewhere else.
+        private var dismissed: Int?
+
+        init(_ parent: MentionField) { self.parent = parent }
+
+        var plainAttributes: [NSAttributedString.Key: Any] { [.font: MentionField.font, .foregroundColor: Theme.NS.text] }
+
+        func textDidChange(_ note: Notification) {
+            guard let tv = note.object as? NSTextView else { return }
+            parent.text = tv.string
+            recolor(tv)
+            report(tv)
+        }
+
+        func textViewDidChangeSelection(_ note: Notification) {
+            guard let tv = note.object as? NSTextView else { return }
+            report(tv)
+        }
+
+        func recolor(_ tv: NSTextView) {
+            guard let storage = tv.textStorage else { return }
+            let all = NSRange(location: 0, length: storage.length)
+            storage.beginEditing()
+            storage.setAttributes(plainAttributes, range: all)
+            for (r, _) in MagicMention.find(in: storage.string, media: parent.media) where NSMaxRange(r) <= storage.length {
+                storage.addAttributes([.font: MentionField.mentionFont, .foregroundColor: Theme.NS.accent], range: r)
+            }
+            storage.endEditing()
+            tv.typingAttributes = plainAttributes
+        }
+
+        /// The `@` the caret is in, and what's typed after it.
+        func report(_ tv: NSTextView) {
+            let found = Self.query(in: tv)
+            if let at = found?.at, at != dismissed { dismissed = nil }
+            let q = found.flatMap { $0.at == dismissed ? nil : $0.query }
+            parent.controller.at = q == nil ? nil : found?.at
+            DispatchQueue.main.async { self.parent.onQuery(q) }
+        }
+
+        static func query(in tv: NSTextView) -> (at: Int, query: String)? {
+            let sel = tv.selectedRange()
+            guard sel.length == 0 else { return nil }
+            let s = tv.string as NSString
+            var i = sel.location - 1
+            // Back to the `@`, on this line and not far.
+            while i >= 0, sel.location - i <= 60 {
+                let c = s.character(at: i)
+                if c == 0x0A || c == 0x0D { return nil }
+                if c == 0x40 {
+                    if i > 0, let u = Unicode.Scalar(s.character(at: i - 1)), CharacterSet.alphanumerics.contains(u) { return nil }
+                    return (i, s.substring(with: NSRange(location: i + 1, length: sel.location - i - 1)))
+                }
+                i -= 1
+            }
+            return nil
+        }
+
+        func textView(_ tv: NSTextView, doCommandBy selector: Selector) -> Bool {
+            let shift = NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false
+            switch selector {
+            case #selector(NSResponder.moveUp(_:)): return parent.onKey(.up)
+            case #selector(NSResponder.moveDown(_:)): return parent.onKey(.down)
+            case #selector(NSResponder.insertTab(_:)): return parent.onKey(.accept)
+            case #selector(NSResponder.insertNewline(_:)):
+                if parent.onKey(.accept) { return true }
+                // ⇧Return adds a line; Return sends.
+                if shift { return false }
+                return parent.onKey(.submit)
+            case #selector(NSResponder.cancelOperation(_:)):
+                if parent.onKey(.escape) {
+                    dismissed = parent.controller.at
+                    parent.controller.at = nil
+                    DispatchQueue.main.async { self.parent.onQuery(nil) }
+                    return true
+                }
+                // Not the text view's word completion: esc goes on to whatever holds the box (the popover closes).
+                _ = tv.nextResponder?.tryToPerform(#selector(NSResponder.cancelOperation(_:)), with: nil)
+                return true
+            default: return false
+            }
+        }
+    }
+}
+
+/// Lets the box put a picked mention in place of what's typed after the `@`.
+@MainActor final class MentionController {
+    weak var textView: NSTextView?
+    /// Where the `@` being typed is.
+    var at: Int?
+
+    func insert(_ name: String) {
+        guard let tv = textView, let at else { return }
+        let caret = tv.selectedRange().location
+        guard caret >= at else { return }
+        let s = tv.string as NSString
+        // A space after it, unless one's there already.
+        let spaced = caret < s.length && s.character(at: caret) == 0x20 ? "" : " "
+        tv.insertText("@" + name + spaced, replacementRange: NSRange(location: at, length: caret - at))
+        if spaced.isEmpty { tv.setSelectedRange(NSRange(location: at + (name as NSString).length + 2, length: 0)) }
+        self.at = nil
+        tv.window?.makeFirstResponder(tv)
+    }
+}
