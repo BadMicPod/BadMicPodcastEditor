@@ -264,14 +264,19 @@ final class MagicShow: NSObject {
                 // Long enough to see the scouting (cached analysis is instant).
                 let watched = CACurrentMediaTime() - started
                 if watched < 2.4 { try? await Task.sleep(nanoseconds: UInt64((2.4 - watched) * 1e9)) }
-                // A moment to sketch the coming cut, then the cursors hand over to the swarm.
+                // The timeline laid out for the finished cut first, so the sketch is where the clips will land.
+                Self.fit(model: model, plan: plan)
                 var final = plan.base
                 for task in plan.tasks { task.edit.apply(&final, 1) }
                 thinking.plan(final)
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                // Until the sketch is drawn, and a beat to take it in; then the swarm sets off as the
+                // thinking show fades around it.
+                let hold = min(2.0, max(0.8, thinking.secondsUntilDrawn + 0.35))
+                try? await Task.sleep(nanoseconds: UInt64(hold * 1e9))
                 guard run == runID else { return }
                 state.status = nil
-                thinking.end { launch() }
+                thinking.handOver()
+                launch()
             } else {
                 launch()
             }
@@ -434,6 +439,8 @@ final class MagicShow: NSObject {
     /// The show runs slower than it's planned, so it lasts about this long.
     static let targetLength = 7.0
     private var pace = 1.0
+    /// Until then (the first steps) the show plays in real time; after, at `pace`.
+    private var quickEnd = 0.0
     /// Timeline zoom during the show, and zoomed to fit the finished cut at the end.
     private var startPPS: CGFloat = 1
     /// Where a transition menu's Dissolve item is, from where the menu was opened.
@@ -494,7 +501,12 @@ final class MagicShow: NSObject {
     }
 
     private func fitTimeline() {
-        // The whole cut as it will be, and the rough cut on its way there.
+        startPPS = Self.fit(model: model, plan: plan)
+    }
+
+    /// Lays the timeline out for a plan's finished cut (and the rough cut on its way there). Returns the zoom.
+    @discardableResult
+    static func fit(model: EditorModel, plan: MagicPlan) -> CGFloat {
         var final = plan.base
         for task in plan.tasks { task.edit.apply(&final, 1) }
         let total = max(final.duration, plan.base.duration, plan.tasks.compactMap { task -> Double? in
@@ -506,7 +518,7 @@ final class MagicShow: NSObject {
         model.setView(rowHeight: min(62, fit))
         model.setView(pps: (model.view.viewWidth - 60) / CGFloat(total), scrollX: 0)
         model.centerRows()
-        startPPS = model.view.pps
+        return model.view.pps
     }
 
     private func startShow() {
@@ -577,31 +589,38 @@ final class MagicShow: NSObject {
         // Each edit gets a moment's thought before it starts, so cursors don't move in step. The
         // cursors on one grade panel think together and keep their tight stagger.
         var panelThought: [UUID: Double] = [:]
-        let think = tasks.map { t -> Double in
+        // The first step or two start at once and at full speed, so the edit begins the moment the
+        // thinking show hands over.
+        let quick = agentMode ? [] : Set(tasks.indices.filter { tasks[$0].after.isEmpty && !tasks[$0].edit.isGradeCard }
+            .sorted { tasks[$0].delay < tasks[$1].delay }.prefix(2))
+        for a in agents.prefix(2) { a.speed = max(1, a.speed) }
+        let think = tasks.indices.map { i -> Double in
+            let t = tasks[i]
             if t.edit.isGradeCard, let id = t.edit.clipID {
                 if let v = panelThought[id] { return v }
                 let v = rng.next() * 0.35
                 panelThought[id] = v
                 return v
             }
-            return agentMode ? 0 : pow(rng.next(), 1.5) * 0.45
+            return agentMode || quick.contains(i) ? 0 : pow(rng.next(), 1.5) * 0.45
         }
         var free = agents.map(\.birth)
         var pos = Array(repeating: spawn, count: count)
         var used = Array(repeating: false, count: count)
         var end = Array(repeating: -1.0, count: tasks.count)
         var remaining = Set(tasks.indices)
+        var firstDone = 0.0
         slots = []
 
-        func travel(_ a: Int, _ from: CGPoint, _ to: CGPoint, at t: Double) -> Double {
+        func travel(_ a: Int, _ from: CGPoint, _ to: CGPoint, at t: Double, quick: Bool) -> Double {
             let d = Double(hypot(to.x - from.x, to.y - from.y))
-            return min(0.65, max(0.14, d / (2200 * agents[a].speed / pace(at: t))))
+            return min(0.65, max(0.14, d / (2200 * agents[a].speed / (quick ? 1 : pace(at: t)))))
         }
 
         while !remaining.isEmpty {
             var best: (task: Int, ready: Double)?
             for i in remaining where tasks[i].after.allSatisfy({ end[$0] >= 0 }) {
-                var ready = (tasks[i].after.map { end[$0] }.max() ?? 0) + tasks[i].delay + think[i]
+                var ready = (tasks[i].after.map { end[$0] }.max() ?? 0) + (quick.contains(i) ? 0 : tasks[i].delay) + think[i]
                 if tasks[i].edit.isGradeCard, let id = tasks[i].edit.clipID {
                     // Waits for its panel to be in the inspector, or for a place to open up.
                     if let card = cards[id] { ready = max(ready, card.appear + 0.18 + tasks[i].delay) }
@@ -622,13 +641,14 @@ final class MagicShow: NSObject {
             // The cursor that can get there first; a cursor already out beats a new one.
             var pick = 0, pickStart = Double.infinity, pickTravel = 0.0
             for a in 0..<count {
-                let tr = travel(a, pos[a], grab, at: free[a])
+                let tr = travel(a, pos[a], grab, at: free[a], quick: quick.contains(ti))
                 let start = max(ready, free[a] + tr)
                 let better = start < pickStart - 1e-6 || (abs(start - pickStart) <= 1e-6 && used[a] && !used[pick])
                 if better { pick = a; pickStart = start; pickTravel = tr }
             }
-            let perform = edit.performTime * pace(at: pickStart) * (agentMode ? 1 : edit.isGradeCard ? 0.85 + rng.next() * 0.3 : 0.7 + rng.next() * 0.8)
+            let perform = edit.performTime * (quick.contains(ti) ? 1 : pace(at: pickStart)) * (agentMode ? 1 : edit.isGradeCard ? 0.85 + rng.next() * 0.3 : 0.7 + rng.next() * 0.8)
             let finish = pickStart + perform
+            if quick.contains(ti) { firstDone = max(firstDone, finish) }
             slots.append(Slot(edit: edit, agent: pick, travelStart: pickStart - pickTravel, start: pickStart, end: finish))
             agents[pick].slots.append(slots.count - 1)
             free[pick] = finish + 0.03
@@ -662,7 +682,9 @@ final class MagicShow: NSObject {
         if let first = cards.values.map(\.appear).min(), let last = cards.values.map(\.vanish).max() {
             backdropSpan = (first - 0.15, last + 0.3)
         }
-        pace = agentMode ? 1 : max(1, Self.targetLength / showEnd)
+        // Stretched to last about targetLength, but not the first steps: those play in real time.
+        quickEnd = min(showEnd, firstDone)
+        pace = agentMode || showEnd <= quickEnd ? 1 : max(1, (Self.targetLength - quickEnd) / (showEnd - quickEnd))
     }
 
     /// How slow things are at a moment: the show starts unhurried and speeds up; an agent works at
@@ -1058,7 +1080,10 @@ final class MagicShow: NSObject {
 
     // MARK: Frames
 
-    private var now: Double { (CACurrentMediaTime() - t0) / pace + skip }
+    private var now: Double {
+        let r = CACurrentMediaTime() - t0
+        return (r <= quickEnd ? r : quickEnd + (r - quickEnd) / pace) + skip
+    }
 
     private func fastForward() {
         let t = now

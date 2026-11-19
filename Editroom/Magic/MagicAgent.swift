@@ -587,8 +587,13 @@ final class MagicAgent: ObservableObject {
                 self?.note = Note(agent: kind, text: said, changed: true, detail: detail)
             }
         }
-        // The thinking cursors hand over to the swarm.
-        if let thinking = MagicThinking.current { thinking.end { play() } } else { play() }
+        // The thinking show hands over to the swarm, which sets off as it fades: the timeline laid out
+        // for the finished cut first, so the sketched clips move with it to where they'll land.
+        if let thinking = MagicThinking.current {
+            MagicShow.fit(model: model, plan: plan)
+            thinking.handOver()
+        }
+        play()
     }
 
     private var noteDetail: String {

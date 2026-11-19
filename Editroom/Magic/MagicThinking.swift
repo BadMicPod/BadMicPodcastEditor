@@ -14,6 +14,8 @@ import QuartzCore
 @MainActor
 final class MagicThinking: NSObject {
     static private(set) var current: MagicThinking?
+    /// A show that has handed over to the swarm: its outlines stay until their clips land.
+    static private var leaving: MagicThinking?
 
     enum Stage: Int, Comparable {
         case looking, analyzing, thinking
@@ -39,13 +41,19 @@ final class MagicThinking: NSObject {
         var end: Double { start + sweep + 0.55 }
     }
 
+    /// A clip of the coming edit, outlined where it will be. It follows the timeline's layout, and once
+    /// the swarm has taken over it stays until the real clip lands on it.
     private final class Ghost {
-        let rect: CGRect
+        let clip: Clip
+        let project: Project
+        var size = CGSize.zero
         let shape = CAShapeLayer()
         let fill = CALayer()
         var progress = 0.0
         let born: Double
-        init(_ r: CGRect, born: Double) { rect = r; self.born = born }
+        /// When its clip landed (or the show ended), and it began to go.
+        var landed: Double?
+        init(_ clip: Clip, in project: Project, born: Double) { self.clip = clip; self.project = project; self.born = born }
     }
 
     private weak var host: NSWindow?
@@ -88,6 +96,7 @@ final class MagicThinking: NSObject {
     @discardableResult
     static func begin(model: EditorModel, name: String, color: NSColor) -> MagicThinking? {
         current?.cancel()
+        leaving?.cancel()
         guard let window = TimelineCanvas.current?.window, window.isVisible else { return nil }
         let t = MagicThinking(window: window, model: model, name: name, color: color)
         current = t
@@ -175,6 +184,26 @@ final class MagicThinking: NSObject {
         if done == nil { removeMonitor() }
     }
 
+    /// Hands over to the swarm, which starts now, while this fades out around it: the dimming, scans and
+    /// dots go; each outline stays until its clip lands. The swarm locks the editor from here.
+    func handOver() {
+        guard leaveDone == nil, fadeFrom == nil else { return }
+        fadeFrom = now
+        handedOver = true
+        removeMonitor()
+        if Self.current === self {
+            Self.current = nil
+            Self.leaving = self
+        }
+    }
+
+    private var handedOver = false
+
+    /// How long until the outlines drawn so far are fully drawn.
+    var secondsUntilDrawn: Double { max(0, (ghosts.map(\.born).max() ?? now) + Self.ghostDraw - now) }
+    private static let ghostDraw = 0.7
+    private static let ghostLeave = 0.3
+
     /// When a blocked click or key last nudged the hint.
     private var nudged = -10.0
     private func nudge() { nudged = now }
@@ -193,6 +222,10 @@ final class MagicThinking: NSObject {
         if Self.current === self {
             Self.current = nil
             MagicState.shared.stage = nil
+        } else if Self.leaving === self {
+            Self.leaving = nil
+            // Handed over but nothing played: the editor is free again.
+            if Self.current == nil, !MagicShow.isRunning { MagicState.shared.stage = nil }
         }
     }
 
@@ -282,15 +315,12 @@ final class MagicThinking: NSObject {
                   r.width > 3 else { continue }
             ghostKeys.append(key)
             // One after another, a little apart.
-            let g = Ghost(r.insetBy(dx: 1, dy: 3), born: max(now, (ghosts.last?.born ?? 0) + 0.12))
-            g.shape.path = CGPath(roundedRect: CGRect(origin: .zero, size: g.rect.size), cornerWidth: 6, cornerHeight: 6, transform: nil)
-            g.shape.frame = g.rect
+            let g = Ghost(c, in: project, born: max(now, (ghosts.last?.born ?? 0) + 0.12))
             g.shape.fillColor = nil
             g.shape.strokeColor = NSColor.white.withAlphaComponent(0.65).cgColor
             g.shape.lineWidth = 1.5
             g.shape.lineDashPattern = [7, 6]
             g.shape.strokeEnd = 0
-            g.fill.frame = g.rect
             g.fill.cornerRadius = 6
             g.fill.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
             g.fill.opacity = 0
@@ -363,7 +393,12 @@ final class MagicThinking: NSObject {
         updateGhosts(t, fade: fade)
         CATransaction.commit()
 
-        if let f = fadeFrom, now - f >= Self.fadeTime {
+        if handedOver {
+            // Gone once it has faded and every outline has gone with its clip.
+            if let f = fadeFrom, now - f >= Self.fadeTime, ghosts.allSatisfy({ ($0.landed ?? .infinity) + Self.ghostLeave <= t }) {
+                cancel()
+            }
+        } else if let f = fadeFrom, now - f >= Self.fadeTime {
             let done = leaveDone
             leaveDone = nil
             cancel()
@@ -454,14 +489,35 @@ final class MagicThinking: NSObject {
         field.setNeedsDisplay()
     }
 
-    /// Ghosts draw themselves, one after another.
+    /// Ghosts draw themselves, one after another, where their clips will be on the timeline as it's laid
+    /// out now. After the handover each one goes as its real clip lands on it (all of them if the show
+    /// ends or stops).
     private func updateGhosts(_ t: Double, fade: Double) {
+        let canvas = TimelineCanvas.current
+        let clips = handedOver ? (model?.project.clips ?? []) : []
+        let showing = MagicShow.isRunning
         for g in ghosts {
-            g.progress = min(1, max(0, (t - g.born) / 0.7))
+            if handedOver, g.landed == nil {
+                let there = clips.contains { c in
+                    c.trackID == g.clip.trackID && abs(c.start - g.clip.start) < 0.02 && abs(c.duration - g.clip.duration) < 0.02
+                }
+                if there || !showing { g.landed = t }
+            }
+            if let canvas, let r = canvas.magicWindowRect(of: g.clip, in: g.project).map(toOverlay)?.insetBy(dx: 1, dy: 3) {
+                if r.size != g.size {
+                    g.size = r.size
+                    g.shape.path = CGPath(roundedRect: CGRect(origin: .zero, size: r.size), cornerWidth: min(6, r.width / 2),
+                                          cornerHeight: min(6, r.height / 2), transform: nil)
+                }
+                g.shape.frame = r
+                g.fill.frame = r
+            }
+            g.progress = min(1, max(0, (t - g.born) / Self.ghostDraw))
             g.shape.strokeEnd = g.progress
             g.shape.lineDashPhase = CGFloat(-t * 24)
-            g.shape.opacity = Float(fade)
-            g.fill.opacity = Float(max(0, (g.progress - 0.6) / 0.4) * fade)
+            let alpha = handedOver ? max(0, 1 - (t - (g.landed ?? t)) / Self.ghostLeave) : fade
+            g.shape.opacity = Float(alpha)
+            g.fill.opacity = Float(max(0, (g.progress - 0.6) / 0.4) * alpha)
         }
     }
 
