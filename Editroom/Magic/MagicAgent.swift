@@ -290,11 +290,14 @@ final class MagicAgent: ObservableObject {
             let d = MCPDraft.open(model.project, model: model)
             draft = d
             status = "\(kind.name) is thinking"
+            // The thinking show, driven by its tool calls (see MCPHandler).
+            MagicThinking.begin(model: model, name: kind.name, color: MCPTools.color(for: kind == .claude ? "Claude" : "ChatGPT"))
             launch(kind, cli, url: "\(endpoint)?draft=\(d.token)", brief: Self.brief(request: request, project: model.project))
         }
     }
 
     func stop() {
+        MagicThinking.current?.end()
         stopped = true
         process?.terminate()
         if process == nil { done() }
@@ -535,6 +538,7 @@ final class MagicAgent: ObservableObject {
         let stderr = String(data: errorText, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         log(String(format: "MAGIC AI finished code %d in %.0fs, %d tool calls, %d edits; said: %@", code, seconds,
                    draft?.calls ?? 0, edits.count, lastMessage))
+        if edits.isEmpty || !NSApp.isActive { MagicThinking.current?.end() }
         if let failure, edits.isEmpty {
             log("MAGIC AI failure: \(failure) \(stderr.suffix(400))")
             return alert("\(kind.name) couldn't make the edit", String(failure.prefix(600)))
@@ -570,13 +574,17 @@ final class MagicAgent: ObservableObject {
         let plan = MCPDraft.plan(base: model.project, edits: edits)
         log("MAGIC AI playing \(plan.tasks.count) edits")
         let detail = noteDetail
-        let shown = MagicShow.play(model: model, plan: plan) { [weak self] in
-            self?.note = Note(agent: kind, text: said, changed: true, detail: detail)
+        let play = { [weak self] in
+            let shown = MagicShow.play(model: model, plan: plan) { [weak self] in
+                self?.note = Note(agent: kind, text: said, changed: true, detail: detail)
+            }
+            if !shown {
+                model.mutate { p in for e in edits { e.apply(&p, 1) } }
+                self?.note = Note(agent: kind, text: said, changed: true, detail: detail)
+            }
         }
-        if !shown {
-            model.mutate { p in for e in edits { e.apply(&p, 1) } }
-            note = Note(agent: kind, text: said, changed: true, detail: noteDetail)
-        }
+        // The thinking cursors hand over to the swarm.
+        if let thinking = MagicThinking.current { thinking.end { play() } } else { play() }
     }
 
     private var noteDetail: String {

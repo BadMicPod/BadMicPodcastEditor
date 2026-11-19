@@ -607,6 +607,8 @@ enum LocalMagic {
         guard !state.busy, !MagicShow.isRunning else { return }
         state.busy = true
         state.status = "Reading your request"
+        // The thinking show while Apple's model reads it.
+        MagicThinking.begin(model: model, name: "Local", color: NSColor(white: 0.95, alpha: 1))?.think()
         Task {
             var recipe: LocalRecipe
             do {
@@ -629,6 +631,7 @@ enum LocalMagic {
             } catch {
                 state.busy = false
                 state.status = nil
+                MagicThinking.current?.end()
                 let a = NSAlert()
                 a.messageText = "Local couldn't read that"
                 a.informativeText = (error as? LocalBrain.Failure)?.message ?? error.localizedDescription
@@ -642,6 +645,7 @@ enum LocalMagic {
             state.status = nil
             // Nothing in it Local can do (and it isn't just "make it better"): say so, edit nothing.
             if recipe.isEmpty, !LocalBrain.isGeneral(request) {
+                MagicThinking.current?.end()
                 let what = recipe.cannotDo.isEmpty ? "that" : recipe.cannotDo
                 MagicAgent.shared.note = MagicAgent.Note(agent: nil, text: """
                     Local can't do \(what). It can change the length, the pace, the look, the music, the frame shape \

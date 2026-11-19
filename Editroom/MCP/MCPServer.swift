@@ -258,6 +258,20 @@ enum MCPHandler {
             guard let model = draft?.model ?? MCPServer.shared.model else {
                 return ok(MCPTools.failure("Editroom isn't ready yet."))
             }
+            // A Magic run's tool calls drive its thinking show.
+            if let draft, let show = MagicThinking.current {
+                switch name {
+                case "look_at_media", "analyze_media":
+                    if let id = (args["asset_id"] as? String).flatMap(UUID.init(uuidString:)) { show.focus(asset: id) }
+                case "list_media", "get_project", "list_looks": show.scout(assets: nil)
+                default: _ = draft
+                }
+            }
+            defer {
+                let edits: Set<String> = ["add_clip", "add_title", "move_clip", "trim_clip", "split_clip", "delete_clips", "set_speed",
+                                          "set_grade", "set_audio", "set_transition", "set_sequence", "add_track", "history", "download_media"]
+                if let draft, edits.contains(name) { MagicThinking.current?.plan(draft.project) }
+            }
             do {
                 let content = try await MCPTools.call(name, args, model: model, client: client, draft: draft)
                 return ok(["content": content, "isError": false])

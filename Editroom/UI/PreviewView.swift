@@ -94,7 +94,7 @@ struct PreviewView: View {
                 let scale = NSScreen.main?.backingScaleFactor ?? 2
                 let w = zoom.map { CGFloat(Double(model.project.width) * $0) / scale } ?? fit
                 let h = w / aspect
-                let viewer = picture(w: w, h: h)
+                let viewer = picture(w: w, h: h).background(MagicAnchor(key: "viewer"))
                 if w <= geo.size.width + 0.5 && h <= geo.size.height + 0.5 {
                     viewer.position(x: geo.size.width / 2, y: geo.size.height / 2)
                 } else {

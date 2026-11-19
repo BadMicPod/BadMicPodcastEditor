@@ -132,6 +132,9 @@ final class MagicShow: NSObject {
             : librarySong
         state.busy = true
         state.status = "Watching"
+        // The thinking show while it studies the clips (one already running, for a request being read, carries on).
+        let thinking = MagicThinking.current ?? MagicThinking.begin(model: model, name: "Local", color: NSColor(white: 0.95, alpha: 1))
+        thinking?.scout(assets: Set(visuals.map(\.id)))
         Task { @MainActor in
             let started = CACurrentMediaTime()
             let found = await analyze(visuals, song: song) { done, total in
@@ -184,16 +187,34 @@ final class MagicShow: NSObject {
             guard let plan, current == nil, let canvas = TimelineCanvas.current, let window = canvas.window else {
                 state.busy = false
                 state.status = nil
+                MagicThinking.current?.end()
                 if let done, plan == nil { done(said.isEmpty ? "Magic couldn't find anything to make a cut from." : said) } else { NSSound.beep() }
                 return
             }
-            // Spawn from the click if it was quick; after a wait, from the button.
-            let fromClick = CACurrentMediaTime() - started < 1.5 ? click : nil
-            let show = MagicShow(model: model, plan: plan, window: window, canvas: canvas, click: fromClick, performer: nil)
-            if let done { show.onFinish = { done(said) } }
-            current = show
-            state.status = nil
-            show.begin()
+            // Spawn from the click if it was quick; after a wait (or after the thinking show), from the button.
+            let fromClick = CACurrentMediaTime() - started < 1.5 && MagicThinking.current == nil ? click : nil
+            let launch = {
+                let show = MagicShow(model: model, plan: plan, window: window, canvas: canvas, click: fromClick, performer: nil)
+                if let done { show.onFinish = { done(said) } }
+                current = show
+                state.status = nil
+                show.begin()
+            }
+            if let thinking = MagicThinking.current {
+                // Long enough to see the scouting (cached analysis is instant).
+                let watched = CACurrentMediaTime() - started
+                if watched < 1.8 { try? await Task.sleep(nanoseconds: UInt64((1.8 - watched) * 1e9)) }
+                // A moment to sketch the coming cut, then the cursors hand over to the swarm.
+                state.status = "Planning"
+                var final = plan.base
+                for task in plan.tasks { task.edit.apply(&final, 1) }
+                thinking.plan(final)
+                try? await Task.sleep(nanoseconds: 1_700_000_000)
+                state.status = nil
+                thinking.end { launch() }
+            } else {
+                launch()
+            }
         }
     }
 
