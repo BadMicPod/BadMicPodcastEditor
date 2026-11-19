@@ -253,6 +253,11 @@ struct MagicButton: View {
     @ObservedObject var ai = MagicAgent.shared
     @ObservedObject var connections = AgentConnect.shared
     @State private var hovering = false
+    /// The button's width as its text needs, and the width it keeps while the pointer is on it during
+    /// work: the status changes width as it goes, and a button that shrank out from under the pointer
+    /// would lose its hover, show the status again, grow back, and so on.
+    @State private var natural: CGFloat = 0
+    @State private var held: CGFloat?
 
     private var hasMedia: Bool { model.project.assets.contains { $0.kind != .audio } || !model.project.clips.isEmpty }
     /// The same stage words as the cursors' tags ("Claude is thinking", "Analyzing 3 of 5", "Editing").
@@ -263,12 +268,17 @@ struct MagicButton: View {
         }
         return ai.ready ?? state.status ?? state.stage
     }
-    /// While the AI works, hovering offers Stop in the same space (the button keeps its size, so the
-    /// pointer never slips off it).
+    /// While the AI works, hovering offers Stop in the same space (the button keeps its width while
+    /// hovered, so the pointer never slips off it).
     private var offerStop: Bool { working && hovering }
     /// Anything Magic is doing that Stop (or esc) can stop: an AI working, Local reading or studying, the
     /// thinking show, or the swarm.
     private var working: Bool { ai.running || state.busy || state.stage != nil }
+
+    /// Hovered while Magic works: keep today's width; otherwise fit the text again (eased).
+    private func hold() {
+        held = hovering && working ? (held ?? natural) : nil
+    }
 
     var body: some View {
         Button {
@@ -310,6 +320,12 @@ struct MagicButton: View {
                 .opacity(offerStop ? 1 : 0)
             }
             .padding(.horizontal, 11)
+            .background(GeometryReader { g in
+                Color.clear
+                    .onAppear { natural = g.size.width }
+                    .onChange(of: g.size.width) { _, w in natural = w }
+            })
+            .frame(width: held)
             .frame(height: 26)
             .background(Capsule().fill(Color.white.opacity(hovering ? 0.14 : 0.08)))
             .overlay(Capsule().strokeBorder(Color.white.opacity(0.05)))
@@ -320,8 +336,13 @@ struct MagicButton: View {
         .background(MagicAnchor(key: "magicButton"))
         .disabled(!working && (!hasMedia || MagicShow.isRunning))
         .opacity(hasMedia || working ? 1 : 0.4)
-        .onHover { hovering = $0 }
+        .onHover { on in
+            hovering = on
+            hold()
+        }
+        .onChange(of: working) { _, _ in hold() }
         .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(.easeOut(duration: 0.2), value: held)
         // Which AIs are connected can change in AI Agents or in the apps themselves.
         .onAppear { connections.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
