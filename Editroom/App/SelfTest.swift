@@ -910,6 +910,8 @@ enum SelfTest {
                 let (sped, speedError) = await call("set_speed", ["clip_id": b, "speed": 4.0])
                 _ = await call("set_sequence", ["width": 1080, "height": 1920])
                 _ = await call("delete_clips", ["clip_ids": [a], "ripple": true])
+                // Two ripple deletes in a row: played as plain deletes side by side, then "Close gaps".
+                _ = await call("delete_clips", ["clip_ids": [c], "ripple": true])
                 let (_, refused) = await call("save_project", [:])
                 let (_, frameError) = await call("get_frame", ["time": 1.0])
                 let untouched = m.project == before

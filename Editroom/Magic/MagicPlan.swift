@@ -216,6 +216,49 @@ struct MagicTask {
 struct MagicPlan {
     var base: Project
     var tasks: [MagicTask]
+
+    /// The same edit, in the steps a person would take: a trim or a delete across several clips becomes
+    /// one per clip (a video and its linked audio stay one step, as they'd be one click), each with its
+    /// own cursor, side by side. Placing, the blade and moves stay whole: a moved group is dragged
+    /// together, and moving its clips one at a time would let them run over each other on the way.
+    func inSteps() -> MagicPlan {
+        // Every clip's link, including clips made along the way.
+        var links: [UUID: UUID] = [:]
+        var p = base
+        func note() { for c in p.clips { if let l = c.linkID { links[c.id] = l } } }
+        note()
+        for t in tasks { t.edit.apply(&p, 1); note() }
+        func groups(_ ids: [UUID]) -> [[UUID]] {
+            var out: [[UUID]] = []
+            var at: [UUID: Int] = [:]
+            for id in ids {
+                if let l = links[id], let i = at[l] { out[i].append(id); continue }
+                if let l = links[id] { at[l] = out.count }
+                out.append([id])
+            }
+            return out
+        }
+        var out: [MagicTask] = []
+        var newIndex: [[Int]] = []
+        for t in tasks {
+            let parts: [MagicEdit]
+            switch t.edit {
+            case .trimHead(let ids, let from, let to): parts = groups(ids).map { .trimHead($0, from: from, to: to) }
+            case .trimTail(let ids, let from, let to): parts = groups(ids).map { .trimTail($0, from: from, to: to) }
+            case .remove(let ids, let ripple): parts = groups(ids).map { .remove($0, ripple: ripple) }
+            default: parts = [t.edit]
+            }
+            let after = t.after.flatMap { newIndex[$0] }
+            var made: [Int] = []
+            for (k, e) in parts.enumerated() {
+                made.append(out.count)
+                // Side by side, a touch apart.
+                out.append(MagicTask(edit: e, after: after, delay: t.delay + Double(k) * 0.07))
+            }
+            newIndex.append(made)
+        }
+        return MagicPlan(base: base, tasks: out)
+    }
 }
 
 /// Turns an edit decision into the edits the cursors perform, the way an editor would build it by

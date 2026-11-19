@@ -81,14 +81,58 @@ final class MCPDraft {
 
     // MARK: Playing it back
 
+    /// The edits in the steps a person would take. Several ripple deletes in a row each wait for the one
+    /// before (each moves everything after it), so one cursor would do them one by one. A person
+    /// deletes them all, then closes the gaps: so each becomes a plain delete, with its own cursor, side
+    /// by side, and one "Close gaps" step after them slides the rest along to exactly where the ripple
+    /// deletes would have left it.
+    static func inSteps(base: Project, edits: [MagicEdit]) -> [MagicEdit] {
+        var out: [MagicEdit] = []
+        var p = base
+        var i = 0
+        while i < edits.count {
+            var run: [[UUID]] = []
+            var j = i
+            while j < edits.count, case .remove(let ids, true) = edits[j] { run.append(ids); j += 1 }
+            guard run.count >= 2 else {
+                edits[i].apply(&p, 1)
+                out.append(edits[i])
+                i += 1
+                continue
+            }
+            // Where everything ends up after the ripple deletes, and what's left after plain ones.
+            var rippled = p
+            for ids in run { rippled.remove(ids: Set(ids), ripple: true) }
+            var lifted = p
+            for ids in run { lifted.remove(ids: Set(ids), ripple: false) }
+            let landing = Dictionary(rippled.clips.map { ($0.id, $0.start) }, uniquingKeysWith: { a, _ in a })
+            let moving = lifted.clips.filter { c in landing[c.id].map { abs($0 - c.start) > 1e-9 } ?? false }
+            for ids in run { out.append(.remove(ids, ripple: false)) }
+            // The first clip to slide is the one it clicks on.
+            if let first = moving.min(by: { ($0.start, $0.trackID.uuidString) < ($1.start, $1.trackID.uuidString) }) {
+                out.append(.change(first.id, "Close gaps") { project in
+                    for k in project.clips.indices {
+                        if let start = landing[project.clips[k].id] { project.clips[k].start = start }
+                    }
+                })
+            }
+            p = rippled
+            i = j
+        }
+        return out
+    }
+
     /// The draft's edits as a Magic plan on `base`. Each edit waits for the earlier ones it depends on:
     /// ones that touched the same clips, or the same stretch of the same track. Changes to the
     /// sequence or its tracks wait for everything before and hold up everything after.
     static func plan(base: Project, edits: [MagicEdit]) -> MagicPlan {
+        let edits = inSteps(base: base, edits: edits)
         struct Footprint {
             var ids: Set<UUID> = []
             var spans: [(track: UUID, from: Double, to: Double)] = []
             var barrier = false
+            /// A plain delete: two of them only clash over the same clip.
+            var lift = false
         }
         var p = base
         var prints: [Footprint] = []
@@ -97,6 +141,7 @@ final class MCPDraft {
             e.apply(&p, 1)
             var f = Footprint()
             if case .change(nil, _, _) = e { f.barrier = true }
+            if case .remove(_, false) = e { f.lift = true }
             if before.videoTracks.map(\.id) != p.videoTracks.map(\.id) || before.audioTracks.map(\.id) != p.audioTracks.map(\.id)
                 || before.width != p.width || before.height != p.height || before.fps != p.fps { f.barrier = true }
             // Every clip the edit changed, added or removed, including ones it overwrote or rippled.
@@ -115,6 +160,8 @@ final class MCPDraft {
         }
         func overlaps(_ a: Footprint, _ b: Footprint) -> Bool {
             if a.barrier || b.barrier || !a.ids.isDisjoint(with: b.ids) { return true }
+            // Deleting clips side by side: one doesn't need the other gone first.
+            if a.lift, b.lift { return false }
             // Touching counts: a transition needs the clip before it in place.
             for x in a.spans {
                 for y in b.spans where x.track == y.track && x.from <= y.to + 1e-3 && y.from <= x.to + 1e-3 { return true }

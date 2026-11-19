@@ -448,7 +448,23 @@ final class MagicShow: NSObject {
     private init(model: EditorModel, plan: MagicPlan, window: NSWindow, canvas: TimelineCanvas, click: NSPoint?, performer: Performer?) {
         self.performer = performer
         self.model = model
-        self.plan = plan
+        // Magic's own edits in the steps a person would take, a cursor each (an outside agent's are
+        // played as they came, by its one cursor).
+        self.plan = performer == nil ? plan.inSteps() : plan
+        if CommandLine.arguments.contains("--magic") {
+            func describe(_ e: MagicEdit) -> String {
+                switch e {
+                case .place(let c, _): return "place×\(c.count)"
+                case .trimHead(let ids, _, _): return "trimHead×\(ids.count)"
+                case .trimTail(let ids, _, _): return "trimTail×\(ids.count)"
+                case .move(let ids, _, _, _): return "move×\(ids.count)"
+                case .blade(let ids, _, _, _): return "blade×\(ids.count)"
+                case .remove(let ids, let r): return "remove×\(ids.count)\(r ? " ripple" : "")"
+                default: return e.label
+                }
+            }
+            FileHandle.standardError.write("MAGIC STEPS \(plan.tasks.map { describe($0.edit) }.joined(separator: ", ")) -> \(self.plan.tasks.map { describe($0.edit) + "<\($0.after)" }.joined(separator: ", "))\n".data(using: .utf8)!)
+        }
         self.window = window
         self.canvas = canvas
         self.click = click
