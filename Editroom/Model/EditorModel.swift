@@ -226,6 +226,26 @@ final class EditorModel: ObservableObject {
                 if args.contains("--magic-note") {
                     try? await Task.sleep(nanoseconds: 1_500_000_000)
                     MagicAgent.shared.note = MagicAgent.Note(agent: .chatgpt, text: "I cut it from 12 seconds to 8, took out the repeated shots, and timed the cuts to the music. Your library has no sound effects, so I couldn't add any.", changed: true, detail: "GPT-6.2-Sol · Low · 56s")
+                    // `--magic-note-test` (testing): close the note (kept on the button), scrub (kept), then edit (accepted).
+                    if args.contains("--magic-note-test") {
+                        let ai = MagicAgent.shared
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                        ai.noteOpen = false
+                        try? await Task.sleep(nanoseconds: 800_000_000)
+                        let kept = ai.note != nil && !ai.noteOpen
+                        self.seek(to: 2)
+                        self.selection = Set(self.project.clips.prefix(1).map(\.id))
+                        try? await Task.sleep(nanoseconds: 800_000_000)
+                        let afterLooking = ai.note != nil
+                        ai.noteOpen = true
+                        try? await Task.sleep(nanoseconds: 800_000_000)
+                        let reopened = ai.noteOpen && ai.note != nil
+                        ai.noteOpen = false
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
+                        self.mutate { p in if !p.videoTracks.isEmpty { p.videoTracks[0].hidden.toggle() } }
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                        FileHandle.standardError.write("MAGIC NOTE TEST kept=\(kept) afterLooking=\(afterLooking) reopened=\(reopened) acceptedByEdit=\(ai.note == nil)\n".data(using: .utf8)!)
+                    }
                 }
                 // `--magic-local "request"` (testing): Local Magic with a request, read on this Mac.
                 if let k = args.firstIndex(of: "--magic-local"), args.count > k + 1 {
