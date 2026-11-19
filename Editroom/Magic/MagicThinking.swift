@@ -270,18 +270,26 @@ final class MagicThinking: NSObject {
         targets = rects.filter { $0.width > 6 && $0.height > 6 }
     }
 
-    /// The items in the Media panel (these ones, or all), as far as they're showing.
+    /// The items in the Media panel (these ones, or all) that are on screen.
     private func mediaRects(_ assets: Set<UUID>?) -> [CGRect] {
         guard let model else { return [] }
-        let panel = MagicAnchors.rect("library").map(toOverlay)
-        return model.project.assets.filter { assets?.contains($0.id) ?? true }.compactMap { a in
-            guard var r = MagicAnchors.rect(a.id.uuidString).map(toOverlay) else { return nil }
-            if let panel {
-                guard panel.intersects(r) else { return nil }
-                r = r.intersection(panel)
-            }
-            return r.width > 6 && r.height > 6 ? r : nil
-        }
+        return model.project.assets.filter { assets?.contains($0.id) ?? true }.compactMap { mediaRect($0.id) }
+    }
+
+    /// A Media item's picture, if most of it is scrolled into view (only the part on screen); nil when
+    /// it's mostly out of sight, so nothing is scanned where there's nothing to see.
+    private func mediaRect(_ asset: UUID) -> CGRect? {
+        guard let r = MagicAnchors.rect(asset.uuidString).map(toOverlay) else { return nil }
+        guard let list = (MagicAnchors.rect("libraryList") ?? MagicAnchors.rect("library")).map(toOverlay) else { return r }
+        return Self.mostlyIn(r, list)
+    }
+
+    /// The part of `r` inside `area`, when at least 60% of it is.
+    private static func mostlyIn(_ r: CGRect, _ area: CGRect) -> CGRect? {
+        let v = r.intersection(area)
+        guard !v.isNull, r.width * r.height > 0, v.width * v.height >= 0.6 * r.width * r.height,
+              v.width > 6, v.height > 6 else { return nil }
+        return v
     }
 
     /// One library item is being looked at: it's scanned next (once thinking, straight away: the stage
@@ -290,11 +298,14 @@ final class MagicThinking: NSObject {
         if stage < .analyzing { analyze(assets: nil) }
         lastEvent = CACurrentMediaTime()
         guard fadeFrom == nil else { return }
-        var rect = MagicAnchors.rect(asset.uuidString).map(toOverlay)
-        if let model, let canvas = TimelineCanvas.current, let c = model.project.clips.first(where: { $0.assetID == asset }) {
-            rect = canvas.magicWindowRect(of: c, in: model.project).map(toOverlay) ?? rect
+        // Its clip on the timeline if that's in view, otherwise its Media item if that's in view;
+        // nothing when neither is (the panel doesn't scroll on its own while the editor is locked).
+        var rect: CGRect?
+        if let model, let canvas = TimelineCanvas.current, let c = model.project.clips.first(where: { $0.assetID == asset }),
+           let r = canvas.magicWindowRect(of: c, in: model.project).map(toOverlay) {
+            rect = Self.mostlyIn(r, toOverlay(canvas.convert(canvas.bounds, to: nil)))
         }
-        guard let rect else { return }
+        guard let rect = rect ?? mediaRect(asset) else { return }
         if stage == .thinking {
             addScan(rect)
         } else {

@@ -68,6 +68,8 @@ struct LibraryView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 12)
             }
+            // The part of the list on screen, for Magic's scans.
+            .background(MagicAnchor(key: "libraryList"))
         }
         .background(Theme.panel).panelTopLight()
         .overlay(
