@@ -97,12 +97,6 @@ struct MagicPopover: View {
                 Text(hasEdit ? "Improve this edit on this Mac" : "Quick cut on this Mac")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.text)
-                Text(hasEdit
-                     ? "Takes out repeats and weak shots, trims long shots to their best moment, cuts to the beat of your music, and gives it one look. Your shots, order and music stay. A few seconds, nothing leaves your Mac."
-                     : "Finds the best moments, cuts to the beat of your music, titles and grades it. A few seconds, nothing leaves your Mac.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Theme.textDim)
-                    .fixedSize(horizontal: false, vertical: true)
                 if LocalBrain.available {
                     // Apple's on-device model reads the request into settings Local follows.
                     PromptBox(text: $request,
