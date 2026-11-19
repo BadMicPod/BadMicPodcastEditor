@@ -92,6 +92,7 @@ private struct SectionLabel: View {
 /// The themes, each shown as a small picture of the editor in its colours.
 private struct AppearanceSettings: View {
     @ObservedObject var themes = ThemeStore.shared
+    @AppStorage(MediaLayout.key) private var mediaLayout = MediaLayout.list
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -103,6 +104,25 @@ private struct AppearanceSettings: View {
                 ForEach(AppTheme.allCases) { theme in
                     ThemeChoice(theme: theme, selected: themes.theme == theme) { themes.theme = theme }
                 }
+            }
+            Divider().overlay(Theme.ink.opacity(0.06)).padding(.vertical, 4)
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Media")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                    Text("A list with small pictures, or larger thumbnails to see more of each shot.")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 16)
+                Picker("Media", selection: $mediaLayout) {
+                    ForEach(MediaLayout.allCases) { Text($0.name).tag($0) }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .fixedSize()
             }
         }
         .padding(.horizontal, 24)

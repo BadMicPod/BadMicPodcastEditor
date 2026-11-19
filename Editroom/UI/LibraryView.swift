@@ -6,6 +6,8 @@ struct LibraryView: View {
     @ObservedObject var media: MediaStore
     @State private var dropTargeted = false
     @State private var search = ""
+    /// List (the default) or larger thumbnails, from Settings > Appearance.
+    @AppStorage(MediaLayout.key) private var layout = MediaLayout.list
 
     private var shown: [MediaAsset] {
         let q = search.trimmingCharacters(in: .whitespaces)
@@ -47,13 +49,24 @@ struct LibraryView: View {
                     } else {
                         SearchField(text: $search)
                         let order = shown.map(\.id)
-                        VStack(spacing: 3) {
-                            ForEach(shown) { asset in
-                                AssetRow(model: model, media: media, asset: asset, offline: media.isOffline(asset), selected: inSelection.contains(asset.id),
-                                         picked: model.mediaSelection.contains(asset.id), pickedCount: model.mediaSelection.count,
-                                         matchesSequence: model.sequenceMatches(asset))
-                                    // A click picks it (⇧ for a range, ⌘ to add or take away); a double-click adds it.
-                                    .simultaneousGesture(TapGesture().onEnded { model.clickMedia(asset.id, in: order) })
+                        if layout == .thumbnails {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8, alignment: .top)], spacing: 10) {
+                                ForEach(shown) { asset in
+                                    AssetTile(model: model, media: media, asset: asset, offline: media.isOffline(asset), selected: inSelection.contains(asset.id),
+                                              picked: model.mediaSelection.contains(asset.id), pickedCount: model.mediaSelection.count,
+                                              matchesSequence: model.sequenceMatches(asset))
+                                        .simultaneousGesture(TapGesture().onEnded { model.clickMedia(asset.id, in: order) })
+                                }
+                            }
+                        } else {
+                            VStack(spacing: 3) {
+                                ForEach(shown) { asset in
+                                    AssetRow(model: model, media: media, asset: asset, offline: media.isOffline(asset), selected: inSelection.contains(asset.id),
+                                             picked: model.mediaSelection.contains(asset.id), pickedCount: model.mediaSelection.count,
+                                             matchesSequence: model.sequenceMatches(asset))
+                                        // A click picks it (⇧ for a range, ⌘ to add or take away); a double-click adds it.
+                                        .simultaneousGesture(TapGesture().onEnded { model.clickMedia(asset.id, in: order) })
+                                }
                             }
                         }
                         if shown.isEmpty {
@@ -156,15 +169,22 @@ private struct MediaThumb: View {
                 case .active(let p):
                     let x = min(max(0, p.x), g.size.width)
                     scrub = x
-                    // Quantise so nearby positions share cached frames.
-                    let steps = 60.0
-                    let t = min(asset.duration - 0.05, (Double(x / max(1, g.size.width)) * steps).rounded() / steps * asset.duration)
-                    media.scrubFrame(asset: asset.id, time: max(0, t)) { img in
-                        if scrub != nil { frame = img }
+                    let fraction = Double(x / max(1, g.size.width))
+                    // A frame made ahead, at once; until the strip is made, one decoded from the file.
+                    let quick = media.instantFrame(asset: asset, at: fraction)
+                    if let quick {
+                        frame = quick
+                    } else {
+                        // Quantise so nearby positions share cached frames.
+                        let steps = 60.0
+                        let t = min(asset.duration - 0.05, (fraction * steps).rounded() / steps * asset.duration)
+                        media.scrubFrame(asset: asset.id, time: max(0, t)) { img in
+                            if scrub != nil { frame = img }
+                        }
                     }
-                    // The main viewer follows the mouse exactly, not in steps.
-                    let exact = min(asset.duration - 0.02, Double(x / max(1, g.size.width)) * asset.duration)
-                    preview?.show(asset, at: max(0, exact), media: media)
+                    // The main viewer shows the same frame at once, then the exact one, full size.
+                    let exact = min(asset.duration - 0.02, fraction * asset.duration)
+                    preview?.show(asset, at: max(0, exact), media: media, quick: quick)
                 case .ended:
                     scrub = nil
                     frame = nil
@@ -302,6 +322,63 @@ private struct AssetRow: View {
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(picked ? Theme.ink.opacity(0.12) : hovering ? Theme.hover : .clear))
         .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
             .strokeBorder(picked ? Theme.ink.opacity(0.18) : Theme.control.opacity(selected ? 1 : 0), lineWidth: 1))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .modifier(AssetActions(model: model, asset: asset, offline: offline, picked: picked, pickedCount: pickedCount,
+                               matchesSequence: matchesSequence))
+    }
+}
+
+/// How the Media panel shows its items.
+enum MediaLayout: String, CaseIterable, Identifiable {
+    case list, thumbnails
+    static let key = "mediaLayout"
+    var id: String { rawValue }
+    var name: String { self == .list ? "List" : "Thumbnails" }
+}
+
+/// A Media item as a larger picture, its name underneath: the Thumbnails layout.
+private struct AssetTile: View {
+    let model: EditorModel
+    let media: MediaStore
+    let asset: MediaAsset
+    let offline: Bool
+    let selected: Bool
+    let picked: Bool
+    let pickedCount: Int
+    let matchesSequence: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            MediaThumb(media: media, preview: model.sourcePreview, asset: asset, offline: offline)
+                .aspectRatio(16 / 9, contentMode: .fit)
+                .background(MagicAnchor(key: asset.id.uuidString))
+                .overlay(alignment: .bottomTrailing) {
+                    if asset.kind != .image {
+                        Text(Timecode.short(asset.duration))
+                            .font(Theme.mono(9.5))
+                            .foregroundStyle(Color(hex: 0xF2F2F0))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1.5)
+                            .background(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(Color.black.opacity(0.55)))
+                            .padding(5)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(picked ? Theme.ink.opacity(0.85) : Theme.control.opacity(selected ? 1 : 0), lineWidth: picked ? 1.5 : 1))
+            Text(asset.name)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(hovering || selected || picked ? Theme.text : Theme.textDim)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 2)
+        }
+        .padding(3)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(picked ? Theme.ink.opacity(0.12) : hovering ? Theme.hover : .clear))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)

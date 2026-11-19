@@ -13,14 +13,17 @@ final class SourcePreviewState: ObservableObject {
 
     @Published private(set) var current: Current?
 
-    func show(_ asset: MediaAsset, at time: Double, media: MediaStore) {
+    /// `quick` is a frame already at hand (made ahead, smaller) to show at once; the exact full-size
+    /// frame replaces it when it's decoded, unless the mouse has moved on by then.
+    func show(_ asset: MediaAsset, at time: Double, media: MediaStore, quick: CGImage? = nil) {
         if current?.asset.id != asset.id {
-            current = Current(asset: asset, time: time, image: nil)
+            current = Current(asset: asset, time: time, image: quick)
         } else {
             current?.time = time
+            if let quick { current?.image = quick }
         }
         media.viewerFrame(asset: asset.id, time: time) { [weak self] img in
-            guard let self, self.current?.asset.id == asset.id else { return }
+            guard let self, self.current?.asset.id == asset.id, self.current?.time == time else { return }
             self.current?.image = img
         }
     }

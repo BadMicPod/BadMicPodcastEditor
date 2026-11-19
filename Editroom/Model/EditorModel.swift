@@ -190,6 +190,17 @@ final class EditorModel: ObservableObject {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
                     ThemeStore.shared.theme = theme
                 }
+                // `--scrub-test` (testing): how long a hover-scrub frame takes once the strips are made.
+                if args.contains("--scrub-test") {
+                    try? await Task.sleep(nanoseconds: 12_000_000_000)
+                    for a in self.project.assets where a.kind == .video {
+                        var hits = 0
+                        let t0 = CACurrentMediaTime()
+                        for i in 0...100 where self.media.instantFrame(asset: a, at: Double(i) / 100) != nil { hits += 1 }
+                        let ms = (CACurrentMediaTime() - t0) * 1000 / 101
+                        FileHandle.standardError.write("SCRUB \(a.name) \(hits)/101 frames ready, \(String(format: "%.2f", ms)) ms each\n".data(using: .utf8)!)
+                    }
+                }
                 if args.contains("--play") { self.play() }
                 if args.contains("--magic") {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)

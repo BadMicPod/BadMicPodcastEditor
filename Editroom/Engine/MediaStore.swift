@@ -78,6 +78,8 @@ final class MediaStore: ObservableObject {
     private var waveformJobs = Set<UUID>()
     private var reversedWaveforms: [UUID: Waveform] = [:]
     private var reverseJobs: [UUID: Task<Void, Never>] = [:]
+    /// Frames made ahead for hover-scrubbing Media items.
+    private let strips = ScrubStrips()
     /// Called when a file's reversed sound is ready, so the timeline can be rebuilt with it.
     var onReverseReady: (() -> Void)?
 
@@ -166,6 +168,7 @@ final class MediaStore: ObservableObject {
         reversedWaveforms[id] = nil
         stills[id] = nil
         thumbs = thumbs.filter { $0.key.asset != id }
+        strips.forget(id)
     }
 
     private func adopt(_ rt: MediaRuntime, for asset: MediaAsset) {
@@ -174,6 +177,7 @@ final class MediaStore: ObservableObject {
             let gen = rt.makeGenerator(maximumSize: CGSize(width: 320, height: 120))
             rt.generator = gen
             makePoster(asset, rt)
+            strips.make(asset.id, rt, duration: asset.duration)
         }
         if rt.audioTrack != nil { makeWaveform(asset.id, rt) }
     }
@@ -286,6 +290,14 @@ final class MediaStore: ObservableObject {
     }
 
     private var scrubFrames: [ThumbKey: CGImage] = [:]
+
+    /// A hover-scrub frame made ahead, at once: the nearest to a point across the item (0 to 1). Nil
+    /// until its strip is made; asking moves it to the front of the line.
+    func instantFrame(asset: MediaAsset, at fraction: Double) -> CGImage? {
+        if let img = strips.frame(asset.id, at: fraction) { return img }
+        if let rt = runtimes[asset.id] { strips.make(asset.id, rt, duration: asset.duration, soon: true) }
+        return nil
+    }
 
     /// A frame for hover-scrubbing a library tile. Cached frames come back at once; otherwise any
     /// earlier request still in flight is dropped, so the frame keeps up with the mouse.
