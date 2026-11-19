@@ -39,18 +39,7 @@ final class MagicAgent: ObservableObject {
     @Published private(set) var agent: Kind?
     /// What the AI is doing, for the Magic button.
     @Published private(set) var status: String?
-    /// What Magic said when it finished. Kept after the popover closes (a dot on the button, a click
-    /// shows it again) until Done, a new Magic run, or an edit to the timeline, which accepts it.
-    @Published var note: Note? {
-        didSet {
-            noteOpen = note != nil
-            noteAt = note == nil ? nil : Date()
-        }
-    }
-    /// The note is showing (not just waiting on the button).
-    @Published var noteOpen = false
-    /// When the note came, so the end of Magic's own edit isn't taken for an edit of theirs.
-    private(set) var noteAt: Date?
+    @Published var note: Note?
     /// The Magic button's "what should it make?" popover is open.
     @Published var asking = false
     /// Finished while the person was in another app: shown on the button until they come back.

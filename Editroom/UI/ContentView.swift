@@ -288,20 +288,12 @@ struct MagicButton: View {
         held = hovering && working ? (held ?? natural) : nil
     }
 
-    /// The same edit: clips, tracks, markers and the frame. Importing media isn't an edit.
-    static func sameTimeline(_ a: Project, _ b: Project) -> Bool {
-        a.clips == b.clips && a.videoTracks == b.videoTracks && a.audioTracks == b.audioTracks && a.markers == b.markers
-            && a.width == b.width && a.height == b.height && a.fps == b.fps
-    }
-
     var body: some View {
         Button {
             if working { MagicShow.stopAll() }
-            else if ai.note != nil {
-                // A result not finished with yet: show it again (Undo, Done).
-                ai.noteOpen = true
-            } else {
+            else {
                 connections.refresh()
+                ai.note = nil
                 ai.asking = true
             }
         } label: {
@@ -345,15 +337,6 @@ struct MagicButton: View {
             .frame(height: 26)
             .background(Capsule().fill(Theme.ink.opacity(hovering ? 0.14 : 0.08)))
             .overlay(Capsule().strokeBorder(Theme.ink.opacity(0.05)))
-            // A result waiting: its note is closed but not done with.
-            .overlay(alignment: .topTrailing) {
-                if ai.note != nil, !ai.noteOpen, !working {
-                    Circle().fill(Theme.text).frame(width: 6, height: 6)
-                        .overlay(Circle().strokeBorder(Theme.panel, lineWidth: 1.5).padding(-1.5))
-                        .offset(x: -1, y: 1)
-                        .allowsHitTesting(false)
-                }
-            }
             .contentShape(Capsule())
             .animation(.easeOut(duration: 0.15), value: status)
         }
@@ -366,12 +349,6 @@ struct MagicButton: View {
             hold()
         }
         .onChange(of: working) { _, _ in hold() }
-        .onChange(of: model.project) { old, new in
-            // Editing the timeline after Magic is the same as Done: Undo would no longer undo Magic.
-            guard ai.note != nil, !working, let at = ai.noteAt, Date().timeIntervalSince(at) > 0.5,
-                  !Self.sameTimeline(old, new) else { return }
-            ai.note = nil
-        }
         .animation(.easeOut(duration: 0.12), value: hovering)
         .animation(.easeOut(duration: 0.2), value: held)
         // Which AIs are connected can change in AI Agents or in the apps themselves.
@@ -382,9 +359,8 @@ struct MagicButton: View {
         .help(working ? "Stop Magic (esc)" : !hasMedia ? "Import some clips first"
               : "Magic: have Claude or ChatGPT edit, or make a quick cut")
         // One popover: what to make, or what the AI said when it finished.
-        // Closing the note keeps it (on the button) until Done; changing the timeline accepts it.
-        .popover(isPresented: Binding(get: { ai.asking || (ai.note != nil && ai.noteOpen) },
-                                      set: { if !$0 { ai.asking = false; ai.noteOpen = false } }), arrowEdge: .bottom) {
+        .popover(isPresented: Binding(get: { ai.asking || ai.note != nil },
+                                      set: { if !$0 { ai.asking = false; ai.note = nil } }), arrowEdge: .bottom) {
             Group {
                 if let note = ai.note {
                     MagicNoteView(note: note, model: model) { ai.note = nil }
