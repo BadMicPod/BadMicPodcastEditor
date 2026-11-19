@@ -20,7 +20,13 @@ struct ColorGrade: Codable, Hashable {
     var midtones = WheelPoint()
     var highlights = WheelPoint()
 
-    var isNeutral: Bool { self == ColorGrade() }
+    /// No look and every adjustment at zero. The look's strength doesn't count without a look (it isn't
+    /// shown then, and a look taken away can leave it behind).
+    var isNeutral: Bool {
+        var g = self
+        if g.look == nil { g.lookIntensity = ColorGrade().lookIntensity }
+        return g == ColorGrade()
+    }
 
     var lookLabel: String {
         guard let look else { return "None" }
