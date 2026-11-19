@@ -25,6 +25,11 @@ struct LocalRecipe: Equatable {
     var mediaNames: [String] = []
     /// "Nothing else on the timeline": with keepOnly, titles, overlays and music go too.
     var clearRest = false
+    /// Asks for nothing Local can do (no setting, no media): it shouldn't edit anything.
+    var isEmpty: Bool {
+        seconds == nil && pace == .unchanged && look == nil && music == .unchanged && frame == .unchanged && !isFocused
+    }
+
     /// About which media to use: then Local does just that (and closes gaps), nothing else unasked.
     var isFocused: Bool { !keepOnly.isEmpty || !takeOut.isEmpty }
 
@@ -70,6 +75,14 @@ enum LocalBrain {
 
     /// Media the request names, kept only or taken out. The words decide when they're clear ("only",
     /// "just", "nothing else" / "remove", "without"…); otherwise the model's reading.
+    /// A general request to make it better ("improve it", "tighten it up"), which Local's own
+    /// improvement is for.
+    static func isGeneral(_ request: String) -> Bool {
+        let t = request.lowercased()
+        return ["improve", "better", "tighten", "tidy", "clean", "polish", "fix", "best", "nicer", "good", "shorter", "trim",
+                "cut it down", "make it work", "edit it", "magic"].contains { t.contains($0) }
+    }
+
     static func applyMedia(_ r: inout LocalRecipe, named: [MediaAsset], action: String, request: String) {
         guard !named.isEmpty else { return }
         let text = request.lowercased()

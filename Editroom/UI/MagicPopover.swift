@@ -625,6 +625,19 @@ enum LocalMagic {
             }
             state.busy = false
             state.status = nil
+            // Nothing in it Local can do (and it isn't just "make it better"): say so, edit nothing.
+            if recipe.isEmpty, !LocalBrain.isGeneral(request) {
+                let what = recipe.cannotDo.isEmpty ? "that" : recipe.cannotDo
+                MagicAgent.shared.note = MagicAgent.Note(agent: nil, text: """
+                    Local can't do \(what). It can change the length, the pace, the look, the music, the frame shape \
+                    (vertical, square), and which files to use or take out, by name. For anything that needs \
+                    understanding what's in your shots, use Claude or ChatGPT.
+                    """, changed: false, detail: "On this Mac")
+                if CommandLine.arguments.contains("--magic-local") {
+                    FileHandle.standardError.write("MAGIC LOCAL said: (nothing done) \(what)\n".data(using: .utf8)!)
+                }
+                return
+            }
             let started = Date()
             MagicShow.start(model: model, fromMouse: false, recipe: recipe) { said in
                 if CommandLine.arguments.contains("--magic-local") {
