@@ -440,7 +440,8 @@ private final class DotField: CALayer {
         // Darken the picture a touch so the dots read.
         ctx.setFillColor(NSColor.black.withAlphaComponent(0.22).cgColor)
         ctx.fill(bounds)
-        let spacing = max(12, min(w, h) / 26)
+        // A fine grid of small dots.
+        let spacing = max(6, min(w, h) / 55)
         let reach = Double(max(w, h)) * 0.13
         let warm = tint.blended(withFraction: 0.55, of: .white) ?? tint
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
@@ -458,7 +459,7 @@ private final class DotField: CALayer {
                 }
                 glow = pow(max(0, glow), 2) * 0.7
                 let level = min(1, n + glow * (1 - n * 0.5))
-                let radius = spacing * 0.04 + CGFloat(level) * spacing * 0.17
+                let radius = 0.35 + CGFloat(level) * spacing * 0.16
                 ctx.setFillColor(red: r + (1 - r) * CGFloat(level) * 0.5, green: g + (1 - g) * CGFloat(level) * 0.4,
                                  blue: b + (1 - b) * CGFloat(level) * 0.3, alpha: 0.05 + 0.6 * CGFloat(level))
                 ctx.fillEllipse(in: CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2))
