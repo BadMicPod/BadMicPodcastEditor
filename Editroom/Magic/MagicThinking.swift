@@ -72,6 +72,8 @@ final class MagicThinking: NSObject {
     private var recent: [CGRect] = []
     private var ghosts: [Ghost] = []
     private var ghostKeys: [String] = []
+    /// When each linked video's outline started drawing, for its sound to match.
+    private var linkBorn: [UUID: Double] = [:]
     private var link: CADisplayLink?
     private var monitor: Any?
     private var t0 = CACurrentMediaTime()
@@ -319,14 +321,19 @@ final class MagicThinking: NSObject {
     func plan(_ project: Project) {
         advance(to: .thinking)
         guard fadeFrom == nil, let canvas = TimelineCanvas.current else { return }
-        let clips = project.clips.filter { $0.kind != .audio || $0.linkID == nil }
+        // Every clip, a video's own sound included (so the rows match the finished cut); that sound is
+        // drawn at the same moment as its video, not after it.
+        let linkedSound = { (c: Clip) in c.kind == .audio && c.linkID != nil }
+        let clips = project.clips.filter { !linkedSound($0) } + project.clips.filter(linkedSound)
         for c in clips {
             let key = "\(c.trackID)|\(Int(c.start * 100))|\(Int(c.duration * 100))"
             guard !ghostKeys.contains(key), let r = canvas.magicWindowRect(of: c, in: project).map(toOverlay),
                   r.width > 3 else { continue }
             ghostKeys.append(key)
-            // One after another, a little apart.
-            let g = Ghost(c, in: project, born: max(now, (ghosts.last?.born ?? 0) + 0.12))
+            // One after another, a little apart; a video's sound with its video.
+            let born = linkedSound(c) ? c.linkID.flatMap { linkBorn[$0] } : nil
+            let g = Ghost(c, in: project, born: born ?? max(now, (ghosts.map(\.born).max() ?? 0) + 0.12))
+            if !linkedSound(c), let link = c.linkID { linkBorn[link] = g.born }
             g.shape.fillColor = nil
             g.shape.strokeColor = NSColor.white.withAlphaComponent(0.65).cgColor
             g.shape.lineWidth = 1.5
