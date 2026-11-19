@@ -102,7 +102,9 @@ final class MagicThinking: NSObject {
         field.opacity = 0
         let start = buttonPoint
         let image = MagicShow.cursorImage(color, scale: scale)
-        let tagColor = (color.blended(withFraction: 0.18, of: .black) ?? color).cgColor
+        // A light colour (Local's white) gets a dark, see-through tag so its white text and dots read.
+        let light = (color.usingColorSpace(.sRGB).map { 0.3 * $0.redComponent + 0.59 * $0.greenComponent + 0.11 * $0.blueComponent } ?? 0) > 0.7
+        let tagColor = light ? NSColor.black.withAlphaComponent(0.62).cgColor : (color.blended(withFraction: 0.18, of: .black) ?? color).cgColor
         for i in 0..<count {
             let c = Cursor(at: start, seed: Double(i) * 1.37 + Double.random(in: 0...1), born: Double(i) * 0.09)
             c.body.contents = image
@@ -138,14 +140,17 @@ final class MagicThinking: NSObject {
         scout(assets: nil)
     }
 
-    /// Ends the show: the cursors zip back into the Magic button, then `done` (where the swarm starts).
+    /// Ends the show: everything carries on as it was and fades out where it is, then `done` (where the
+    /// swarm starts).
     func end(then done: (() -> Void)? = nil) {
-        guard phase != .leaving else { return }
-        phase = .leaving
-        phaseSince = now
+        guard leaveDone == nil, fadeFrom == nil else { return }
+        fadeFrom = now
         leaveDone = done
-        for g in ghosts where !g.done { g.done = true }
     }
+
+    /// When the fade-out began.
+    private var fadeFrom: Double?
+    private static let fadeTime = 0.6
 
     /// Takes the show down at once.
     func cancel() {
@@ -267,7 +272,6 @@ final class MagicThinking: NSObject {
         CATransaction.setDisableActions(true)
         let view = viewerRect
         let center = CGPoint(x: view.midX, y: view.midY)
-        var leftCount = 0
         for (i, c) in cursors.enumerated() {
             let alive = t >= c.born
             if !alive { continue }
@@ -315,7 +319,7 @@ final class MagicThinking: NSObject {
                     c.target = CGPoint(x: tl.midX + cos(ang) * tl.width * 0.32, y: tl.minY + tl.height * 0.4 + sin(ang * 1.3) * tl.height * 0.18)
                 }
             case .leaving:
-                c.target = buttonPoint
+                break
             }
 
             // Smooth easing towards where it's going, no overshoot, like the swarm's cursors.
@@ -326,13 +330,10 @@ final class MagicThinking: NSObject {
             c.pos.y += (c.target.y - c.pos.y) * follow
             c.vel = CGPoint(x: (c.pos.x - before.x) / CGFloat(dt), y: (c.pos.y - before.y) / CGFloat(dt))
 
-            let appear = min(1, (t - c.born) / 0.18)
+            let fading = fadeFrom.map { max(0, 1 - (t - $0) / Self.fadeTime) } ?? 1
+            let appear = min(1, (t - c.born) / 0.18) * fading
             c.body.position = c.pos
-            var opacity = Float(appear)
-            if phase == .leaving {
-                let d = hypot(c.pos.x - buttonPoint.x, c.pos.y - buttonPoint.y)
-                if d < 26 { opacity = Float(max(0, d / 26)); if d < 6 { leftCount += 1 } }
-            }
+            let opacity = Float(appear)
             c.body.opacity = opacity
             c.tag.opacity = opacity
             c.tag.position = CGPoint(x: c.pos.x + 10, y: c.pos.y + 20)
@@ -351,7 +352,10 @@ final class MagicThinking: NSObject {
         updateGhosts(t)
         CATransaction.commit()
 
-        if phase == .leaving, leftCount == cursors.count || now - phaseSince > 1.2 {
+        let fade = fadeFrom.map { max(0, 1 - (now - $0) / Self.fadeTime) } ?? 1
+        scanLayer.opacity = Float(fade)
+        for g in ghosts { g.shape.opacity = Float(fade); if fade < 1 { g.fill.opacity = Float(fade) * g.fill.opacity } }
+        if let f = fadeFrom, now - f >= Self.fadeTime {
             let done = leaveDone
             leaveDone = nil
             cancel()
@@ -396,7 +400,7 @@ final class MagicThinking: NSObject {
         let want = phase == .think ? 1.0 : 0.0
         fieldAlpha += (want - fieldAlpha) * min(1, dt * (want > fieldAlpha ? 1.2 : 3))
         field.frame = view
-        field.opacity = Float(fieldAlpha)
+        field.opacity = Float(fieldAlpha * (fadeFrom.map { max(0, 1 - (now - $0) / Self.fadeTime) } ?? 1))
         guard fieldAlpha > 0.01 else { return }
         field.time = t
         field.tint = color

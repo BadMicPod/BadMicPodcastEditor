@@ -1392,7 +1392,7 @@ final class MagicShow: NSObject {
         let callback = onFinish
         onFinish = nil
         callback?()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [model] in model.play() }
+        // Left at the start, paused: the person plays it when they're ready.
         // `--magic-undo` (testing): check one undo takes the whole cut away.
         if CommandLine.arguments.contains("--magic-undo") {
             let built = model.project.clips.count
