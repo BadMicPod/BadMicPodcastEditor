@@ -105,7 +105,9 @@ enum LocalBrain {
     static func isGeneral(_ request: String) -> Bool {
         let t = request.lowercased()
         return ["improve", "better", "tighten", "tidy", "clean", "polish", "fix", "best", "nicer", "good", "shorter", "trim",
-                "cut it down", "make it work", "edit it", "magic"].contains { t.contains($0) }
+                "cut it down", "make it work", "edit it", "magic",
+                // The general improve cuts to the beat of the music.
+                "beat", "rhythm", "recut", "re-cut", "re-edit"].contains { t.contains($0) }
     }
 
     /// Clip speed a request asks for: "1000%" or "10x" or "10 times" (with speed / faster / slower nearby),

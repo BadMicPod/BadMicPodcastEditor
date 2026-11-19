@@ -93,10 +93,21 @@ struct MagicPopover: View {
                            manage: { close(); model.showAgents = true }) { go(kind) }
             }
         } else {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(hasEdit ? "Improve this edit on this Mac" : "Quick cut on this Mac")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.text)
+            // Laid out like the AI tabs, with ideas Local can do.
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text(hasEdit ? "What should change?" : "What should it make?")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                    Spacer()
+                    if LocalBrain.available {
+                        IdeasMenu(sections: LocalIdeas.sections(hasEdit: hasEdit)) { idea in
+                            request = idea
+                            localFocused = true
+                        }
+                    }
+                }
+                .padding(.bottom, 8)
                 if LocalBrain.available {
                     // Apple's on-device model reads the request into settings Local follows.
                     PromptBox(text: $request,
@@ -104,20 +115,31 @@ struct MagicPopover: View {
                                 ? "Describe what to change (length, pace, look, music, vertical), or leave this empty to improve the edit."
                                 : "Describe the video you want (length, pace, look, music, vertical), or leave this empty for the best cut.",
                               focused: $localFocused, submit: goLocal)
-                        .padding(.top, 6)
+                        .padding(.bottom, 11)
                         .onAppear { localFocused = true }
                 } else if let why = LocalBrain.unavailableReason {
                     Text(why)
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.textFaint)
                         .fixedSize(horizontal: false, vertical: true)
+                        .padding(.bottom, 11)
                 }
-                HStack {
+                HStack(spacing: 5) {
+                    // Where the AI tabs pick a model: Local always uses Apple's.
+                    if LocalBrain.available {
+                        HStack(spacing: 4) {
+                            Image(systemName: "apple.logo").font(.system(size: 10, weight: .semibold))
+                            Text("Apple Intelligence").font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundStyle(Color(hex: 0xC9C9C5))
+                        .padding(.horizontal, 9)
+                        .frame(height: 24)
+                        .background(Capsule().fill(Color.white.opacity(0.07)))
+                    }
                     Spacer()
                     PillButton(title: "Make it", prominent: true, action: goLocal)
                         .keyboardShortcut(.defaultAction)
                 }
-                .padding(.top, 6)
             }
         }
     }
@@ -127,13 +149,11 @@ struct MagicPopover: View {
         HStack {
             Text(footerText)
             Spacer()
-            if ai.tab != .local {
-                Button("Manage AI Agents") {
-                    close()
-                    model.showAgents = true
-                }
-                .buttonStyle(.plain)
+            Button("Manage AI Agents") {
+                close()
+                model.showAgents = true
             }
+            .buttonStyle(.plain)
         }
         .font(.system(size: 10.5))
         .foregroundStyle(Theme.textFaint)
@@ -143,7 +163,7 @@ struct MagicPopover: View {
     }
 
     private var footerText: String {
-        guard let kind = ai.tab.kind else { return LocalBrain.available ? "On this Mac, with Apple Intelligence" : "On this Mac" }
+        guard let kind = ai.tab.kind else { return "On this Mac" }
         if !ai.installed(kind) { return "Free to download" }
         if kind == .claude, connections.states[.claude] == .waiting { return "Waiting for Claude…" }
         if !ai.connected(kind) { return "No API key needed" }
@@ -298,8 +318,6 @@ private struct PromptForm: View {
     let manage: () -> Void
     let go: () -> Void
     @FocusState private var focused: Bool
-    /// A name for the menu, and the prompt it fills the box with (to send as it is, or change first).
-    private typealias Idea = (name: String, symbol: String, prompt: String)
 
     private static let make: [Idea] = [
         ("Story", "book",
@@ -346,40 +364,8 @@ private struct PromptForm: View {
                     .foregroundStyle(Theme.text)
                 Spacer()
                 // Ideas fill the box, to send as they are or change first.
-                Menu {
-                    if hasEdit {
-                        Section("Improve") {
-                            ForEach(Self.improve, id: \.name) { idea in
-                                Button { use(idea.prompt) } label: { Label(idea.name, systemImage: idea.symbol) }
-                            }
-                        }
-                    }
-                    Section("Create") {
-                        ForEach(Self.make, id: \.name) { idea in
-                            Button { use(idea.prompt) } label: { Label(idea.name, systemImage: idea.symbol) }
-                        }
-                    }
-                    Section("Sound") {
-                        ForEach(Self.sound, id: \.name) { idea in
-                            Button { use(idea.prompt) } label: { Label(idea.name, systemImage: idea.symbol) }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "lightbulb").font(.system(size: 10, weight: .semibold))
-                        Text("Ideas").font(.system(size: 11, weight: .medium))
-                        Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).opacity(0.7)
-                    }
-                    .foregroundStyle(Theme.textDim)
-                    .padding(.horizontal, 8)
-                    .frame(height: 22)
-                    .contentShape(Capsule())
-                }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Ideas to start from")
+                IdeasMenu(sections: (hasEdit ? [("Improve", Self.improve)] : []) + [("Create", Self.make), ("Sound", Self.sound)],
+                          use: use)
             }
             .padding(.bottom, 8)
             PromptBox(text: $request, placeholder: placeholder, focused: $focused, submit: go)
@@ -398,6 +384,66 @@ private struct PromptForm: View {
     private func use(_ idea: String) {
         request = idea
         focused = true
+    }
+}
+
+/// A name for the menu, and the prompt it fills the box with (to send as it is, or change first).
+private typealias Idea = (name: String, symbol: String, prompt: String)
+
+/// Ideas for Local: only what it can do (length, pace, a look, music on or off, frame shape, speed,
+/// sound effects, levels), said the short way its reader understands best.
+private enum LocalIdeas {
+    static let improve: [Idea] = [
+        ("Tighten it", "scissors", "Make it shorter and faster."),
+        ("Cut to the beat", "metronome", "Cut it to the beat of the music."),
+        ("One look", "camera.filters", "Give every shot the Film print look."),
+        ("Clean it up", "sparkles", "Take out repeats and weak shots, and trim long shots."),
+    ]
+    static let make: [Idea] = [
+        ("Quick cut", "wand.and.stars", ""),
+        ("30-second highlight", "star", "Make a fast 30 second highlight cut to the beat."),
+        ("Vertical reel", "iphone", "Make a 20 second vertical video, fast."),
+        ("Timelapse", "timer", "Speed every shot up 8x, over the music."),
+        ("Slow and calm", "tortoise", "Make a calm 60 second cut."),
+    ]
+    static let sound: [Idea] = [
+        ("Even out levels", "slider.horizontal.3", "Make all audio clips the same output level."),
+    ]
+    static func sections(hasEdit: Bool) -> [(String, [Idea])] {
+        (hasEdit ? [("Improve", improve)] : []) + [("Create", make), ("Sound", sound)]
+    }
+}
+
+/// The Ideas menu: sections of ideas, each filling the prompt box.
+private struct IdeasMenu: View {
+    let sections: [(String, [Idea])]
+    let use: (String) -> Void
+
+    var body: some View {
+        Menu {
+            ForEach(sections, id: \.0) { title, ideas in
+                Section(title) {
+                    ForEach(ideas, id: \.name) { idea in
+                        Button { use(idea.prompt) } label: { Label(idea.name, systemImage: idea.symbol) }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "lightbulb").font(.system(size: 10, weight: .semibold))
+                Text("Ideas").font(.system(size: 11, weight: .medium))
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).opacity(0.7)
+            }
+            .foregroundStyle(Theme.textDim)
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .contentShape(Capsule())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Ideas to start from")
     }
 }
 
