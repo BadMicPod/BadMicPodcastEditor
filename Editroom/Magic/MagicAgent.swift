@@ -246,7 +246,10 @@ final class MagicAgent: ObservableObject {
         6. Speed: set_speed speeds a clip up (4 to 20 times for a timelapse) or slows it down. Turn a sped-up \
         clip's own sound right down (set_audio gain_db -60) unless they asked to keep it. For a long video like a \
         vlog, keep what people say whole, and use short titles to mark each part.
-        7. Finish. One look from list_looks on every shot so it feels like one film. A short title only if it \
+        7. Finish. Colour only when they asked for it, or when the footage clearly needs it (look at the frames): \
+        shots from different cameras or light that don't match, or shots too dark or washed out. Then one look \
+        from list_looks, or small set_grade fixes, on every shot so it feels like one film. Otherwise leave colour \
+        as it is, and on an existing edit don't change colour unless they asked. A short title only if it \
         helps. Fade music out over the last 2 seconds. A dissolve or dip to black only where it helps, never on \
         every cut.
         8. Check a few moments with get_frame and fix what's wrong.
