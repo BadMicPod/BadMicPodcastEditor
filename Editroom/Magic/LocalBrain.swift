@@ -155,20 +155,22 @@ enum LocalBrain {
         return nil
     }
 
-    static func applyMedia(_ r: inout LocalRecipe, named: [MediaAsset], action: String, request: String, pointed: Set<UUID> = []) {
+    static func applyMedia(_ r: inout LocalRecipe, named: [MediaAsset], action: String, request: String, pointed: Set<UUID> = [],
+                           hasEdit: Bool = false) {
         guard !named.isEmpty else { return }
         let text = request.lowercased()
         let only = ["only", "just ", "nothing else", "nothing but", "except", "solely", "keep "].contains { text.contains($0) }
         let remove = ["remove", "take out", "without", "delete", "drop", "get rid", "cut out", "no more", "lose "].contains { text.contains($0) }
-        // Named with @: it's a pick for sure. Unless they say to take it out, or that it's one among the
-        // rest ("@intro and most of the others"), those are the ones to use.
+        // Naming files on an edit that's already made ("put @a in front of @b") never takes the others
+        // out: only "only" or "remove" in so many words does (Apple's model guesses this wrong). For a
+        // new cut, files named with @ are the ones to use.
         let explicit = named.allSatisfy { pointed.contains($0.id) }
         // A name that's an everyday word ("intro", "run") may just be a word in the request ("a vlog
         // intro"): it picks media out only when the request says to, in so many words.
         let everyday = named.allSatisfy { a in (a.name as NSString).deletingPathExtension.allSatisfy { $0.isLetter || $0 == " " } }
         if everyday, !explicit, !only, !remove { return }
         let amongOthers = ["also", " too", "include", "as well", "most", "all ", "every", "the rest", "other"].contains { text.contains($0) }
-        let fallback = explicit && action == "unchanged" && !amongOthers ? "only" : action
+        let fallback = hasEdit ? "unchanged" : !explicit ? action : !amongOthers && action != "remove" ? "only" : "unchanged"
         let mode = only && !remove ? "only" : remove && !only ? "remove" : fallback
         let ids = Set(named.map(\.id))
         if mode == "only" { r.keepOnly = ids } else if mode == "remove" { r.takeOut = ids } else { return }
@@ -232,7 +234,7 @@ enum LocalBrain {
     }
 
     /// Reads a request into a recipe. `media` is the library, so named items can be picked out.
-    static func recipe(for request: String, media: [MediaAsset] = [], pointed: Set<UUID> = []) async throws -> LocalRecipe {
+    static func recipe(for request: String, media: [MediaAsset] = [], pointed: Set<UUID> = [], hasEdit: Bool = false) async throws -> LocalRecipe {
         let named = media.filter { pointed.contains($0.id) || Self.named(in: request, media: [$0]).count == 1 }
         #if canImport(FoundationModels)
         if #available(macOS 26, *), available {
@@ -257,7 +259,7 @@ enum LocalBrain {
                 r.frame = LocalRecipe.Frame(rawValue: out.frame) ?? .unchanged
                 r.cannotDo = out.cannotDo.trimmingCharacters(in: .whitespacesAndNewlines)
                 r = checked(r, against: request)
-                applyMedia(&r, named: named, action: out.mediaAction, request: request, pointed: pointed)
+                applyMedia(&r, named: named, action: out.mediaAction, request: request, pointed: pointed, hasEdit: hasEdit)
                 return r
             } catch {
                 throw Failure(message: "Apple Intelligence couldn't read that: \(error.localizedDescription)")

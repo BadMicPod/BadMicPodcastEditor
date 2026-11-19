@@ -21,6 +21,7 @@ enum LocalPointed {
         ]))
         let range = mentions.contains(.range) || says(["in/out", "in-out", "in and out points", "marked range", "the range"])
         let playhead = mentions.contains(.playhead) || says(["playhead"])
+        if let moved = reorder(request: request, project: p) { return moved }
         guard selection || range || playhead else { return nil }
 
         let remove = says(["remove", "delete", "take out", "take it out", "take them out", "get rid", "cut out", "cut it", "cut them", "drop",
@@ -162,6 +163,94 @@ enum LocalPointed {
             return Outcome(plan: MCPDraft.plan(base: p, edits: edits), said: "Split \(plural(under.count, "clip")) at \(at).")
         }
         return Outcome(said: "At the playhead, Local can split the clips there, or end or start the video there. \(cant)")
+    }
+}
+
+extension LocalPointed {
+    /// Moving shots around the edit by name: "put @b in front of @a", "swap @a and @b", "move @a to the
+    /// end", "open on @a". The shots on the main picture track are put in the new order, back to back,
+    /// each with its own sound; nothing else changes.
+    static func reorder(request: String, project p: Project) -> Outcome? {
+        let text = request.lowercased()
+        func says(_ words: [String]) -> Bool { words.contains { text.contains($0) } }
+        // The files it names, in the order it names them: with @, or by name.
+        var named: [(at: Int, id: UUID)] = MagicMention.find(in: request, media: p.assets).compactMap { m in
+            if case .media(let id) = m.mention { return (m.range.location, id) } else { return nil }
+        }
+        let plain = request as NSString
+        for a in LocalBrain.named(in: request, media: p.assets) where !named.contains(where: { $0.id == a.id }) {
+            let bare = (a.name as NSString).deletingPathExtension
+            let r = plain.range(of: bare, options: .caseInsensitive)
+            if r.location != NSNotFound { named.append((r.location, a.id)) }
+        }
+        named.sort { $0.at < $1.at }
+        let ids = named.map(\.id)
+        guard !ids.isEmpty else { return nil }
+
+        enum Move { case swap, before, after, start, end }
+        let move: Move? =
+            ids.count >= 2 && says(["swap", "switch", "trade places", "flip"]) ? .swap
+            : ids.count >= 2 && says(["in front of", "infront of", "before", "ahead of", "earlier than"]) ? .before
+            : ids.count >= 2 && says(["after", "behind", "following", "later than"]) ? .after
+            : says(["to the start", "to the beginning", "to the front", "at the start", "at the beginning", "open on", "open with",
+                    "start with", "start on", "begin with", "first shot", "go first", "come first"]) ? .start
+            : says(["to the end", "at the end", "end on", "end with", "close on", "close with", "last shot", "go last", "come last"]) ? .end
+            : nil
+        guard let move else { return nil }
+
+        // The main picture track: the lowest video track with shots on it.
+        // No edit yet ("open on @intro" for a new cut): that's for the planner that makes the cut.
+        guard let track = p.videoTracks.first(where: { t in p.clips.contains { $0.trackID == t.id && ($0.kind == .video || $0.kind == .image) } }) else {
+            return nil
+        }
+        guard !p.isLocked(track.id) else { return Outcome(said: "The main video track is locked, so nothing was moved.") }
+        let shots = p.clips.filter { $0.trackID == track.id && ($0.kind == .video || $0.kind == .image) }.sorted { $0.start < $1.start }
+        func name(_ id: UUID) -> String { p.assets.first { $0.id == id }?.name ?? "that file" }
+        func shot(_ id: UUID) -> Clip? { shots.first { $0.assetID == id } }
+        guard let a = shot(ids[0]) else { return Outcome(said: "\(name(ids[0])) isn't in the edit, so there's nothing to move.") }
+        var order = shots
+        let said: String
+        switch move {
+        case .swap, .before, .after:
+            guard let b = shot(ids[1]), b.id != a.id else { return Outcome(said: "\(name(ids[1])) isn't in the edit, so there's nothing to move it next to.") }
+            if move == .swap {
+                let i = order.firstIndex { $0.id == a.id }!, j = order.firstIndex { $0.id == b.id }!
+                order.swapAt(i, j)
+                said = "Swapped \(name(ids[0])) and \(name(ids[1]))."
+            } else {
+                order.removeAll { $0.id == a.id }
+                let j = order.firstIndex { $0.id == b.id }!
+                order.insert(a, at: move == .before ? j : j + 1)
+                said = "Put \(name(ids[0])) \(move == .before ? "in front of" : "after") \(name(ids[1]))."
+            }
+        case .start:
+            order.removeAll { $0.id == a.id }
+            order.insert(a, at: 0)
+            said = "Moved \(name(ids[0])) to the start."
+        case .end:
+            order.removeAll { $0.id == a.id }
+            order.append(a)
+            said = "Moved \(name(ids[0])) to the end."
+        }
+        guard order.map(\.id) != shots.map(\.id) else { return Outcome(said: "\(said.dropLast()) — it was already there, so nothing changed.") }
+        // Back to back from where the edit starts, each shot taking its own sound with it.
+        var t = shots[0].start
+        var deltas: [UUID: Double] = [:]
+        for c in order {
+            deltas[c.id] = t - c.start
+            t += c.duration
+        }
+        let edit = MagicEdit.change(a.id, "Move") { q in
+            let links = Dictionary(q.clips.compactMap { c in deltas[c.id].flatMap { d in c.linkID.map { ($0, d) } } }, uniquingKeysWith: { x, _ in x })
+            for i in q.clips.indices {
+                if let d = deltas[q.clips[i].id] {
+                    q.clips[i].start += d
+                } else if let l = q.clips[i].linkID, let d = links[l], !q.isLocked(q.clips[i].trackID) {
+                    q.clips[i].start += d
+                }
+            }
+        }
+        return Outcome(plan: MCPDraft.plan(base: p, edits: [edit]), said: said)
     }
 }
 

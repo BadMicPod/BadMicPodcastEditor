@@ -1263,8 +1263,21 @@ enum SelfTest {
                 let wholeOK = LocalPointed.plan(request: "make it shorter", recipe: LocalRecipe(), pointers: ptr, project: p) == nil
                 let brief = MagicAgent.brief(request: "@selected is weak", project: p, pointers: ptr)
                 let briefOK = brief.contains("@selected means exactly the selected clips") && brief.contains("Playhead: 7.00s")
-                let mOK = findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
-                log("MENTIONS \(mOK ? "OK" : "FAIL") find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
+                // Moving shots by name, and naming files on an edit never takes the others out.
+                func order(_ ask: String) -> [UUID] {
+                    guard let o = LocalPointed.plan(request: ask, recipe: LocalRecipe(), pointers: ptr, project: p), let plan = o.plan else { return [] }
+                    var q = plan.base
+                    for task in plan.tasks { task.edit.apply(&q, 1) }
+                    return shots(q).compactMap(\.assetID)
+                }
+                let moveOK = order("put @B in front of @A") == [b.id, a.id, a.id, b.id]
+                    && order("swap @A and @B") == [b.id, a.id, a.id, b.id]
+                    && order("move @A to the end") == [b.id, a.id, b.id, a.id]
+                var named = LocalRecipe()
+                LocalBrain.applyMedia(&named, named: [a, b], action: "only", request: "put @B in front of @A", pointed: [a.id, b.id], hasEdit: true)
+                let keepOK = named.keepOnly.isEmpty && named.takeOut.isEmpty
+                let mOK = moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
+                log("MENTIONS \(mOK ? "OK" : "FAIL") move=\(moveOK) keep=\(keepOK) find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
                 good = good && mOK
             }
             log("LOCAL IMPROVE \(good ? "OK" : "FAIL") \(detail)")
