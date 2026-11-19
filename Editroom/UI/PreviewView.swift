@@ -127,7 +127,7 @@ struct PreviewView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
                                 .allowsHitTesting(false)
                         )
-                        .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(Color.white.opacity(0.06)))
+                        .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(Theme.ink.opacity(0.06)))
                     // Nothing on the timeline yet: say how to start, and take a click as "import".
                     if model.project.clips.isEmpty {
                         EmptyViewerPrompt(hasMedia: !model.project.assets.isEmpty) { model.showImportPanel() }
@@ -265,9 +265,10 @@ private struct SourceFrame: View {
             }
             HStack(spacing: 6) {
                 Text(a.name).font(.system(size: 11.5, weight: .semibold))
-                Text(Timecode.string(current.time, fps: fps)).font(Theme.mono(11.5, .regular)).foregroundStyle(Theme.textDim)
+                Text(Timecode.string(current.time, fps: fps)).font(Theme.mono(11.5, .regular)).foregroundStyle(Color(hex: 0x9A9A96))
             }
-            .foregroundStyle(Theme.text)
+            // On the picture, so light type in every theme.
+            .foregroundStyle(Color(hex: 0xF2F2F0))
             .padding(.horizontal, 8)
             .frame(height: 24)
             .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.black.opacity(0.65)))
@@ -317,7 +318,7 @@ private struct EmptyViewerPrompt: View {
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-                    .foregroundStyle(hovering ? Color.white.opacity(0.3) : Color(hex: 0x2C2C2C))
+                    .foregroundStyle(hovering ? Theme.ink.opacity(0.3) : Theme.outline)
             )
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
@@ -389,13 +390,13 @@ private struct PlayButton: View {
         Button(action: action) {
             Image(systemName: playing ? "pause.fill" : "play.fill")
                 .font(.system(size: 17, weight: .bold))
-                .foregroundStyle(Color(hex: 0x0A0A0A))
+                .foregroundStyle(Theme.onText)
                 .offset(x: playing ? 0 : 1.5)
                 .frame(width: 46, height: 46)
-                .background(Circle().fill(hovering ? Color.white : Theme.text))
+                .background(Circle().fill(hovering ? Theme.ink : Theme.text))
                 // A dark ring sets it off from the bar.
                 .padding(5)
-                .background(Circle().fill(Color(hex: 0x161616)).overlay(Circle().strokeBorder(Color.white.opacity(0.05))))
+                .background(Circle().fill(Theme.transport).overlay(Circle().strokeBorder(Theme.ink.opacity(0.05))))
                 .scaleEffect(hovering ? 1.05 : 1)
                 .animation(.easeOut(duration: 0.12), value: hovering)
                 .contentShape(Circle())

@@ -11,6 +11,8 @@ struct ContentView: View {
     @ObservedObject private var magic = MagicState.shared
     private var locked: Bool { magic.stage != nil }
     @Environment(\.openSettings) private var openSettings
+    /// A new theme rebuilds the editor's views, so every colour is read again.
+    @ObservedObject private var themes = ThemeStore.shared
 
     var body: some View {
         GeometryReader { geo in
@@ -46,6 +48,7 @@ struct ContentView: View {
             .overlay(alignment: .top) { Hairline() }
             }
         }
+        .id(themes.theme)
         .background(Theme.bg)
         // Files dropped anywhere the timeline or library doesn't handle them are imported.
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
@@ -69,7 +72,7 @@ struct ContentView: View {
                 .allowsHitTesting(false)
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(Theme.scheme)
         // The title bar in the panel black, not macOS's lighter default.
         .toolbarBackground(Theme.panel, for: .windowToolbar)
         .toolbarBackground(.visible, for: .windowToolbar)
@@ -83,16 +86,19 @@ struct ContentView: View {
                         Circle().fill(Theme.textFaint).frame(width: 5, height: 5)
                     }
                 }
+                .id(themes.theme)
             }
             .withoutGlass()
             ToolbarItem(placement: .primaryAction) {
                 ExportProgressPill(queue: model.exports)
+                    .id(themes.theme)
             }
             .withoutGlass()
             if magicEnabled {
                 ToolbarItem(placement: .primaryAction) {
                     MagicButton(model: model)
                         .padding(.trailing, 8)
+                        .id(themes.theme)
                 }
                 .withoutGlass()
             }
@@ -100,6 +106,7 @@ struct ContentView: View {
                 PillButton(title: "Export", prominent: true) { model.showExport = true }
                     .help("Export (\(ShortcutStore.shared.combos(.export).first?.display ?? "⌘E"))")
                     .padding(.trailing, 10)
+                    .id(themes.theme)
             }
             .withoutGlass()
         }
@@ -143,6 +150,7 @@ enum KeyCommands {
                 window.backgroundColor = Theme.NS.panel
                 window.titlebarAppearsTransparent = true
             }
+            ThemeStore.shared.apply()
         }
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             MainActor.assumeIsolated { handle(event, model) ? nil : event }
@@ -327,8 +335,8 @@ struct MagicButton: View {
             })
             .frame(width: held)
             .frame(height: 26)
-            .background(Capsule().fill(Color.white.opacity(hovering ? 0.14 : 0.08)))
-            .overlay(Capsule().strokeBorder(Color.white.opacity(0.05)))
+            .background(Capsule().fill(Theme.ink.opacity(hovering ? 0.14 : 0.08)))
+            .overlay(Capsule().strokeBorder(Theme.ink.opacity(0.05)))
             .contentShape(Capsule())
             .animation(.easeOut(duration: 0.15), value: status)
         }

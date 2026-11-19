@@ -23,7 +23,7 @@ struct ExportProgressPill: View {
         HStack(spacing: 8) {
             if let current = queue.current {
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.12))
+                    Capsule().fill(Theme.ink.opacity(0.12))
                     Capsule().fill(Theme.accent).frame(width: max(4, 72 * queue.progress))
                 }
                 .frame(width: 72, height: 4)

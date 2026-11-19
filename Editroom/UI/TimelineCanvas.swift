@@ -1092,10 +1092,10 @@ final class TimelineCanvas: NSView {
             return s
         }(),
     ]
-    private static let rulerAttrs: [NSAttributedString.Key: Any] = [
+    private static var rulerAttrs: [NSAttributedString.Key: Any] { [
         .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular),
         .foregroundColor: Theme.NS.textFaint,
-    ]
+    ] }
     private static let bubbleAttrs: [NSAttributedString.Key: Any] = [
         .font: NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .semibold),
         .foregroundColor: NSColor.white,
@@ -1137,7 +1137,7 @@ final class TimelineCanvas: NSView {
         // Highlight the lanes a drag will land on
         for row in layout.rows where targets.contains(row.track.id) {
             let r = CGRect(x: 0, y: ruler + row.y - view.scrollY, width: bounds.width, height: row.height)
-            NSColor(white: 1, alpha: 0.035).setFill()
+            Theme.NS.ink(0.035).setFill()
             r.fill()
         }
 
@@ -1185,7 +1185,7 @@ final class TimelineCanvas: NSView {
         // Skim line: where the viewer is showing, while the playhead stays put.
         if let t = model.skimTime {
             let sx = x(t)
-            ctx.setFillColor(NSColor(white: 1, alpha: 0.55).cgColor)
+            ctx.setFillColor(Theme.NS.ink(0.55).cgColor)
             ctx.fill(CGRect(x: sx - 0.5, y: TimelineLayout.ruler, width: 1, height: bounds.height - TimelineLayout.ruler))
             ctx.fill(CGRect(x: sx - 3, y: TimelineLayout.ruler - 6, width: 6, height: 6))
         }
@@ -1208,7 +1208,7 @@ final class TimelineCanvas: NSView {
             let ys = (Array(overrides.values) + ghosts).compactMap { rect(for: $0) }
             let top = max(ruler, (ys.map(\.minY).min() ?? ruler) - 4)
             let bottom = min(bounds.height, (ys.map(\.maxY).max() ?? bounds.height) + 4)
-            ctx.setFillColor(NSColor(white: 1, alpha: 0.9).cgColor)
+            ctx.setFillColor(Theme.NS.ink(0.9).cgColor)
             ctx.fill(CGRect(x: sx - 0.5, y: top, width: 1, height: bottom - top))
             for y in [top, bottom] { ctx.fillEllipse(in: CGRect(x: sx - 3, y: y - 3, width: 6, height: 6)) }
         }
@@ -1218,7 +1218,7 @@ final class TimelineCanvas: NSView {
             guard let c = project.clip(line.clip), let r = rect(for: c) else { continue }
             let sx = x(line.time)
             let top = max(ruler, r.minY - 4), bottom = min(bounds.height, r.maxY + 4)
-            ctx.setFillColor(NSColor(white: 1, alpha: 0.9).cgColor)
+            ctx.setFillColor(Theme.NS.ink(0.9).cgColor)
             ctx.fill(CGRect(x: sx - 0.5, y: top, width: 1, height: bottom - top))
             for y in [top, bottom] { ctx.fillEllipse(in: CGRect(x: sx - 3, y: y - 3, width: 6, height: 6)) }
         }
@@ -1279,10 +1279,10 @@ final class TimelineCanvas: NSView {
         }
     }
 
-    private static let hintAttrs: [NSAttributedString.Key: Any] = [
+    private static var hintAttrs: [NSAttributedString.Key: Any] { [
         .font: NSFont.systemFont(ofSize: 11.5),
-        .foregroundColor: NSColor(hex: 0x3E3E3C),
-    ]
+        .foregroundColor: Theme.NS.hint,
+    ] }
 
     private static let readoutAttrs: [NSAttributedString.Key: Any] = [
         .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),
@@ -1315,7 +1315,7 @@ final class TimelineCanvas: NSView {
             let t = Double(k) * major
             let px = x(t)
             if t >= 0 {
-                ctx.setFillColor(NSColor(white: 1, alpha: 0.28).cgColor)
+                ctx.setFillColor(Theme.NS.ink(0.28).cgColor)
                 ctx.fill(CGRect(x: px.rounded(), y: ruler - 9, width: 1, height: 8))
                 var label = Timecode.short(t)
                 if showFrames {
@@ -1325,7 +1325,7 @@ final class TimelineCanvas: NSView {
                 (label as NSString).draw(at: CGPoint(x: px + 5, y: 5), withAttributes: Self.rulerAttrs)
             }
             if subdivisions > 1 {
-                ctx.setFillColor(NSColor(white: 1, alpha: 0.13).cgColor)
+                ctx.setFillColor(Theme.NS.ink(0.13).cgColor)
                 for j in 1..<subdivisions {
                     let mt = t + major * Double(j) / Double(subdivisions)
                     if mt >= 0 { ctx.fill(CGRect(x: x(mt).rounded(), y: ruler - 5, width: 1, height: 4)) }
@@ -1361,10 +1361,10 @@ final class TimelineCanvas: NSView {
         if project.inPoint != nil || project.outPoint != nil {
             let a = project.inPoint.map { x($0) }, b = project.outPoint.map { x($0) }
             if let r = project.playRange {
-                ctx.setFillColor(NSColor(white: 1, alpha: 0.06).cgColor)
+                ctx.setFillColor(Theme.NS.ink(0.06).cgColor)
                 ctx.fill(CGRect(x: x(r.start), y: 0, width: x(r.end) - x(r.start), height: ruler - 1))
             }
-            ctx.setFillColor(NSColor.white.cgColor)
+            ctx.setFillColor(Theme.NS.ink.cgColor)
             for (edge, inward) in [(a, CGFloat(1)), (b, CGFloat(-1))] {
                 guard let ex = edge?.rounded() else { continue }
                 ctx.fill(CGRect(x: ex - 1, y: 2, width: 2, height: ruler - 3))
@@ -1374,10 +1374,10 @@ final class TimelineCanvas: NSView {
         }
     }
 
-    private static let markerAttrs: [NSAttributedString.Key: Any] = [
+    private static var markerAttrs: [NSAttributedString.Key: Any] { [
         .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .medium),
-        .foregroundColor: NSColor(white: 1, alpha: 0.92),
-    ]
+        .foregroundColor: Theme.NS.text.withAlphaComponent(0.92),
+    ] }
 
     private func markerLabel(_ m: Marker) -> NSAttributedString {
         NSAttributedString(string: m.name, attributes: Self.markerAttrs)
@@ -1422,7 +1422,7 @@ final class TimelineCanvas: NSView {
         let pop = NSPopover()
         pop.behavior = .transient
         pop.animates = false
-        pop.appearance = NSAppearance(named: .darkAqua)
+        pop.appearance = NSAppearance(named: Theme.current.isLight ? .aqua : .darkAqua)
         pop.contentViewController = host
         pop.contentSize = host.view.fittingSize
         pop.delegate = self
@@ -1477,7 +1477,7 @@ final class TimelineCanvas: NSView {
         ctx.clip()
 
         let fill = offline && !ghosts.contains(where: { $0.id == c.id })
-            ? NSColor(hex: 0x5A1F1F)
+            ? Theme.NS.offline
             : base
         ctx.setFillColor(fill.cgColor)
         ctx.fill(r)
@@ -1581,7 +1581,7 @@ final class TimelineCanvas: NSView {
         ctx.setAlpha(alpha)
         ctx.addPath(CGPath(roundedRect: r.insetBy(dx: 0.5, dy: 0.5), cornerWidth: radius, cornerHeight: radius, transform: nil))
         if selected {
-            ctx.setStrokeColor(NSColor.white.cgColor)
+            ctx.setStrokeColor(Theme.NS.selection.cgColor)
             ctx.setLineWidth(1.5)
         } else if hovered {
             ctx.setStrokeColor(NSColor(white: 1, alpha: 0.6).cgColor)
@@ -1805,7 +1805,7 @@ struct MarkerPanel: View {
                 .frame(height: 30)
                 .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.bg))
                 .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(nameFocused ? Color.white.opacity(0.85) : Theme.stroke, lineWidth: 1))
+                    .strokeBorder(nameFocused ? Theme.text.opacity(0.85) : Theme.stroke, lineWidth: 1))
                 .focused($nameFocused)
                 .onSubmit { model.editingMarker = nil }
                 .onChange(of: name) { _, new in
@@ -1819,7 +1819,7 @@ struct MarkerPanel: View {
                         Circle().fill(Color(hex: tint.hex))
                             .frame(width: 15, height: 15)
                             .padding(3)
-                            .overlay(Circle().strokeBorder(Color.white.opacity(on ? 0.9 : 0), lineWidth: 1.5))
+                            .overlay(Circle().strokeBorder(Theme.text.opacity(on ? 0.9 : 0), lineWidth: 1.5))
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)

@@ -6,21 +6,24 @@ struct SettingsView: View {
     @ObservedObject var model: EditorModel
 
     enum Tab: String, CaseIterable, Identifiable {
-        case shortcuts = "Shortcuts", magic = "Magic", updates = "Updates"
+        case appearance = "Appearance", shortcuts = "Shortcuts", magic = "Magic", updates = "Updates"
         var id: Self { self }
         var symbol: String {
             switch self {
+            case .appearance: "paintpalette"
             case .shortcuts: "keyboard"
             case .magic: "wand.and.sparkles"
             case .updates: "arrow.down.circle"
             }
         }
-        /// The tab's name kept in UserDefaults ("shortcuts", "magic", "updates").
+        /// The tab's name kept in UserDefaults ("appearance", "shortcuts", "magic", "updates").
         var key: String { rawValue.lowercased() }
     }
 
     @AppStorage("settingsTab") private var tabKey = "shortcuts"
     @State private var hovered: Tab?
+    /// A new theme rebuilds these views, so every colour is read again.
+    @ObservedObject private var themes = ThemeStore.shared
     private var tab: Tab { Tab.allCases.first { $0.key == tabKey } ?? .shortcuts }
 
     var body: some View {
@@ -42,6 +45,7 @@ struct SettingsView: View {
                     .padding(.top, 20)
                     .padding(.bottom, 4)
                 switch tab {
+                case .appearance: AppearanceSettings()
                 case .shortcuts: ShortcutSettings()
                 case .magic: MagicSettings(model: model)
                 case .updates: UpdateSettings()
@@ -49,10 +53,11 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .id(themes.theme)
         .frame(width: 600, height: 640)
         .background(Theme.panel)
         .navigationTitle("Settings")
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(Theme.scheme)
     }
 
     private func tabButton(_ item: Tab) -> some View {
@@ -65,7 +70,7 @@ struct SettingsView: View {
             .foregroundStyle(selected ? Theme.text : Theme.textDim)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
-            .background(Color.white.opacity(selected ? 0.1 : hovered == item ? 0.05 : 0),
+            .background(Theme.ink.opacity(selected ? 0.1 : hovered == item ? 0.05 : 0),
                         in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
@@ -79,6 +84,119 @@ private struct SectionLabel: View {
     let text: String
     var body: some View {
         Text(text.uppercased()).font(Theme.label()).kerning(1.4).foregroundStyle(Theme.textFaint)
+    }
+}
+
+// MARK: Appearance
+
+/// The themes, each shown as a small picture of the editor in its colours.
+private struct AppearanceSettings: View {
+    @ObservedObject var themes = ThemeStore.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("How Editroom looks. The viewer stays black in every theme, so pictures look the same.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textDim)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 12) {
+                ForEach(AppTheme.allCases) { theme in
+                    ThemeChoice(theme: theme, selected: themes.theme == theme) { themes.theme = theme }
+                }
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+    }
+}
+
+private struct ThemeChoice: View {
+    let theme: AppTheme
+    let selected: Bool
+    let pick: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: pick) {
+            VStack(spacing: 8) {
+                ThemePreview(palette: theme.palette)
+                    .frame(height: 78)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Theme.ink.opacity(0.12), lineWidth: 1))
+                    .padding(3)
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(selected ? Theme.accent : (hovering ? Theme.ink.opacity(0.25) : .clear), lineWidth: 2))
+                Text(theme.name)
+                    .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? Theme.text : Theme.textDim)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// The editor in miniature, in a theme's colours: Media, viewer and inspector over the timeline.
+private struct ThemePreview: View {
+    let palette: Palette
+
+    private func c(_ hex: UInt32, _ a: Double = 1) -> Color { Color(hex: hex, alpha: a) }
+
+    var body: some View {
+        GeometryReader { g in
+            let w = g.size.width, h = g.size.height
+            let top = h * 0.11, split = h * 0.56
+            ZStack(alignment: .topLeading) {
+                c(palette.bg)
+                // Title bar, with the Export pill.
+                c(palette.panel).frame(width: w, height: top)
+                Capsule().fill(c(palette.text)).frame(width: w * 0.12, height: top * 0.5)
+                    .offset(x: w * 0.84, y: top * 0.25)
+                // Media, with a few items.
+                c(palette.panel).frame(width: w * 0.22, height: split - top).offset(y: top)
+                ForEach(0..<3) { i in
+                    RoundedRectangle(cornerRadius: 1.5).fill(c(palette.video))
+                        .frame(width: w * 0.08, height: h * 0.07)
+                        .offset(x: w * 0.025, y: top + h * 0.06 + CGFloat(i) * h * 0.11)
+                    Capsule().fill(c(palette.textDim, 0.7)).frame(width: w * 0.08, height: 2)
+                        .offset(x: w * 0.12, y: top + h * 0.085 + CGFloat(i) * h * 0.11)
+                }
+                // The viewer: black, in every theme.
+                Color.black.frame(width: w * 0.42, height: split - top - h * 0.12)
+                    .offset(x: w * 0.29, y: top + h * 0.05)
+                Circle().fill(c(palette.text)).frame(width: h * 0.05, height: h * 0.05)
+                    .offset(x: w * 0.5 - h * 0.025, y: split - h * 0.065)
+                // Inspector.
+                c(palette.panel).frame(width: w * 0.22, height: split - top).offset(x: w * 0.78, y: top)
+                ForEach(0..<3) { i in
+                    Capsule().fill(c(palette.ink, 0.12)).frame(width: w * 0.16, height: 2)
+                        .offset(x: w * 0.81, y: top + h * 0.08 + CGFloat(i) * h * 0.09)
+                }
+                // Timeline: ruler, lanes and clips, and the playhead.
+                c(palette.panel).frame(width: w, height: h * 0.07).offset(y: split)
+                ForEach(0..<3) { i in
+                    c(palette.lane).frame(width: w, height: h * 0.1).offset(y: split + h * 0.09 + CGFloat(i) * h * 0.12)
+                }
+                ForEach(Array([(0.04, 0.2), (0.25, 0.28), (0.54, 0.16)].enumerated()), id: \.offset) { _, clip in
+                    RoundedRectangle(cornerRadius: 2).fill(c(palette.video))
+                        .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(c(palette.clipStroke)))
+                        .frame(width: w * clip.1, height: h * 0.1)
+                        .offset(x: w * clip.0, y: split + h * 0.09)
+                    RoundedRectangle(cornerRadius: 2).fill(c(palette.audio))
+                        .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(c(palette.clipStroke)))
+                        .frame(width: w * clip.1, height: h * 0.1)
+                        .offset(x: w * clip.0, y: split + h * 0.21)
+                }
+                RoundedRectangle(cornerRadius: 2).fill(c(palette.audio))
+                    .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(c(palette.clipStroke)))
+                    .frame(width: w * 0.66, height: h * 0.1)
+                    .offset(x: w * 0.04, y: split + h * 0.33)
+                c(palette.accent).frame(width: 1.5, height: h - split).offset(x: w * 0.36, y: split)
+            }
+        }
     }
 }
 
@@ -227,7 +345,7 @@ private struct ShortcutRow: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 34)
-        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.white.opacity(hovering || recording ? 0.05 : 0)))
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.ink.opacity(hovering || recording ? 0.05 : 0)))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { recording ? recorder.stop() : recorder.start(action) }
@@ -250,7 +368,7 @@ private struct KeyCap: View {
             .padding(.horizontal, 7)
             .frame(minWidth: 24, minHeight: 22)
             .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Theme.raised))
-            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Color.white.opacity(0.1)))
+            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Theme.ink.opacity(0.1)))
     }
 }
 

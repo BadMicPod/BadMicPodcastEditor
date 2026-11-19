@@ -185,6 +185,11 @@ final class EditorModel: ObservableObject {
                 }
                 if args.contains("--show-export") { self.showExport = true }
                 if args.contains("--show-agents") { self.showAgents = true }
+                // `--switch-theme light` (testing): change the theme while running, as Settings does.
+                if let k = args.firstIndex(of: "--switch-theme"), args.count > k + 1, let theme = AppTheme(rawValue: args[k + 1]) {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    ThemeStore.shared.theme = theme
+                }
                 if args.contains("--play") { self.play() }
                 if args.contains("--magic") {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)

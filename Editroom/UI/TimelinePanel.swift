@@ -130,7 +130,7 @@ struct ToolKey: View {
                 .foregroundStyle(on || hovering ? Theme.text : Theme.textDim)
                 .frame(width: 30, height: 24)
                 .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(on ? Theme.raised : .clear))
-                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Color.white.opacity(on ? 0.1 : 0)))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.ink.opacity(on ? 0.1 : 0)))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -209,7 +209,7 @@ private struct RangeThumb: View {
     var body: some View {
         let lit = hot != nil || active
         ZStack {
-            Capsule().fill(Color.white.opacity(lit ? 0.3 : 0.2))
+            Capsule().fill(Theme.ink.opacity(lit ? 0.3 : 0.2))
             if vertical {
                 VStack { grip(0); Spacer(minLength: 0); grip(2) }
             } else {
@@ -222,7 +222,7 @@ private struct RangeThumb: View {
         Circle()
             .fill(Theme.bg)
             // The grips work as a pair, so they light up as a pair.
-            .overlay(Circle().strokeBorder(hot == 0 || hot == 2 ? Color.white : Color.white.opacity(0.6), lineWidth: 2))
+            .overlay(Circle().strokeBorder(hot == 0 || hot == 2 ? Theme.ink : Theme.ink.opacity(0.6), lineWidth: 2))
             .frame(width: RangeBarStyle.handle, height: RangeBarStyle.handle)
     }
 }
@@ -596,7 +596,7 @@ struct MiniKey: View {
     var body: some View {
         Button(action: action) {
             Glyph(symbol: symbol, size: 9.5, weight: .semibold)
-                .foregroundStyle(on ? Color.black.opacity(0.85) : (hovering ? Theme.text : Theme.textDim))
+                .foregroundStyle(on ? Theme.onText.opacity(0.85) : (hovering ? Theme.text : Theme.textDim))
                 .frame(width: 20, height: 20)
                 .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(on ? Theme.text : (hovering ? Theme.hover : Theme.field)))
                 .contentShape(Rectangle())
@@ -648,7 +648,7 @@ struct LevelMeter: View {
     private static let gap: CGFloat = 1
 
     private static func color(_ db: Double) -> Color {
-        db > -3 ? Theme.accent : db > -12 ? Color(nsColor: Theme.NS.snap) : Color(hex: 0xD9D9D6)
+        db > -3 ? Theme.alert : db > -12 ? Color(nsColor: Theme.NS.snap) : Theme.meterLow
     }
 
     var body: some View {
@@ -662,11 +662,11 @@ struct LevelMeter: View {
             let peak = Int((Double(span) * ((r.peak - MeterState.floor) / -MeterState.floor)).clamped(to: 0...Double(span))) - 1
             VStack(spacing: Self.gap) {
                 Rectangle()
-                    .fill(r.clipped ? Theme.accent : Color(hex: 0x262626))
+                    .fill(r.clipped ? Theme.alert : Theme.well)
                     .frame(height: Self.segment)
                 ForEach((0..<span).reversed(), id: \.self) { i in
                     Rectangle()
-                        .fill(i < lit || (i == peak && r.peak > MeterState.floor + 0.5) ? Self.color(MeterState.floor * (1 - Double(i + 1) / Double(span))) : Color(hex: 0x262626))
+                        .fill(i < lit || (i == peak && r.peak > MeterState.floor + 0.5) ? Self.color(MeterState.floor * (1 - Double(i + 1) / Double(span))) : Theme.well)
                         .frame(height: Self.segment)
                 }
             }

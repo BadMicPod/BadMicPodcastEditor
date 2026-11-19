@@ -299,9 +299,9 @@ private struct AssetRow: View {
             Spacer(minLength: 0)
         }
         .padding(4)
-        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(picked ? Color.white.opacity(0.12) : hovering ? Theme.hover : .clear))
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(picked ? Theme.ink.opacity(0.12) : hovering ? Theme.hover : .clear))
         .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
-            .strokeBorder(picked ? Color.white.opacity(0.18) : Color(hex: 0x3A3A3A).opacity(selected ? 1 : 0), lineWidth: 1))
+            .strokeBorder(picked ? Theme.ink.opacity(0.18) : Theme.control.opacity(selected ? 1 : 0), lineWidth: 1))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)

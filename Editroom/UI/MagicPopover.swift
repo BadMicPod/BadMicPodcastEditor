@@ -156,7 +156,7 @@ struct MagicPopover: View {
         .font(.system(size: 10.5))
         .foregroundStyle(Theme.textFaint)
         .padding(.top, 10)
-        .overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.07)).frame(height: 0.5) }
+        .overlay(alignment: .top) { Rectangle().fill(Theme.ink.opacity(0.07)).frame(height: 0.5) }
         .padding(.top, 11)
     }
 
@@ -243,7 +243,7 @@ private struct AITab: View {
             .frame(maxWidth: .infinity)
             .frame(height: 26)
             .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(on ? Theme.raised : .clear))
-            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Color.white.opacity(on ? 0.1 : 0)))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.ink.opacity(on ? 0.1 : 0)))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -521,10 +521,10 @@ private struct ChipLabel: View {
             Text(title).font(.system(size: 11, weight: .medium))
             Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).opacity(0.7)
         }
-        .foregroundStyle(Color(hex: 0xC9C9C5))
+        .foregroundStyle(Theme.chip)
         .padding(.horizontal, 9)
         .frame(height: 24)
-        .background(Capsule().fill(Color.white.opacity(0.07)))
+        .background(Capsule().fill(Theme.ink.opacity(0.07)))
         .contentShape(Capsule())
     }
 }

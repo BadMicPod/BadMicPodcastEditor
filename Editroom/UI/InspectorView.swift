@@ -559,7 +559,7 @@ struct ThinSlider: View {
             let travel = max(1, geo.size.width - knob)
             let x = CGFloat(min(1, max(0, value))) * travel
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.12)).frame(height: 2)
+                Capsule().fill(Theme.ink.opacity(0.12)).frame(height: 2)
                 Capsule().fill(Theme.text).frame(width: x + knob / 2, height: 2)
                 Circle()
                     .fill(Theme.text)
@@ -847,7 +847,7 @@ struct MenuField<Content: View>: View {
             .frame(height: height)
             .frame(maxWidth: .infinity)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovering ? Theme.hover : Theme.field))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.05)))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.ink.opacity(0.05)))
             .contentShape(Rectangle())
         }
         .menuStyle(.button)
@@ -880,7 +880,7 @@ private struct FontPicker: View {
             .frame(height: 28)
             .frame(maxWidth: .infinity)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovering ? Theme.hover : Theme.field))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.05)))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.ink.opacity(0.05)))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1064,8 +1064,8 @@ private struct ColorWheel: View {
                 Circle()
                     .strokeBorder(AngularGradient(colors: [.red, .yellow, .green, .cyan, .blue, Color(red: 1, green: 0, blue: 1), .red], center: .center), lineWidth: 3)
                     .opacity(hovering || dragging ? 0.95 : 0.6)
-                Rectangle().fill(Color.white.opacity(0.1)).frame(width: 1, height: s - 14)
-                Rectangle().fill(Color.white.opacity(0.1)).frame(width: s - 14, height: 1)
+                Rectangle().fill(Theme.ink.opacity(0.1)).frame(width: 1, height: s - 14)
+                Rectangle().fill(Theme.ink.opacity(0.1)).frame(width: s - 14, height: 1)
                 Circle()
                     .fill(active ? Theme.accent : Color.white)
                     .overlay(Circle().strokeBorder(Color.black.opacity(0.5), lineWidth: 1))
