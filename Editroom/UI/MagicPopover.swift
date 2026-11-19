@@ -628,7 +628,7 @@ private struct MentionOption: Identifiable {
                 case .solid: "Solid"
                 case .text: "Text"
                 }
-                return MentionOption(id: l.id.uuidString, name: "clip:" + l.name, detail: "\(kind)  ·  \(l.track)  ·  \(clock(l.start))")
+                return MentionOption(id: l.id.uuidString, name: "clip:" + l.name, detail: "\(l.track)  ·  \(clock(l.start))  ·  \(kind)")
             }
             if let kinds = clipKinds[rest] { return labels.filter { kinds.contains($0.kind) }.map(row) }
             let starts = labels.filter { $0.name.lowercased().hasPrefix(rest) }
