@@ -27,11 +27,16 @@ struct LocalRecipe: Equatable {
     var clearRest = false
     /// Asks for nothing Local can do (no setting, no media): it shouldn't edit anything.
     var isEmpty: Bool {
-        seconds == nil && pace == .unchanged && look == nil && music == .unchanged && frame == .unchanged && !isFocused
+        seconds == nil && pace == .unchanged && look == nil && music == .unchanged && frame == .unchanged
+            && keepOnly.isEmpty && takeOut.isEmpty && speed == nil
     }
 
     /// About which media to use: then Local does just that (and closes gaps), nothing else unasked.
-    var isFocused: Bool { !keepOnly.isEmpty || !takeOut.isEmpty }
+    var isFocused: Bool { !keepOnly.isEmpty || !takeOut.isEmpty || onlyAsked }
+    /// A specific request ("10x speed", "black and white"): do just that, not the general clean-up too.
+    var onlyAsked = false
+    /// Clip speed for every shot: 10 for "1000%" or "10x", 0.5 for "half speed" or "slow motion".
+    var speed: Double?
 
     static let plain = LocalRecipe()
 
@@ -43,6 +48,7 @@ struct LocalRecipe: Equatable {
         if let look { parts.append(look == "none" ? "no look" : look) }
         if music == .off { parts.append("no music") } else if music == .add { parts.append("music added") }
         if frame != .unchanged { parts.append(frame.rawValue) }
+        if let speed { parts.append(String(format: "speed ×%g", speed)) }
         if !keepOnly.isEmpty { parts.append("only " + mediaNames.joined(separator: ", ")) }
         if !takeOut.isEmpty { parts.append(mediaNames.joined(separator: ", ") + " out") }
         return parts.joined(separator: ", ")
@@ -83,6 +89,23 @@ enum LocalBrain {
                 "cut it down", "make it work", "edit it", "magic"].contains { t.contains($0) }
     }
 
+    /// Clip speed a request asks for: "1000%" or "10x" or "10 times" (with speed / faster / slower nearby),
+    /// "double speed", "half speed", "slow motion".
+    static func speed(in request: String) -> Double? {
+        let t = request.lowercased()
+        let about = ["speed", "faster", "slower", "fast", "slow", "sped", "timelapse", "time lapse", "playback"].contains { t.contains($0) }
+        if t.contains("slow motion") || t.contains("slow-mo") || t.contains("slowmo") { return 0.5 }
+        if t.contains("double speed") || t.contains("twice as fast") { return 2 }
+        if t.contains("half speed") || t.contains("half as fast") { return 0.5 }
+        if t.contains("normal speed") || t.contains("real time") || t.contains("realtime") { return 1 }
+        guard about else { return nil }
+        if let m = t.range(of: #"(\d+(\.\d+)?)\s*%"#, options: .regularExpression),
+           let n = Double(t[m].filter { $0.isNumber || $0 == "." }) { return (n / 100).clamped(to: 0.05...100) }
+        if let m = t.range(of: #"(\d+(\.\d+)?)\s*(x|times)\b"#, options: .regularExpression),
+           let n = Double(t[m].prefix { $0.isNumber || $0 == "." }) { return n.clamped(to: 0.05...100) }
+        return nil
+    }
+
     static func applyMedia(_ r: inout LocalRecipe, named: [MediaAsset], action: String, request: String) {
         guard !named.isEmpty else { return }
         let text = request.lowercased()
@@ -105,7 +128,7 @@ enum LocalBrain {
         let text = request.lowercased()
         func says(_ words: [String]) -> Bool { words.contains { text.contains($0) } }
         let lengthWords = ["second", "sec", "minute", "min", "long", "short", "length", "s "]
-        let paceWords = ["pace", "pacing", "calm", "slow", "relax", "chill", "gentle", "fast", "quick", "punch", "snappy", "energ", "rhythm", "speed", "tempo"]
+        let paceWords = ["pace", "pacing", "calm", "slow", "relax", "chill", "gentle", "fast", "quick", "punch", "snappy", "energ", "rhythm", "tempo"]
         let lookWords = ["look", "grade", "colour", "color", "film", "warm", "cool", "mono", "black and white", "b&w", "bw", "vintage", "fade",
                          "pastel", "teal", "orange", "golden", "night", "bleach", "filter", "tone", "cinematic", "moody", "natural", "lut"]
         let musicWords = ["music", "song", "soundtrack", "track", "tune", "audio", "beat"]

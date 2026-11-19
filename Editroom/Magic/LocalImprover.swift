@@ -66,6 +66,27 @@ enum LocalImprover {
             return inside.isEmpty ? 0.5 : inside.reduce(0, +) / Double(inside.count)
         }
 
+        // A speed for every shot: that (with any look or frame shape asked for too), and nothing else. Changing
+        // speed keeps each track's clips butted up, so nothing needs moving.
+        if let speed = recipe.speed {
+            var edits: [MagicEdit] = []
+            let ids = p.unlocked(p.linked(Set(shots.map(\.id))))
+            if shots.contains(where: { $0.kind == .video && abs($0.speed - speed) > 1e-3 }) {
+                edits.append(.change(shots.first!.id, String(format: "Speed ×%g", speed)) { q in q.setSpeed(ids: ids, speed: speed) })
+            }
+            if let look = recipe.look, look != "none" {
+                for c in shots where c.grade?.look != look { edits.append(.look(c.id, name: look)) }
+            }
+            guard !edits.isEmpty else { return nil }
+            var q = p
+            for e in edits { e.apply(&q, 1) }
+            let before = (shots.map(\.end).max() ?? 0) - shots.first!.start
+            let after = (q.clips.filter { $0.trackID == track.id }.map(\.end).max() ?? 0) - shots.first!.start
+            var parts = [String(format: "set every clip to %g%% speed (%.1fs to %.1fs)", speed * 100, before, after)]
+            if recipe.look != nil { parts.append("one look (\(recipe.look!))") }
+            return Outcome(plan: MCPDraft.plan(base: p, edits: edits), summary: parts.joined(separator: ", "), focused: true)
+        }
+
         // 0. Media they named: only those, or not those. A request like that is done on its own: nothing
         // else unasked (no repeats or weak shots out, no trimming, no look), just the gaps closed.
         let focused = recipe.isFocused

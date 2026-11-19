@@ -608,9 +608,17 @@ enum LocalMagic {
         state.busy = true
         state.status = "Reading your request"
         Task {
-            let recipe: LocalRecipe
+            var recipe: LocalRecipe
             do {
                 recipe = try await LocalBrain.recipe(for: request, media: model.project.assets)
+                recipe.speed = LocalBrain.speed(in: request)
+                if recipe.speed != nil {
+                    // Speed is handled now, so it isn't something it couldn't do.
+                    recipe.cannotDo = recipe.cannotDo.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                        .filter { p in !["speed", "fast", "slow", "%"].contains { p.lowercased().contains($0) } }.joined(separator: ", ")
+                }
+                // Asked for something specific: do just that, not the general clean-up as well.
+                recipe.onlyAsked = !LocalBrain.isGeneral(request)
             } catch {
                 state.busy = false
                 state.status = nil
