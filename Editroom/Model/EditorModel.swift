@@ -188,7 +188,7 @@ final class EditorModel: ObservableObject {
                 if args.contains("--play") { self.play() }
                 if args.contains("--magic") {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
-                    MagicShow.start(model: self, fromMouse: false)
+                    LocalMagic.run("", model: self)
                 }
                 if args.contains("--magic-ask") {
                     try? await Task.sleep(nanoseconds: 1_500_000_000)

@@ -602,7 +602,13 @@ struct MagicNoteView: View {
 @MainActor
 enum LocalMagic {
     static func run(_ request: String, model: EditorModel) {
-        guard !request.isEmpty else { return MagicShow.start(model: model, fromMouse: false) }
+        // No request: Local's own improvement, with the same note at the end (Undo, Done).
+        guard !request.isEmpty else {
+            let started = Date()
+            return MagicShow.start(model: model, fromMouse: false) { said, changed in
+                note(said, changed: changed, detail: ["On this Mac", "\(Int(Date().timeIntervalSince(started).rounded()))s"])
+            }
+        }
         let state = MagicState.shared
         guard !state.busy, !MagicShow.isRunning else { return }
         state.busy = true
@@ -662,14 +668,21 @@ enum LocalMagic {
                 return
             }
             let started = Date()
-            MagicShow.start(model: model, fromMouse: false, recipe: recipe) { said in
+            MagicShow.start(model: model, fromMouse: false, recipe: recipe) { said, changed in
                 if CommandLine.arguments.contains("--magic-local") {
                     FileHandle.standardError.write("MAGIC LOCAL said: \(said)\n".data(using: .utf8)!)
                 }
-                let seconds = Int(Date().timeIntervalSince(started).rounded())
-                MagicAgent.shared.note = MagicAgent.Note(agent: nil, text: said, changed: true,
-                                                        detail: ["On this Mac", recipe.summary, "\(seconds)s"].filter { !$0.isEmpty }.joined(separator: " · "))
+                note(said, changed: changed, detail: ["On this Mac", recipe.summary, "\(Int(Date().timeIntervalSince(started).rounded()))s"])
             }
         }
+    }
+
+    /// The note on the Magic button once it's done: what it did, with Undo and Done.
+    private static func note(_ said: String, changed: Bool, detail: [String]) {
+        if CommandLine.arguments.contains("--magic") {
+            FileHandle.standardError.write("MAGIC NOTE \(changed ? "changed" : "unchanged"): \(said)\n".data(using: .utf8)!)
+        }
+        MagicAgent.shared.note = MagicAgent.Note(agent: nil, text: said, changed: changed,
+                                                detail: detail.filter { !$0.isEmpty }.joined(separator: " · "))
     }
 }

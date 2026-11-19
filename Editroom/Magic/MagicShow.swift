@@ -109,8 +109,8 @@ final class MagicShow: NSObject {
     /// Looks at the media, plans a cut, and plays it. `fromMouse` spawns the cursors from where the
     /// mouse was when this was called; otherwise from the Magic button.
     /// `recipe` is what the person asked for in the Local tab (read by Apple's on-device model); `done` gets
-    /// a sentence on what changed (and anything it couldn't do) once the show is over.
-    static func start(model: EditorModel, fromMouse: Bool, recipe: LocalRecipe = .plain, done: ((String) -> Void)? = nil) {
+    /// a sentence on what changed (and anything it couldn't do) once the show is over, and whether it changed anything.
+    static func start(model: EditorModel, fromMouse: Bool, recipe: LocalRecipe = .plain, done: ((String, Bool) -> Void)? = nil) {
         let state = MagicState.shared
         guard current == nil, !state.busy, let canvas = TimelineCanvas.current, let window = canvas.window else { return }
         let click = fromMouse ? window.mouseLocationOutsideOfEventStream : nil
@@ -128,7 +128,7 @@ final class MagicShow: NSObject {
         }
         guard !visuals.isEmpty else {
             if let done, recipe.isFocused {
-                done("\(recipe.mediaNames.joined(separator: ", ")) \(recipe.mediaNames.count == 1 ? "isn't" : "aren't") in your \(improving ? "edit" : "Media"), so there was nothing to keep.")
+                done("\(recipe.mediaNames.joined(separator: ", ")) \(recipe.mediaNames.count == 1 ? "isn't" : "aren't") in your \(improving ? "edit" : "Media"), so there was nothing to keep.", false)
             } else {
                 NSSound.beep()
             }
@@ -224,7 +224,7 @@ final class MagicShow: NSObject {
                 state.busy = false
                 state.status = nil
                 MagicThinking.current?.end()
-                if let done, plan == nil { done(said.isEmpty ? "Magic couldn't find anything to make a cut from." : said) } else { NSSound.beep() }
+                if let done, plan == nil { done(said.isEmpty ? "Magic couldn't find anything to make a cut from." : said, false) } else { NSSound.beep() }
                 return
             }
             // Spawn from the click if it was quick; after a wait (or after the thinking show), from the button.
@@ -232,7 +232,7 @@ final class MagicShow: NSObject {
             let launch = {
                 guard run == runID else { return }
                 let show = MagicShow(model: model, plan: plan, window: window, canvas: canvas, click: fromClick, performer: nil)
-                if let done { show.onFinish = { done(said) } }
+                if let done { show.onFinish = { done(said, true) } }
                 current = show
                 state.status = nil
                 show.begin()
