@@ -421,7 +421,10 @@ final class TimelineCanvas: NSView {
             drag = .pendingMove(grabbed: h.clip, point: p, time: time(atX: p.x))
         case .left, .right:
             if !model.selection.contains(h.clip.id) { model.selection = group }
-            let originals = model.project.clips.filter { group.contains($0.id) }
+            // Every selected clip's same edge moves together (any track, lined up or not), as in Premiere;
+            // with nothing else selected, that's this clip and what's linked to it.
+            let trimmed = model.project.unlocked(model.project.linked(model.selection.union(group)))
+            let originals = model.project.clips.filter { trimmed.contains($0.id) }
             drag = .trim(grabbed: h.clip, left: h.zone == .left, time: time(atX: p.x), originals: originals)
         case .fadeIn, .fadeOut:
             drag = .fade(id: h.clip.id, fadeIn: h.zone == .fadeIn)
