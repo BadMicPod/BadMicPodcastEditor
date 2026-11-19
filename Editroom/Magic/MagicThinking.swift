@@ -1,14 +1,13 @@
 import AppKit
 import QuartzCore
 
-/// The show while Magic works out an edit, before the swarm makes it. Cursors burst out of the Magic
-/// button and then, following what's really happening:
+/// The show while Magic works out an edit, before the swarm makes it, in the swarm's own plain style.
+/// Cursors come out of the Magic button and then, following what's really happening:
 /// - scout: fly to clips and sweep a scan across each one they "watch";
-/// - think: circle the viewer with typing dots in their name tags, over a shimmering dot field (drifting
-///   noise, brightest under each cursor);
-/// - plan: sketch the clips of the coming edit as glowing dashed ghosts on the timeline, with sparks as
-///   each one completes;
-/// then zip back into the button, and the swarm takes over. Nothing on the timeline moves.
+/// - think: circle the viewer with typing dots in their name tags, over a dot field (drifting noise,
+///   brightest under each cursor);
+/// - plan: sketch the clips of the coming edit as dashed ghosts on the timeline;
+/// then go back into the button, and the swarm takes over. Nothing on the timeline moves.
 @MainActor
 final class MagicThinking: NSObject {
     static private(set) var current: MagicThinking?
@@ -20,11 +19,9 @@ final class MagicThinking: NSObject {
         let tag = CALayer()
         let name = CATextLayer()
         let dots = [CALayer(), CALayer(), CALayer()]
-        let trail = CAShapeLayer()
         var pos: CGPoint
         var vel = CGPoint.zero
         var target: CGPoint
-        var history: [CGPoint] = []
         /// Scouting: the rect it's sweeping, and until when.
         var watching: CGRect?
         var watchUntil = 0.0
@@ -45,14 +42,6 @@ final class MagicThinking: NSObject {
         init(_ r: CGRect) { rect = r }
     }
 
-    private struct Spark {
-        let layer: CALayer
-        var pos: CGPoint
-        var vel: CGPoint
-        var life: Double
-        var max: Double
-    }
-
     private weak var host: NSWindow?
     private weak var model: EditorModel?
     private let overlay: NSWindow
@@ -63,8 +52,6 @@ final class MagicThinking: NSObject {
     private var cursors: [Cursor] = []
     private var ghosts: [Ghost] = []
     private var ghostKeys: [String] = []
-    private var sparks: [Spark] = []
-    private var rings: [(layer: CALayer, t: Double)] = []
     private var link: CADisplayLink?
     private var t0 = CACurrentMediaTime()
     private var last = CACurrentMediaTime()
@@ -118,12 +105,6 @@ final class MagicThinking: NSObject {
         let tagColor = (color.blended(withFraction: 0.18, of: .black) ?? color).cgColor
         for i in 0..<count {
             let c = Cursor(at: start, seed: Double(i) * 1.37 + Double.random(in: 0...1), born: Double(i) * 0.09)
-            c.trail.fillColor = nil
-            c.trail.strokeColor = color.withAlphaComponent(0.55).cgColor
-            c.trail.lineWidth = 2.5
-            c.trail.lineCap = .round
-            c.trail.lineJoin = .round
-            root.addSublayer(c.trail)
             c.body.contents = image
             c.body.contentsScale = scale
             c.body.bounds = CGRect(x: 0, y: 0, width: 18, height: 24)
@@ -153,8 +134,6 @@ final class MagicThinking: NSObject {
         }
         let nameWidth = ceil((name as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 10, weight: .semibold)]).width) + 14
         for c in cursors { c.tag.bounds.size.width = nameWidth }
-        // A burst of sparks out of the button.
-        for _ in 0..<26 { spark(at: start, speed: 220, life: 0.7) }
         startLoop()
         scout(assets: nil)
     }
@@ -233,17 +212,13 @@ final class MagicThinking: NSObject {
             g.shape.path = path
             g.shape.frame = g.rect
             g.shape.fillColor = nil
-            g.shape.strokeColor = NSColor.white.withAlphaComponent(0.85).cgColor
-            g.shape.lineWidth = 1.6
-            g.shape.lineDashPattern = [7, 5]
+            g.shape.strokeColor = NSColor.white.withAlphaComponent(0.65).cgColor
+            g.shape.lineWidth = 1.5
+            g.shape.lineDashPattern = [7, 6]
             g.shape.strokeEnd = 0
-            g.shape.shadowColor = color.cgColor
-            g.shape.shadowRadius = 6
-            g.shape.shadowOpacity = 0.9
-            g.shape.shadowOffset = .zero
             g.fill.frame = g.rect
             g.fill.cornerRadius = 6
-            g.fill.backgroundColor = color.withAlphaComponent(0.16).cgColor
+            g.fill.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
             g.fill.opacity = 0
             root.insertSublayer(g.fill, below: scanLayer)
             root.insertSublayer(g.shape, below: scanLayer)
@@ -326,10 +301,7 @@ final class MagicThinking: NSObject {
                     if distance < 30 {
                         g.progress = min(1, g.progress + dt * (220 / max(60, g.rect.width + g.rect.height)))
                         g.shape.strokeEnd = g.progress
-                        if g.progress >= 1, !g.done {
-                            g.done = true
-                            pop(g)
-                        }
+                        if g.progress >= 1, !g.done { g.done = true }
                     }
                     let p = g.progress
                     // Along the top, then down the right side.
@@ -346,21 +318,16 @@ final class MagicThinking: NSObject {
                 c.target = buttonPoint
             }
 
-            // A spring, so they overshoot a little and settle: lively, not robotic.
-            let k: CGFloat = phase == .leaving ? 260 : phase == .think ? 70 : 120
-            let damping: CGFloat = phase == .leaving ? 0.86 : 0.88
-            c.vel.x = (c.vel.x + (c.target.x - c.pos.x) * k * CGFloat(dt)) * pow(damping, CGFloat(dt * 60))
-            c.vel.y = (c.vel.y + (c.target.y - c.pos.y) * k * CGFloat(dt)) * pow(damping, CGFloat(dt * 60))
-            c.pos.x += c.vel.x * CGFloat(dt)
-            c.pos.y += c.vel.y * CGFloat(dt)
-            c.history.append(c.pos)
-            if c.history.count > 14 { c.history.removeFirst() }
+            // Smooth easing towards where it's going, no overshoot, like the swarm's cursors.
+            let rate: CGFloat = phase == .leaving ? 9 : phase == .think ? 4 : 5
+            let follow = 1 - exp(-rate * CGFloat(dt))
+            let before = c.pos
+            c.pos.x += (c.target.x - c.pos.x) * follow
+            c.pos.y += (c.target.y - c.pos.y) * follow
+            c.vel = CGPoint(x: (c.pos.x - before.x) / CGFloat(dt), y: (c.pos.y - before.y) / CGFloat(dt))
 
             let appear = min(1, (t - c.born) / 0.18)
-            let speed = hypot(c.vel.x, c.vel.y)
-            let squash = 1 + min(0.25, speed / 2400)
             c.body.position = c.pos
-            c.body.transform = CATransform3DMakeScale(squash * CGFloat(0.6 + 0.4 * appear), CGFloat(0.6 + 0.4 * appear), 1)
             var opacity = Float(appear)
             if phase == .leaving {
                 let d = hypot(c.pos.x - buttonPoint.x, c.pos.y - buttonPoint.y)
@@ -378,28 +345,13 @@ final class MagicThinking: NSObject {
                 dot.opacity = typing ? Float(0.35 + 0.65 * b) : 0
                 dot.position = CGPoint(x: c.tag.bounds.width / 2 - 8 + CGFloat(d) * 8, y: 8 - CGFloat(b) * 1.6)
             }
-            // A fading trail behind fast moves.
-            let trail = CGMutablePath()
-            if c.history.count > 2, speed > 60 {
-                trail.move(to: c.history[0])
-                for p in c.history.dropFirst() { trail.addLine(to: p) }
-            }
-            c.trail.path = trail
-            c.trail.opacity = Float(min(1, speed / 700)) * opacity
-            // Sparks while thinking, now and then.
-            if phase == .think, Double.random(in: 0...1) < dt * 2.2 {
-                spark(at: CGPoint(x: c.pos.x + 6, y: c.pos.y + 10), speed: 50, life: 0.9)
-            }
         }
         updateScans(t)
         updateField(t, view: view, dt: dt)
-        updateSparks(dt)
-        updateRings(t)
         updateGhosts(t)
         CATransaction.commit()
 
         if phase == .leaving, leftCount == cursors.count || now - phaseSince > 1.2 {
-            for _ in 0..<30 { spark(at: buttonPoint, speed: 260, life: 0.5) }
             let done = leaveDone
             leaveDone = nil
             cancel()
@@ -417,26 +369,21 @@ final class MagicThinking: NSObject {
             seen.insert(key)
             let s = scans[key] ?? {
                 let box = CALayer()
-                box.borderColor = NSColor.white.withAlphaComponent(0.55).cgColor
+                box.borderColor = NSColor.white.withAlphaComponent(0.35).cgColor
                 box.borderWidth = 1.5
                 box.cornerRadius = 5
-                box.backgroundColor = color.withAlphaComponent(0.14).cgColor
+                box.backgroundColor = NSColor.white.withAlphaComponent(0.08).cgColor
                 box.masksToBounds = true
                 let bar = CALayer()
-                bar.backgroundColor = NSColor.white.withAlphaComponent(0.9).cgColor
-                bar.shadowColor = color.cgColor
-                bar.shadowRadius = 8
-                bar.shadowOpacity = 1
-                bar.shadowOffset = .zero
+                bar.backgroundColor = NSColor.white.withAlphaComponent(0.75).cgColor
                 box.addSublayer(bar)
                 scanLayer.addSublayer(box)
-                ring(at: CGPoint(x: r.midX, y: r.midY))
                 return (box, bar)
             }()
             scans[key] = s
             s.box.frame = r
             let u = ((t - c.watchStart) * 0.9).truncatingRemainder(dividingBy: 1)
-            s.bar.frame = CGRect(x: r.width * CGFloat(u) - 1.5, y: 0, width: 3, height: r.height)
+            s.bar.frame = CGRect(x: r.width * CGFloat(u) - 1, y: 0, width: 2, height: r.height)
             s.box.opacity = Float(min(1, (t - c.watchStart) * 4))
         }
         for (key, s) in scans where !seen.contains(key) {
@@ -460,68 +407,7 @@ final class MagicThinking: NSObject {
     private func updateGhosts(_ t: Double) {
         for g in ghosts {
             g.shape.lineDashPhase = CGFloat(-t * 24)
-            g.fill.opacity = g.done ? Float(0.6 + 0.4 * sin(t * 3 + Double(g.rect.minX) / 60)) : Float(g.progress * 0.5)
-        }
-    }
-
-    private func pop(_ g: Ghost) {
-        let p = CGPoint(x: g.rect.maxX, y: g.rect.midY)
-        for _ in 0..<14 { spark(at: p, speed: 180, life: 0.6) }
-        ring(at: CGPoint(x: g.rect.midX, y: g.rect.midY))
-    }
-
-    private func spark(at p: CGPoint, speed: Double, life: Double) {
-        guard sparks.count < 220 else { return }
-        let l = CALayer()
-        let size = CGFloat.random(in: 2...4.5)
-        l.bounds = CGRect(x: 0, y: 0, width: size, height: size)
-        l.cornerRadius = size / 2
-        l.backgroundColor = (Bool.random() ? NSColor.white : color.blended(withFraction: 0.35, of: .white) ?? color).cgColor
-        l.position = p
-        root.addSublayer(l)
-        let a = Double.random(in: 0...(2 * .pi)), v = Double.random(in: 0.3...1) * speed
-        sparks.append(Spark(layer: l, pos: p, vel: CGPoint(x: cos(a) * v, y: sin(a) * v - speed * 0.3), life: life, max: life))
-    }
-
-    private func updateSparks(_ dt: Double) {
-        for i in sparks.indices.reversed() {
-            sparks[i].life -= dt
-            if sparks[i].life <= 0 {
-                sparks[i].layer.removeFromSuperlayer()
-                sparks.remove(at: i)
-                continue
-            }
-            sparks[i].vel.y += CGFloat(dt * 260)
-            sparks[i].vel.x *= CGFloat(pow(0.92, dt * 60))
-            sparks[i].pos.x += sparks[i].vel.x * CGFloat(dt)
-            sparks[i].pos.y += sparks[i].vel.y * CGFloat(dt)
-            sparks[i].layer.position = sparks[i].pos
-            sparks[i].layer.opacity = Float(sparks[i].life / sparks[i].max)
-        }
-    }
-
-    private func ring(at p: CGPoint) {
-        let l = CALayer()
-        l.bounds = CGRect(x: 0, y: 0, width: 20, height: 20)
-        l.cornerRadius = 10
-        l.borderWidth = 2
-        l.borderColor = color.blended(withFraction: 0.3, of: .white)?.cgColor ?? color.cgColor
-        l.position = p
-        root.addSublayer(l)
-        rings.append((l, now))
-    }
-
-    private func updateRings(_ t: Double) {
-        for i in rings.indices.reversed() {
-            let age = t - rings[i].t
-            if age > 0.6 {
-                rings[i].layer.removeFromSuperlayer()
-                rings.remove(at: i)
-                continue
-            }
-            let u = age / 0.6
-            rings[i].layer.transform = CATransform3DMakeScale(CGFloat(1 + u * 5), CGFloat(1 + u * 5), 1)
-            rings[i].layer.opacity = Float(1 - u)
+            g.fill.opacity = g.done ? 1 : 0
         }
     }
 
@@ -552,10 +438,10 @@ private final class DotField: CALayer {
             ctx.scaleBy(x: 1, y: -1)
         }
         // Darken the picture a touch so the dots read.
-        ctx.setFillColor(NSColor.black.withAlphaComponent(0.28).cgColor)
+        ctx.setFillColor(NSColor.black.withAlphaComponent(0.22).cgColor)
         ctx.fill(bounds)
         let spacing = max(12, min(w, h) / 26)
-        let reach = Double(max(w, h)) * 0.2
+        let reach = Double(max(w, h)) * 0.13
         let warm = tint.blended(withFraction: 0.55, of: .white) ?? tint
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         warm.usingColorSpace(.sRGB)?.getRed(&r, green: &g, blue: &b, alpha: &a)
@@ -564,17 +450,17 @@ private final class DotField: CALayer {
             var x = spacing / 2
             while x < w {
                 let u = Double(x / w), v = Double(y / h)
-                let n = min(1, pow(Self.noise(u * 4 + time * 0.3, v * 3.2 - time * 0.22) * 0.5 + 0.5, 2.2) * 1.2) * 0.72
+                let n = min(1, pow(Self.noise(u * 4 + time * 0.3, v * 3.2 - time * 0.22) * 0.5 + 0.5, 2.6) * 1.2) * 0.65
                 var glow = 0.0
                 for p in glows {
                     let d = hypot(Double(x - p.x), Double(y - p.y))
                     glow = max(glow, 1 - d / reach)
                 }
-                glow = pow(max(0, glow), 1.8) * 0.85
+                glow = pow(max(0, glow), 2) * 0.7
                 let level = min(1, n + glow * (1 - n * 0.5))
-                let radius = spacing * 0.06 + CGFloat(level) * spacing * 0.24
+                let radius = spacing * 0.04 + CGFloat(level) * spacing * 0.17
                 ctx.setFillColor(red: r + (1 - r) * CGFloat(level) * 0.5, green: g + (1 - g) * CGFloat(level) * 0.4,
-                                 blue: b + (1 - b) * CGFloat(level) * 0.3, alpha: 0.1 + 0.75 * CGFloat(level))
+                                 blue: b + (1 - b) * CGFloat(level) * 0.3, alpha: 0.05 + 0.6 * CGFloat(level))
                 ctx.fillEllipse(in: CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2))
                 x += spacing
             }
