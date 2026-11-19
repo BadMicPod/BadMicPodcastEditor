@@ -485,7 +485,7 @@ private final class DotField: CALayer {
             var x = spacing / 2
             while x < w {
                 let u = Double(x / w), v = Double(y / h)
-                let n = min(1, pow(Self.noise(u * 4 + time * 0.3, v * 3.2 - time * 0.22) * 0.5 + 0.5, 2.6) * 1.2) * 0.65
+                let n = min(1, pow(Self.noise(u * 4 + time * 0.6, v * 3.2 - time * 0.44) * 0.5 + 0.5, 2.6) * 1.2) * 0.65
                 var glow = 0.0
                 for p in glows {
                     let d = hypot(Double(x - p.x), Double(y - p.y))
