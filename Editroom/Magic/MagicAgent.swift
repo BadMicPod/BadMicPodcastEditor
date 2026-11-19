@@ -264,7 +264,8 @@ final class MagicAgent: ObservableObject {
     /// Where they were pointing when they asked (the playhead, the selection, the in/out range), and what
     /// each @ in the request means. Used only when their words point at it.
     static func pointing(_ ptr: MagicPointers, request: String, project p: Project) -> String? {
-        let mentions = MagicMention.find(in: request, media: p.assets)
+        let labels = MagicMention.clipLabels(p)
+        let mentions = MagicMention.find(in: request, media: p.assets, clips: labels)
         guard !p.clips.isEmpty || !mentions.isEmpty else { return nil }
         func t(_ s: Double) -> String { String(format: "%.2fs", s) }
         func track(_ c: Clip) -> String {
@@ -291,6 +292,10 @@ final class MagicAgent: ObservableObject {
                                                         : "@in-out means the in/out range above.")
             case .media(let id):
                 if let a = p.assets.first(where: { $0.id == id }) { meant.append("@\(a.name) means the library file \(a.name) (asset_id \(a.id.uuidString)).") }
+            case .clip(let id):
+                if let c = p.clips.first(where: { $0.id == id }), let l = labels.first(where: { $0.id == id }) {
+                    meant.append("@clip:\(l.name) means exactly one clip on the timeline: \(clip(c)).")
+                }
             }
         }
         var out = ""

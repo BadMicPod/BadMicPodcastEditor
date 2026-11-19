@@ -1280,8 +1280,17 @@ enum SelfTest {
                 var named = LocalRecipe()
                 LocalBrain.applyMedia(&named, named: [a, b], action: "only", request: "put @B in front of @A", pointed: [a.id, b.id], hasEdit: true)
                 let keepOK = named.keepOnly.isEmpty && named.takeOut.isEmpty
-                let mOK = moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
-                log("MENTIONS \(mOK ? "OK" : "FAIL") move=\(moveOK) keep=\(keepOK) find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
+                // @clip: one clip in particular: named by file (·2 for the second use) or a title's words.
+                let labels = MagicMention.clipLabels(p).map(\.name)
+                let secondA = p.clips.filter { $0.assetID == a.id }.sorted { $0.start < $1.start }[1]
+                let clipFind = MagicMention.find(in: "fix @clip:A·2 and @clip:Hi", media: p.assets, clips: MagicMention.clipLabels(p)).map(\.mention)
+                let afterRemove = run("@clip:A·2 is no good").map(shots) ?? []
+                let clipOK = labels.prefix(3) == ["Hi", "Hi·2", "A"] && labels.contains("A·2") && labels.contains("B·2")
+                    && clipFind.first == .clip(secondA.id) && clipFind.count == 2
+                    && afterRemove.count == 3 && !afterRemove.contains { $0.id == secondA.id } && afterRemove.contains { $0.id == first.id }
+                    && order("put @clip:B·2 in front of @clip:A") == [b.id, a.id, b.id, a.id]
+                let mOK = clipOK && moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
+                log("MENTIONS \(mOK ? "OK" : "FAIL") clip=\(clipOK) \(labels) move=\(moveOK) keep=\(keepOK) find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
                 good = good && mOK
             }
             log("LOCAL IMPROVE \(good ? "OK" : "FAIL") \(detail)")

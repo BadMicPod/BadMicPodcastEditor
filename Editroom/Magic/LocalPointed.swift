@@ -13,10 +13,13 @@ enum LocalPointed {
 
     /// Nil when the request doesn't point at anything: then Local makes its usual whole-edit changes.
     static func plan(request: String, recipe: LocalRecipe, pointers ptr: MagicPointers, project p: Project) -> Outcome? {
-        let mentions = Set(MagicMention.find(in: request, media: p.assets).map(\.mention))
+        let found = MagicMention.find(in: request, media: p.assets, clips: MagicMention.clipLabels(p))
+        let mentions = Set(found.map(\.mention))
+        // Clips named with @clip: are pointed at just as selected ones are.
+        let named = found.compactMap { m -> UUID? in if case .clip(let id) = m.mention { return id } else { return nil } }
         let text = request.lowercased()
         func says(_ words: [String]) -> Bool { words.contains { text.contains($0) } }
-        let selection = mentions.contains(.selected) || (!ptr.selected.isEmpty && says([
+        let selection = !named.isEmpty || mentions.contains(.selected) || (!ptr.selected.isEmpty && says([
             "selected", "selection", "this clip", "this shot", "these clips", "these shots", "that clip", "that shot", "those clips", "those shots",
         ]))
         let range = mentions.contains(.range) || says(["in/out", "in-out", "in and out points", "marked range", "the range"])
@@ -47,12 +50,13 @@ enum LocalPointed {
 
         // The selected clips.
         if selection {
-            let chosen = ptr.selected.compactMap { id in p.clips.first { $0.id == id } }
+            let chosen = (named.isEmpty ? ptr.selected : named).compactMap { id in p.clips.first { $0.id == id } }
             guard !chosen.isEmpty else { return Outcome(said: "Nothing was selected. Select clips on the timeline first, then ask again.") }
             let ids = p.unlocked(p.linked(Set(chosen.map(\.id))))
             guard !ids.isEmpty else { return Outcome(said: "The selected clips are on locked tracks, so nothing was changed.") }
             let n = chosen.filter { ids.contains($0.id) && $0.kind != .audio }.count
-            let what = plural(max(n, 1), "selected clip")
+            let what = named.isEmpty ? plural(max(n, 1), "selected clip")
+                : "clip" + (chosen.count == 1 ? " " : "s ") + chosen.map { p.name(of: $0) }.joined(separator: ", ")
             if remove, speed == nil, look == nil {
                 edits.append(.remove(Array(ids), ripple: true))
                 return Outcome(plan: MCPDraft.plan(base: p, edits: edits), said: "Took out the \(what) and closed the gap.")
@@ -174,14 +178,22 @@ extension LocalPointed {
         let text = request.lowercased()
         func says(_ words: [String]) -> Bool { words.contains { text.contains($0) } }
         // The files it names, in the order it names them: with @, or by name.
-        var named: [(at: Int, id: UUID)] = MagicMention.find(in: request, media: p.assets).compactMap { m in
-            if case .media(let id) = m.mention { return (m.range.location, id) } else { return nil }
+        // Files (any use of them) or, with @clip:, one clip in particular.
+        let labels = MagicMention.clipLabels(p)
+        let found = MagicMention.find(in: request, media: p.assets, clips: labels)
+        var named: [(at: Int, id: UUID)] = found.compactMap { m in
+            switch m.mention {
+            case .media(let id), .clip(let id): return (m.range.location, id)
+            default: return nil
+            }
         }
         let plain = request as NSString
         for a in LocalBrain.named(in: request, media: p.assets) where !named.contains(where: { $0.id == a.id }) {
             let bare = (a.name as NSString).deletingPathExtension
             let r = plain.range(of: bare, options: .caseInsensitive)
-            if r.location != NSNotFound { named.append((r.location, a.id)) }
+            // Not a name that's part of an @ mention ("@clip:IMG_1607·2").
+            guard r.location != NSNotFound, !found.contains(where: { NSLocationInRange(r.location, $0.range) }) else { continue }
+            named.append((r.location, a.id))
         }
         named.sort { $0.at < $1.at }
         let ids = named.map(\.id)
@@ -205,8 +217,12 @@ extension LocalPointed {
         }
         guard !p.isLocked(track.id) else { return Outcome(said: "The main video track is locked, so nothing was moved.") }
         let shots = p.clips.filter { $0.trackID == track.id && ($0.kind == .video || $0.kind == .image) }.sorted { $0.start < $1.start }
-        func name(_ id: UUID) -> String { p.assets.first { $0.id == id }?.name ?? "that file" }
-        func shot(_ id: UUID) -> Clip? { shots.first { $0.assetID == id } }
+        func name(_ id: UUID) -> String { p.assets.first { $0.id == id }?.name ?? labels.first { $0.id == id }?.name ?? "that clip" }
+        /// A clip named with @clip:, or the first use of a file.
+        func shot(_ id: UUID) -> Clip? { shots.first { $0.id == id } ?? shots.first { $0.assetID == id } }
+        for id in ids.prefix(2) where p.clips.contains(where: { $0.id == id }) && shot(id) == nil {
+            return Outcome(said: "Local can only move shots on the main video track, and \(name(id)) isn't one. For that, use Claude or ChatGPT.")
+        }
         guard let a = shot(ids[0]) else { return Outcome(said: "\(name(ids[0])) isn't in the edit, so there's nothing to move.") }
         var order = shots
         let said: String

@@ -509,7 +509,7 @@ private struct PromptBox: View {
                     .padding(.vertical, 9)
                     .allowsHitTesting(false)
             }
-            MentionField(text: $text, media: model.project.assets, onQuery: { query = $0 }, onKey: key, controller: controller)
+            MentionField(text: $text, media: model.project.assets, clips: MagicMention.clipLabels(model.project), onQuery: { query = $0 }, onKey: key, controller: controller)
                 .padding(.vertical, 9)
         }
         .frame(height: height, alignment: .topLeading)
@@ -611,6 +611,31 @@ private struct MentionOption: Identifiable {
             return (starts + inside).map(file)
         }
 
+        // "@clip:" and after: every clip on the timeline, in time order, narrowed by name or kind ("@clip:text").
+        if q.hasPrefix("clip:") {
+            let rest = String(q.dropFirst("clip:".count))
+            let labels = MagicMention.clipLabels(p)
+            let clipKinds: [String: Set<ClipKind>] = [
+                "text": [.text], "texts": [.text], "title": [.text], "titles": [.text], "solid": [.solid], "solids": [.solid],
+                "video": [.video], "videos": [.video], "audio": [.audio], "sound": [.audio], "music": [.audio],
+                "photo": [.image], "photos": [.image], "image": [.image],
+            ]
+            func row(_ l: MagicMention.ClipLabel) -> MentionOption {
+                let kind = switch l.kind {
+                case .video: "Video"
+                case .audio: "Audio"
+                case .image: "Photo"
+                case .solid: "Solid"
+                case .text: "Text"
+                }
+                return MentionOption(id: l.id.uuidString, name: "clip:" + l.name, detail: "\(kind)  ·  \(l.track)  ·  \(clock(l.start))")
+            }
+            if let kinds = clipKinds[rest] { return labels.filter { kinds.contains($0.kind) }.map(row) }
+            let starts = labels.filter { $0.name.lowercased().hasPrefix(rest) }
+            let inside = rest.isEmpty || rest.contains(" ") ? [] : labels.filter { !$0.name.lowercased().hasPrefix(rest) && $0.name.lowercased().contains(rest) }
+            return (starts + inside).map(row)
+        }
+
         // "@media:" and after: every file, narrowed by name, or by kind ("@media:audio").
         if q.hasPrefix("media:") {
             let rest = String(q.dropFirst("media:".count))
@@ -637,6 +662,10 @@ private struct MentionOption: Identifiable {
         if !p.assets.isEmpty {
             let n = p.assets.count
             pointers.append(MentionOption(id: "media", name: "media:", detail: "\(n) file\(n == 1 ? "" : "s")  ›", opensList: true))
+        }
+        let onTimeline = MagicMention.clipLabels(p).count
+        if onTimeline > 0 {
+            pointers.append(MentionOption(id: "clip", name: "clip:", detail: "\(onTimeline) on the timeline  ›", opensList: true))
         }
         let shown = pointers.filter { $0.name.hasPrefix(q) }
         // Typed a few letters: files by name straight away too.
@@ -838,7 +867,7 @@ enum LocalMagic {
         let pointed = Set(MagicMention.find(in: typed, media: media).compactMap { m -> UUID? in
             if case .media(let id) = m.mention { return id } else { return nil }
         })
-        let request = MagicMention.plain(typed, media: media)
+        let request = MagicMention.plain(typed, media: media, clips: MagicMention.clipLabels(model.project))
         // No request: Local's own improvement, with the same note at the end (Undo, Done).
         guard !request.isEmpty else {
             let started = Date()
