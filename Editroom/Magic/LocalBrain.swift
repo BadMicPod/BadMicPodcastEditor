@@ -160,6 +160,10 @@ enum LocalBrain {
         let text = request.lowercased()
         let only = ["only", "just ", "nothing else", "nothing but", "except", "solely", "keep "].contains { text.contains($0) }
         let remove = ["remove", "take out", "without", "delete", "drop", "get rid", "cut out", "no more", "lose "].contains { text.contains($0) }
+        // A name that's an everyday word ("intro", "run") may just be a word in the request ("a vlog
+        // intro"): it picks media out only when the request says to, in so many words.
+        let everyday = named.allSatisfy { a in (a.name as NSString).deletingPathExtension.allSatisfy { $0.isLetter || $0 == " " } }
+        if everyday, !only, !remove { return }
         let mode = only && !remove ? "only" : remove && !only ? "remove" : action
         let ids = Set(named.map(\.id))
         if mode == "only" { r.keepOnly = ids } else if mode == "remove" { r.takeOut = ids } else { return }
@@ -213,7 +217,9 @@ enum LocalBrain {
         return media.filter { a in
             let name = a.name.lowercased()
             let bare = (name as NSString).deletingPathExtension
-            if text.contains(bare) && bare.count >= 3 { return true }
+            // The whole name as its own word(s), not inside another ("intro" isn't in "introduce").
+            if bare.count >= 3, text.range(of: "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: bare) + "(?![\\p{L}\\p{N}])",
+                                           options: .regularExpression) != nil { return true }
             // A number in the name on its own, like "1607" for IMG_1607 (three digits or more).
             let numbers = bare.split { !$0.isNumber }.map(String.init).filter { $0.count >= 3 }
             return numbers.contains { words.contains($0) }
