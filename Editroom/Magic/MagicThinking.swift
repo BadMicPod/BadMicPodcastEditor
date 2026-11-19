@@ -145,11 +145,20 @@ final class MagicThinking: NSObject {
 
         root.addSublayer(hint)
         MagicState.shared.stage = stage.word
-        // Esc cancels, any time.
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
-            guard e.keyCode == 53 else { return e }
-            MainActor.assumeIsolated { MagicShow.stopAll() }
-            return nil
+        // The editor is locked while it works: esc or Stop cancels; space still plays the preview; a
+        // blocked click or key nudges the "Press esc to cancel" hint.
+        monitor = NSEvent.addLocalMonitorForEvents(matching: MagicLock.events) { [weak self] e in
+            MainActor.assumeIsolated {
+                switch MagicLock.judge(e, in: self?.host, allowSpace: true) {
+                case .pass: return e
+                case .stop:
+                    MagicShow.stopAll()
+                    return nil
+                case .blocked:
+                    self?.nudge()
+                    return nil
+                }
+            }
         }
         startLoop()
         look()
@@ -161,8 +170,14 @@ final class MagicThinking: NSObject {
         guard leaveDone == nil, fadeFrom == nil else { return }
         fadeFrom = now
         leaveDone = done
-        removeMonitor()
+        // Stopped, or nothing to play: the editor is free at once. Handing over to the swarm, it stays
+        // locked until the swarm takes over.
+        if done == nil { removeMonitor() }
     }
+
+    /// When a blocked click or key last nudged the hint.
+    private var nudged = -10.0
+    private func nudge() { nudged = now }
 
     /// When the fade-out began.
     private var fadeFrom: Double?
@@ -332,7 +347,12 @@ final class MagicThinking: NSObject {
         hint.bounds = CGRect(x: 0, y: 0, width: 140, height: 22)
         hint.position = CGPoint(x: size.width / 2, y: size.height - 26)
         hintText.frame = CGRect(x: 0, y: 4, width: 140, height: 15)
-        hint.opacity = Float(min(1, max(0, t - 0.6) / 0.4) * fade)
+        // A blocked click or key: the hint swells a touch and brightens, then settles.
+        let bump = max(0, 1 - (t - nudged) / 0.45)
+        let swell = sin(min(1, (t - nudged) / 0.45) * .pi) * bump
+        hint.transform = CATransform3DMakeScale(1 + 0.08 * swell, 1 + 0.08 * swell, 1)
+        hintText.foregroundColor = NSColor.white.withAlphaComponent(0.75 + 0.25 * bump).cgColor
+        hint.opacity = Float(max(min(1, max(0, t - 0.6) / 0.4), bump) * fade)
 
         let view = viewerRect
         viewerBrackets.path = Self.brackets(view, length: 6)
@@ -447,6 +467,39 @@ final class MagicThinking: NSObject {
 
     private func toOverlay(_ r: NSRect) -> CGRect {
         CGRect(x: r.minX, y: (host?.frame.height ?? 0) - r.maxY, width: r.width, height: r.height)
+    }
+}
+
+/// While Magic works out an edit and plays it, the editor is locked: clicks, drags, scrolling, pinches
+/// and keys in its window do nothing, so nothing changes under it. What still works: esc and the Magic
+/// button (Stop), which cancel; space to play the preview (while it's working the edit out); quit, hide
+/// and minimise; the window's title strip (moving it, the window buttons) bar Export; other windows and
+/// the menus.
+@MainActor
+enum MagicLock {
+    static let events: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel,
+                                                 .magnify, .swipe, .rotate, .smartMagnify, .keyDown]
+    enum Verdict { case pass, stop, blocked }
+
+    static func judge(_ e: NSEvent, in window: NSWindow?, allowSpace: Bool) -> Verdict {
+        guard let window, e.window === window else { return .pass }
+        let button = MagicAnchors.rect("magicButton")
+        switch e.type {
+        case .keyDown:
+            if e.keyCode == 53 { return .stop }
+            let mods = e.modifierFlags.intersection([.command, .option, .control, .shift])
+            if mods == .command, let c = e.charactersIgnoringModifiers?.lowercased(), ["q", "h", "m"].contains(c) { return .pass }
+            if allowSpace, e.keyCode == 49, mods.isEmpty { return .pass }
+            return .blocked
+        case .leftMouseDown:
+            if let button, button.contains(e.locationInWindow) { return .stop }
+            // The title strip, left of the Magic button (Export is to its right).
+            let fromTop = window.frame.height - e.locationInWindow.y
+            if fromTop < 50, e.locationInWindow.x < (button?.minX ?? window.frame.width - 200) { return .pass }
+            return .blocked
+        default:
+            return .blocked
+        }
     }
 }
 

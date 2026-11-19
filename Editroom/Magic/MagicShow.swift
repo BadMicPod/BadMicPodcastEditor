@@ -152,6 +152,29 @@ final class MagicShow: NSObject {
         thinking?.look()
         let visualIDs = Set(visuals.map(\.id))
         let run = runID
+        // `--magic-lock-test` (testing): what the lock lets through while it's working the edit out.
+        if CommandLine.arguments.contains("--magic-lock-test") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                let w = window, h = w.frame.height
+                let b = MagicAnchors.rect("magicButton") ?? .zero
+                func mouse(_ x: CGFloat, _ y: CGFloat) -> NSEvent? {
+                    NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: x, y: y), modifierFlags: [], timestamp: 0,
+                                       windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+                }
+                func key(_ code: UInt16, _ c: String, _ mods: NSEvent.ModifierFlags = []) -> NSEvent? {
+                    NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: mods, timestamp: 0, windowNumber: w.windowNumber,
+                                     context: nil, characters: c, charactersIgnoringModifiers: c, isARepeat: false, keyCode: code)
+                }
+                let cases: [(String, NSEvent?)] = [
+                    ("click timeline", mouse(w.frame.width / 2, 120)), ("click viewer", mouse(w.frame.width / 2, h / 2)),
+                    ("click Magic button", mouse(b.midX, b.midY)), ("click Export", mouse(b.maxX + 40, b.midY)),
+                    ("click title strip", mouse(300, h - 15)), ("space", key(49, " ")), ("delete", key(51, "\u{7f}")),
+                    ("cmd-z", key(6, "z", .command)), ("cmd-q", key(12, "q", .command)), ("esc", key(53, "\u{1b}")),
+                ]
+                let said = cases.map { name, e in "\(name): \(e.map { "\(MagicLock.judge($0, in: w, allowSpace: true))" } ?? "no event")" }
+                FileHandle.standardError.write("MAGIC LOCK \(said.joined(separator: ", "))\n".data(using: .utf8)!)
+            }
+        }
         // `--magic-stop <seconds>` (testing): Stop that long after starting, as esc or the button would.
         if let i = CommandLine.arguments.firstIndex(of: "--magic-stop"), i + 1 < CommandLine.arguments.count,
            let after = Double(CommandLine.arguments[i + 1]) {
@@ -471,21 +494,25 @@ final class MagicShow: NSObject {
     }
 
     private func startShow() {
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] e in
+        let watching: NSEvent.EventTypeMask = agentMode ? [.leftMouseDown, .rightMouseDown, .keyDown] : MagicLock.events
+        monitor = NSEvent.addLocalMonitorForEvents(matching: watching) { [weak self] e in
             MainActor.assumeIsolated {
                 guard let self, !self.done else { return e }
-                // Esc, or Stop on the Magic button: stop, and put back what it's done so far.
-                if !self.agentMode {
-                    let onButton = e.type == .leftMouseDown && e.window === self.window
-                        && (MagicAnchors.rect("magicButton")?.contains(e.locationInWindow) ?? false)
-                    if (e.type == .keyDown && e.keyCode == 53) || onButton {
-                        Self.stopAll()
-                        return nil
-                    }
+                // An agent's edits from outside: any click or key skips to the end.
+                guard !self.agentMode else {
+                    self.fastForward()
+                    return nil
                 }
-                // Anything else: skip to the end.
-                self.fastForward()
-                return nil
+                // Magic's own edit: the editor is locked (see MagicLock). Esc, or Stop on the Magic
+                // button, stops and puts back what it's done so far.
+                switch MagicLock.judge(e, in: self.window, allowSpace: false) {
+                case .pass: return e
+                case .stop:
+                    Self.stopAll()
+                    return nil
+                case .blocked:
+                    return nil
+                }
             }
         }
         t0 = CACurrentMediaTime()
