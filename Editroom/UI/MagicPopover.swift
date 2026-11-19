@@ -597,7 +597,7 @@ private struct MentionOption: Identifiable {
             let length = String(format: "%d:%02d", s / 60, s % 60)
             // What kind it is, in words, like the Media list: a length for video, "Audio" and "Photo" said.
             let detail = switch a.kind {
-            case .video: length
+            case .video: length + "  ·  Video"
             case .audio: length + "  ·  Audio"
             case .image: "Photo"
             }
@@ -627,9 +627,10 @@ private struct MentionOption: Identifiable {
         if !p.clips.isEmpty {
             pointers.append(MentionOption(id: "playhead", name: "playhead", detail: clock(model.playhead)))
         }
-        if selected > 0 {
-            pointers.append(MentionOption(id: "selected", name: "selected", detail: "\(selected) clip\(selected == 1 ? "" : "s")"))
-        }
+        // Always there, greyed out with nothing selected, so people find out it exists.
+        pointers.append(selected > 0
+            ? MentionOption(id: "selected", name: "selected", detail: "\(selected) clip\(selected == 1 ? "" : "s")")
+            : MentionOption(id: "selected", name: "selected", detail: "Select clips first", enabled: false))
         if let r = p.playRange {
             pointers.append(MentionOption(id: "in-out", name: "in-out", detail: "\(clock(r.start)) to \(clock(r.end))"))
         }
@@ -676,7 +677,7 @@ private struct MentionList: View {
                     HStack(spacing: 7) {
                         Text("@" + option.name)
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(i == picked ? Theme.text : Theme.textDim)
+                            .foregroundStyle(!option.enabled ? Theme.textFaint : i == picked ? Theme.text : Theme.textDim)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Spacer(minLength: 8)
@@ -692,6 +693,7 @@ private struct MentionList: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .disabled(!option.enabled)
                 .id(option.id)
             }
         }
