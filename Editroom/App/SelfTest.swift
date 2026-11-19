@@ -1237,6 +1237,8 @@ enum SelfTest {
                 let text = "Tighten @Selected, open on @img_1607 then @in-out and @Beach day.mov. me@x.com @nothing @playheads"
                 let found = MagicMention.find(in: text, media: lib).map(\.mention)
                 let findOK = found == [.selected, .media(file.id), .range, .media(lib[1].id)]
+                    && MagicMention.find(in: "open on @media:img_1607 now", media: lib).map(\.mention) == [.media(file.id)]
+                    && MagicMention.find(in: "open on @media:img_1607 now", media: lib).first?.range == NSRange(location: 8, length: 15)
                 let plainOK = MagicMention.plain("cut @selected at @playhead with @IMG_1607", media: lib)
                     == "cut the selected clips at the playhead with IMG_1607.MOV"
                 let first = p.clips.filter { $0.trackID == v1 }.min { $0.start < $1.start }!

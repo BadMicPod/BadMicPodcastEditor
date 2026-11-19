@@ -49,14 +49,22 @@ enum MagicMention: Hashable {
             i = at.location + 1
             // Not the middle of an address ("me@example.com").
             if at.location > 0, isWordChar(s.character(at: at.location - 1)) { continue }
+            // "@media:club" is "@club", written the way the list browses to it.
+            var from = i
+            let prefix = "media:"
+            if from + prefix.count <= s.length,
+               s.substring(with: NSRange(location: from, length: prefix.count)).caseInsensitiveCompare(prefix) == .orderedSame {
+                from += prefix.count
+            }
             for (name, mention) in names {
+                if from != i { guard case .media = mention else { continue } }
                 let len = (name as NSString).length
-                guard i + len <= s.length,
-                      s.substring(with: NSRange(location: i, length: len)).caseInsensitiveCompare(name) == .orderedSame else { continue }
+                guard from + len <= s.length,
+                      s.substring(with: NSRange(location: from, length: len)).caseInsensitiveCompare(name) == .orderedSame else { continue }
                 // The whole name: "@intro" isn't "@introduction".
-                if i + len < s.length, isWordChar(s.character(at: i + len)) { continue }
-                out.append((NSRange(location: at.location, length: len + 1), mention))
-                i += len
+                if from + len < s.length, isWordChar(s.character(at: from + len)) { continue }
+                out.append((NSRange(location: at.location, length: from + len - at.location), mention))
+                i = from + len
                 break
             }
         }

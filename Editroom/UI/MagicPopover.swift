@@ -543,39 +543,38 @@ private struct PromptBox: View {
 
     private func accept(_ option: MentionOption) {
         guard option.enabled else { return }
-        controller.insert(option.name)
-        query = nil
+        // "@media:" opens the list of every file, so the list stays open (no space after it).
+        controller.insert(option.name, space: !option.opensList)
+        if !option.opensList { query = nil }
     }
 }
 
-/// One thing the `@` list offers.
+/// One thing the `@` list offers. Only what there is: no `@selected` with nothing selected, no
+/// `@in-out` without a range.
 private struct MentionOption: Identifiable {
     let id: String
     /// What goes in the text after the `@`.
     let name: String
     let symbol: String
     let detail: String
-    let enabled: Bool
+    var enabled = true
+    /// `@media:`, which lists every file.
+    var opensList = false
+
+    /// Words after `@media:` that pick a kind of file rather than a name.
+    private static let kinds: [String: MediaKind] = [
+        "video": .video, "videos": .video, "audio": .audio, "sound": .audio, "music": .audio,
+        "photo": .image, "photos": .image, "image": .image, "images": .image,
+    ]
 
     @MainActor static func list(for query: String, model: EditorModel) -> [MentionOption] {
         let p = model.project
-        let selected = p.clips.filter { c in
-            model.selection.contains(c.id)
-                // A video's own sound selected with it isn't another clip.
-                && !(c.kind == .audio && c.linkID != nil && p.clips.contains { $0.linkID == c.linkID && $0.id != c.id && model.selection.contains($0.id) })
-        }.count
+        let q = query.lowercased()
         func clock(_ t: Double) -> String {
             let s = max(0, t)
             return String(format: "%d:%04.1f", Int(s) / 60, s.truncatingRemainder(dividingBy: 60))
         }
-        let fixed: [MentionOption] = [
-            MentionOption(id: "playhead", name: "playhead", symbol: "line.diagonal", detail: clock(model.playhead), enabled: !p.clips.isEmpty),
-            MentionOption(id: "selected", name: "selected", symbol: "checkmark.square",
-                          detail: selected == 0 ? "Nothing selected" : "\(selected) clip\(selected == 1 ? "" : "s")", enabled: selected > 0),
-            MentionOption(id: "in-out", name: "in-out", symbol: "arrow.left.and.right",
-                          detail: p.playRange.map { "\(clock($0.start)) to \(clock($0.end))" } ?? "No range set", enabled: p.playRange != nil),
-        ]
-        let files: [MentionOption] = p.assets.map { a in
+        func file(_ a: MediaAsset) -> MentionOption {
             let symbol = switch a.kind {
             case .video: "film"
             case .image: "photo"
@@ -583,15 +582,49 @@ private struct MentionOption: Identifiable {
             }
             let s = Int(a.duration.rounded())
             return MentionOption(id: a.id.uuidString, name: a.name, symbol: symbol,
-                                 detail: a.kind == .image ? "Photo" : String(format: "%d:%02d", s / 60, s % 60), enabled: true)
+                                 detail: a.kind == .image ? "Photo" : String(format: "%d:%02d", s / 60, s % 60))
         }
-        let q = query.lowercased()
-        // A name with spaces can be typed in full; otherwise a space ends the `@`.
-        let starts = (fixed + files).filter { $0.name.lowercased().hasPrefix(q) }
-        let inside = q.isEmpty || q.contains(" ") ? [] : files.filter { !$0.name.lowercased().hasPrefix(q) && $0.name.lowercased().contains(q) }
-        return Array((starts + inside).prefix(7))
+        /// Files by name: names starting with it first, then names with it inside.
+        func files(matching text: String, in assets: [MediaAsset]) -> [MediaOption] {
+            guard !text.isEmpty else { return assets.map(file) }
+            let starts = assets.filter { $0.name.lowercased().hasPrefix(text) }
+            let inside = text.contains(" ") ? [] : assets.filter { !$0.name.lowercased().hasPrefix(text) && $0.name.lowercased().contains(text) }
+            return (starts + inside).map(file)
+        }
+
+        // "@media:" and after: every file, narrowed by name, or by kind ("@media:audio").
+        if q.hasPrefix("media:") {
+            let rest = String(q.dropFirst("media:".count))
+            if let kind = kinds[rest] { return p.assets.filter { $0.kind == kind }.map(file) }
+            return files(matching: rest, in: p.assets)
+        }
+
+        let selected = p.clips.filter { c in
+            model.selection.contains(c.id)
+                // A video's own sound selected with it isn't another clip.
+                && !(c.kind == .audio && c.linkID != nil && p.clips.contains { $0.linkID == c.linkID && $0.id != c.id && model.selection.contains($0.id) })
+        }.count
+        var pointers: [MentionOption] = []
+        if !p.clips.isEmpty {
+            pointers.append(MentionOption(id: "playhead", name: "playhead", symbol: "line.diagonal", detail: clock(model.playhead)))
+        }
+        if selected > 0 {
+            pointers.append(MentionOption(id: "selected", name: "selected", symbol: "checkmark.square", detail: "\(selected) clip\(selected == 1 ? "" : "s")"))
+        }
+        if let r = p.playRange {
+            pointers.append(MentionOption(id: "in-out", name: "in-out", symbol: "arrow.left.and.right", detail: "\(clock(r.start)) to \(clock(r.end))"))
+        }
+        if !p.assets.isEmpty {
+            let n = p.assets.count
+            pointers.append(MentionOption(id: "media", name: "media:", symbol: "rectangle.stack", detail: "\(n) file\(n == 1 ? "" : "s")  ›", opensList: true))
+        }
+        let shown = pointers.filter { $0.name.hasPrefix(q) }
+        // Typed a few letters: files by name straight away too.
+        return q.isEmpty ? shown : shown + files(matching: q, in: p.assets)
     }
 }
+
+private typealias MediaOption = MentionOption
 
 /// The `@` list under the box: arrows move, Return or Tab picks, a click picks.
 private struct MentionList: View {
@@ -599,7 +632,25 @@ private struct MentionList: View {
     let picked: Int
     let pick: (MentionOption) -> Void
 
+    private static let rowHeight = 25.0
+    private static let rows = 7
+
     var body: some View {
+        ScrollViewReader { scroller in
+            ScrollView(.vertical) {
+                rowsView
+            }
+            .scrollIndicators(options.count > Self.rows ? .visible : .hidden)
+            .frame(height: min(Double(options.count), Double(Self.rows) + 0.5) * Self.rowHeight + 6)
+            .onChange(of: picked) { _, i in
+                if options.indices.contains(i) { scroller.scrollTo(options[i].id) }
+            }
+        }
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.raised))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.stroke))
+    }
+
+    private var rowsView: some View {
         VStack(spacing: 1) {
             ForEach(Array(options.enumerated()), id: \.element.id) { i, option in
                 Button { pick(option) } label: {
@@ -610,7 +661,7 @@ private struct MentionList: View {
                             .foregroundStyle(Theme.textDim)
                         Text("@" + option.name)
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(Theme.accent)
+                            .foregroundStyle(i == picked ? Theme.text : Theme.textDim)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Spacer(minLength: 8)
@@ -619,7 +670,6 @@ private struct MentionList: View {
                             .foregroundStyle(Theme.textFaint)
                             .lineLimit(1)
                     }
-                    .opacity(option.enabled ? 1 : 0.4)
                     .padding(.horizontal, 8)
                     .frame(height: 24)
                     .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
@@ -627,12 +677,10 @@ private struct MentionList: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(!option.enabled)
+                .id(option.id)
             }
         }
         .padding(3)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.raised))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.stroke))
     }
 }
 

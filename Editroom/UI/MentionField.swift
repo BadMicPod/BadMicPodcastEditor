@@ -17,7 +17,7 @@ struct MentionField: NSViewRepresentable {
     let controller: MentionController
 
     static let font = NSFont.systemFont(ofSize: 12.5)
-    static let mentionFont = NSFont.systemFont(ofSize: 12.5, weight: .medium)
+    static let mentionFont = NSFont.systemFont(ofSize: 12.5, weight: .bold)
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -93,7 +93,7 @@ struct MentionField: NSViewRepresentable {
             storage.beginEditing()
             storage.setAttributes(plainAttributes, range: all)
             for (r, _) in MagicMention.find(in: storage.string, media: parent.media) where NSMaxRange(r) <= storage.length {
-                storage.addAttributes([.font: MentionField.mentionFont, .foregroundColor: Theme.NS.accent], range: r)
+                storage.addAttributes([.font: MentionField.mentionFont, .foregroundColor: Theme.NS.text], range: r)
             }
             storage.endEditing()
             tv.typingAttributes = plainAttributes
@@ -159,16 +159,16 @@ struct MentionField: NSViewRepresentable {
     /// Where the `@` being typed is.
     var at: Int?
 
-    func insert(_ name: String) {
+    func insert(_ name: String, space: Bool = true) {
         guard let tv = textView, let at else { return }
         let caret = tv.selectedRange().location
         guard caret >= at else { return }
         let s = tv.string as NSString
         // A space after it, unless one's there already.
-        let spaced = caret < s.length && s.character(at: caret) == 0x20 ? "" : " "
+        let spaced = !space || (caret < s.length && s.character(at: caret) == 0x20) ? "" : " "
         tv.insertText("@" + name + spaced, replacementRange: NSRange(location: at, length: caret - at))
-        if spaced.isEmpty { tv.setSelectedRange(NSRange(location: at + (name as NSString).length + 2, length: 0)) }
-        self.at = nil
+        if spaced.isEmpty, space { tv.setSelectedRange(NSRange(location: at + (name as NSString).length + 2, length: 0)) }
+        if space { self.at = nil }
         tv.window?.makeFirstResponder(tv)
     }
 }
