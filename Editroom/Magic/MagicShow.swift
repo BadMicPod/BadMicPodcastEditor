@@ -1391,7 +1391,8 @@ final class MagicShow: NSObject {
         MagicState.shared.busy = false
         let callback = onFinish
         onFinish = nil
-        callback?()
+        // A moment after the overlay closes, or a popover opened now (the finished note) closes with it.
+        if let callback { DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { callback() } }
         // Left at the start, paused: the person plays it when they're ready.
         // `--magic-undo` (testing): check one undo takes the whole cut away.
         if CommandLine.arguments.contains("--magic-undo") {

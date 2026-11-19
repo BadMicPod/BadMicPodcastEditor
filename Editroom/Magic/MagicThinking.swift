@@ -115,11 +115,11 @@ final class MagicThinking: NSObject {
             c.tag.cornerRadius = 4
             c.tag.bounds = CGRect(x: 0, y: 0, width: 40, height: 16)
             c.tag.anchorPoint = .zero
-            c.name.string = name
+            c.name.string = ""
             c.name.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
             c.name.fontSize = 10
             c.name.foregroundColor = NSColor.white.cgColor
-            c.name.alignmentMode = .center
+            c.name.alignmentMode = .left
             c.name.contentsScale = scale
             for d in c.dots {
                 d.backgroundColor = NSColor.white.cgColor
@@ -134,8 +134,7 @@ final class MagicThinking: NSObject {
             c.tag.opacity = 0
             cursors.append(c)
         }
-        let nameWidth = ceil((name as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 10, weight: .semibold)]).width) + 14
-        for c in cursors { c.tag.bounds.size.width = nameWidth }
+        for c in cursors { c.tag.bounds.size.width = Self.tagWidth(stateWord) }
         startLoop()
         scout(assets: nil)
     }
@@ -337,14 +336,20 @@ final class MagicThinking: NSObject {
             c.body.opacity = opacity
             c.tag.opacity = opacity
             c.tag.position = CGPoint(x: c.pos.x + 10, y: c.pos.y + 20)
-            // The tag: the name, or typing dots while thinking.
-            let typing = phase == .think
-            c.name.opacity = typing ? 0 : 1
-            c.name.frame = CGRect(x: 0, y: 1.5, width: c.tag.bounds.width, height: 14)
+            // The tag says what they're doing, with typing dots after it.
+            let word = stateWord
+            if c.name.string as? String != word {
+                c.name.string = word
+                c.tag.bounds.size.width = Self.tagWidth(word)
+            }
+            let textWidth = Self.tagWidth(word) - 30
+            c.name.frame = CGRect(x: 7, y: 1.5, width: textWidth, height: 14)
             for (d, dot) in c.dots.enumerated() {
                 let b = 0.5 + 0.5 * sin(t * 6 - Double(d) * 0.9 + c.seed)
-                dot.opacity = typing ? Float(0.35 + 0.65 * b) : 0
-                dot.position = CGPoint(x: c.tag.bounds.width / 2 - 8 + CGFloat(d) * 8, y: 8 - CGFloat(b) * 1.6)
+                dot.opacity = Float(0.35 + 0.65 * b)
+                dot.position = CGPoint(x: 7 + textWidth + 4 + CGFloat(d) * 6, y: 8.5 - CGFloat(b) * 1.2)
+                dot.bounds = CGRect(x: 0, y: 0, width: 3, height: 3)
+                dot.cornerRadius = 1.5
             }
         }
         updateScans(t)
@@ -361,6 +366,19 @@ final class MagicThinking: NSObject {
             cancel()
             done?()
         }
+    }
+
+    /// What the tags say.
+    private var stateWord: String {
+        switch phase {
+        case .scout: "Analyzing"
+        case .think: "Thinking"
+        case .plan, .leaving: "Planning"
+        }
+    }
+
+    private static func tagWidth(_ word: String) -> CGFloat {
+        ceil((word as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 10, weight: .semibold)]).width) + 30
     }
 
     // MARK: Pieces
