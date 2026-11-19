@@ -613,6 +613,7 @@ enum LocalMagic {
                 recipe = try await LocalBrain.recipe(for: request, media: model.project.assets)
                 recipe.speed = LocalBrain.speed(in: request)
                 recipe.soundEffects = LocalBrain.wantsSoundEffects(request)
+                recipe.askedJudgement = LocalBrain.asksJudgement(request)
                 if recipe.soundEffects {
                     // Sound effects are handled now, so they aren't something it couldn't do.
                     recipe.cannotDo = recipe.cannotDo.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }

@@ -39,6 +39,9 @@ struct LocalRecipe: Equatable {
     var speed: Double?
     /// Put the short sound files from their Media (sound effects) on the cuts.
     var soundEffects = false
+    /// They asked whether it should ("do you think…", "should I…", "if so"): only where it sees a strong
+    /// moment, or not at all, with a note saying why.
+    var askedJudgement = false
 
     static let plain = LocalRecipe()
 
@@ -94,16 +97,22 @@ enum LocalBrain {
 
     /// Clip speed a request asks for: "1000%" or "10x" or "10 times" (with speed / faster / slower nearby),
     /// "double speed", "half speed", "slow motion".
+    /// A question about whether to do it, rather than an order.
+    static func asksJudgement(_ request: String) -> Bool {
+        let t = request.lowercased()
+        return t.contains("?") || ["do you think", "should i", "should we", "would it", "if so", "if you think", "worth",
+                                   "any good", "makes sense", "if it fits", "where it fits", "if needed", "only if"].contains { t.contains($0) }
+    }
+
     /// Asks for sound effects ("sfx", "sound effects", "whooshes"…).
     static func wantsSoundEffects(_ request: String) -> Bool {
         let t = request.lowercased()
         return ["sfx", "sound effect", "sound fx", "soundfx", "fx sound", "whoosh", "swoosh", "foley", "sound design"].contains { t.contains($0) }
     }
 
-    /// Short sound-only files in the library that aren't in the edit: the sound effects.
+    /// Short sound-only files in the library: the sound effects (they can be used more than once).
     static func soundEffects(in p: Project) -> [MediaAsset] {
-        let used = Set(p.clips.compactMap(\.assetID))
-        return p.assets.filter { $0.kind == .audio && $0.duration > 0.05 && $0.duration < 10 && !used.contains($0.id) }
+        p.assets.filter { $0.kind == .audio && $0.duration > 0.05 && $0.duration < 10 }
     }
 
     static func speed(in request: String) -> Double? {

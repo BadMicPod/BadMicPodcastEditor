@@ -260,7 +260,9 @@ enum MediaAnalyzer {
     /// which beat starts each bar (where the bass hits hardest).
     static func beats(_ x: [Float], rate: Double) -> MusicAnalysis? {
         let n = 1024, hop = 512
-        guard x.count > n * 8 else { return nil }
+        // Finding a tempo needs a few seconds of sound (a sound effect has no beat to find, and too
+        // little sound to look for one).
+        guard x.count > n * 8, Double(x.count) > rate * 6 else { return nil }
         let log2n = vDSP_Length(10)
         guard let fft = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2)) else { return nil }
         defer { vDSP_destroy_fftsetup(fft) }

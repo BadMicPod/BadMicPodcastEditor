@@ -19,6 +19,8 @@ enum LocalImprover {
         var notes: [String] = []
         /// It did just what was asked (named media), rather than a general improvement.
         var focused = false
+        /// The whole reply, when there's nothing to summarise (it chose not to change anything).
+        var message: String?
     }
 
     /// `recipe` is what the person asked for (from Apple's on-device model), if anything. `newSong` is a song
@@ -197,7 +199,7 @@ enum LocalImprover {
 
         // The song: the longest sound-only clip from a music file; none if they asked for no music; or a
         // song from the library put under the edit if they asked for music and there wasn't any.
-        let songOnTimeline = p.clips.filter { $0.kind == .audio && $0.linkID == nil && p.asset($0.assetID ?? UUID())?.kind == .audio }
+        let songOnTimeline = p.clips.filter { $0.kind == .audio && $0.linkID == nil && p.asset($0.assetID ?? UUID()).map { $0.kind == .audio && $0.duration >= 8 } == true }
             .max { $0.duration < $1.duration }
         // Where the edit starts: where its first shot was, even if that shot is gone.
         let firstStart = shots.first!.start
@@ -420,28 +422,53 @@ enum LocalImprover {
             }
         }
 
+        var judgedNone = false
         // 8. Sound effects they asked for: the short sound files in their Media, on the cuts. Whooshes and
         // swishes lead into a cut; hits and impacts land on the first frame; anything else starts on a cut.
         var effectsPlaced = 0
         if recipe.soundEffects {
             let effects = LocalBrain.soundEffects(in: p)
             if effects.isEmpty {
-                notes.append("there are no short sound effects in your Media (sound files under 10 seconds that aren't in the edit yet)")
+                notes.append("there are no sound effects in your Media (sound files under 10 seconds)")
             } else {
                 func named(_ a: MediaAsset, _ words: [String]) -> Bool { words.contains { a.name.lowercased().contains($0) } }
                 let swooshes = effects.filter { named($0, ["whoosh", "swoosh", "swish", "woosh", "transition", "riser", "sweep"]) }
                 let hits = effects.filter { named($0, ["hit", "impact", "boom", "thud", "punch", "slam", "bass drop", "drop"]) }
                 let others = effects.filter { e in !swooshes.contains { $0.id == e.id } && !hits.contains { $0.id == e.id } }
                 var spots: [(time: Double, effect: MediaAsset, lead: Bool)] = []
-                if let hit = hits.first ?? (swooshes.isEmpty && others.isEmpty ? nil : nil) { spots.append((firstStart, hit, false)) }
-                let cutTimes = Array(cuts.dropFirst().dropLast())
                 let pool = swooshes.isEmpty ? (others.isEmpty ? hits : others) : swooshes
-                for (k, t) in cutTimes.enumerated() where spots.count < 8 {
-                    let e = pool[k % pool.count]
-                    spots.append((t, e, swooshes.contains { $0.id == e.id }))
+                if recipe.askedJudgement {
+                    // Asked whether it should: only at strong moments (a cut where the picture changes a lot, or
+                    // a sudden burst of motion), best first.
+                    for (k, m) in strongMoments(keep: keep, cuts: cuts, analyses: analyses).prefix(8).enumerated() {
+                        if m.kind == .motion, let hit = hits.first {
+                            spots.append((m.time, hit, false))
+                        } else {
+                            let e = pool[k % pool.count]
+                            spots.append((m.time, e, swooshes.contains { $0.id == e.id }))
+                        }
+                    }
+                    spots.sort { $0.time < $1.time }
+                    if spots.isEmpty {
+                        judgedNone = true
+                        notes.append("""
+                            Local could add your sound effects, but it doesn't see a strong moment for them: the cuts don't \
+                            change the picture much, and nothing in the shots moves suddenly. Say where you'd like them \
+                            (for example "a whoosh on every cut" or "an impact at the start"), or ask Claude or ChatGPT, \
+                            which can watch the footage
+                            """)
+                    }
+                } else {
+                    if let hit = hits.first { spots.append((firstStart, hit, false)) }
+                    let cutTimes = Array(cuts.dropFirst().dropLast())
+                    for (k, t) in cutTimes.enumerated() where spots.count < 8 {
+                        let e = pool[k % pool.count]
+                        spots.append((t, e, swooshes.contains { $0.id == e.id }))
+                    }
+                    if cutTimes.isEmpty, spots.isEmpty, let e = pool.first { spots.append((firstStart, e, false)) }
                 }
-                if cutTimes.isEmpty, spots.isEmpty, let e = pool.first { spots.append((firstStart, e, false)) }
                 // One sound track for them all: a free one, or a new one.
+                if !spots.isEmpty {
                 let spans = spots.map { s -> (Double, Double) in
                     let start = max(firstStart, s.lead ? s.time - min(0.5, s.effect.duration * 0.6) : s.time - 0.03)
                     return (start, min(newEnd, start + s.effect.duration))
@@ -463,8 +490,11 @@ enum LocalImprover {
                     trackID = id
                 }
                 var lastEnd = -Double.infinity
+                let effectIDs = Set(effects.map(\.id))
                 for (k, s) in spots.enumerated() {
                     var (start, end) = spans[k]
+                    // A sound effect is already there: leave it.
+                    if p.clips.contains(where: { effectIDs.contains($0.assetID ?? UUID()) && $0.start < end && $0.end > start }) { continue }
                     start = max(start, lastEnd)
                     guard end - start > 0.1 else { continue }
                     var c = Clip(trackID: trackID, kind: .audio, assetID: s.effect.id, start: frames(start), duration: frames(end - start))
@@ -474,9 +504,17 @@ enum LocalImprover {
                     lastEnd = end
                     effectsPlaced += 1
                 }
+                }
             }
         }
 
+        if effectsPlaced == 0, recipe.soundEffects, !judgedNone, notes.isEmpty, recipe.isFocused {
+            notes.append("every cut already has a sound effect, so there was nowhere new to put one")
+        }
+        if edits.isEmpty, judgedNone || !notes.isEmpty {
+            let text = notes.map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: ". ")
+            return Outcome(plan: MagicPlan(base: p, tasks: []), summary: "", notes: notes, focused: true, message: text + ".")
+        }
         guard !edits.isEmpty else { return nil }
         // The length only when it was part of the job: a focused request ("only IMG_1607") just says what it did.
         var parts: [String] = focused && recipe.seconds == nil ? []
@@ -494,6 +532,44 @@ enum LocalImprover {
         if graded > 0 { parts.append(common == "none" ? "looks off" : "one look (\(common ?? ""))") }
         if recipe.frame != .unchanged, size != nil { parts.append(recipe.frame.rawValue) }
         return Outcome(plan: MCPDraft.plan(base: p, edits: edits), summary: parts.joined(separator: ", "), notes: notes, focused: focused)
+    }
+
+    enum MomentKind { case cut, motion }
+
+    /// Where a sound effect would land well: cuts where the picture changes a lot (brightness, colour), and
+    /// sudden bursts of motion inside a shot. Best first; none if the footage is all much the same.
+    static func strongMoments(keep: [Clip], cuts: [Double], analyses: [UUID: ClipAnalysis]) -> [(time: Double, kind: MomentKind, score: Double)] {
+        func samples(_ c: Clip) -> [ClipAnalysis.Sample] {
+            guard let id = c.assetID, let a = analyses[id] else { return [] }
+            let r = c.sourceStart...(c.sourceStart + c.duration * c.speed)
+            return a.samples.filter { c.kind == .image || r.contains($0.time) }
+        }
+        func edge(_ c: Clip, end: Bool) -> (luma: Double, color: Double)? {
+            let s = samples(c)
+            guard !s.isEmpty else { return nil }
+            let part = end ? Array(s.suffix(2)) : Array(s.prefix(2))
+            return (part.map(\.luma).reduce(0, +) / Double(part.count), part.map(\.color).reduce(0, +) / Double(part.count))
+        }
+        var out: [(Double, MomentKind, Double)] = []
+        // Cuts: how much the picture jumps.
+        for k in 0..<max(0, keep.count - 1) {
+            guard let a = edge(keep[k], end: true), let b = edge(keep[k + 1], end: false) else { continue }
+            let score = abs(a.luma - b.luma) * 3 + abs(a.color - b.color) * 1.5 + (keep[k].assetID != keep[k + 1].assetID ? 0.1 : 0)
+            if score >= 0.5 { out.append((cuts[k + 1], .cut, score)) }
+        }
+        // Motion: a sample far busier than the footage around it.
+        let all = keep.flatMap(samples).map(\.motion).sorted()
+        if all.count >= 8 {
+            let median = all[all.count / 2], p95 = all[Int(Double(all.count - 1) * 0.95)]
+            let bar = max(p95, median * 3, 0.02)
+            for (k, c) in keep.enumerated() {
+                for s in samples(c) where s.motion >= bar {
+                    let t = cuts[k] + (s.time - c.sourceStart) / max(0.01, c.speed)
+                    if !out.contains(where: { abs($0.0 - t) < 1.5 }) { out.append((t, .motion, 0.5 + s.motion / max(bar, 1e-6) * 0.1)) }
+                }
+            }
+        }
+        return out.sorted { $0.2 > $1.2 }
     }
 
     /// Video and photo clips that make up the cut (not titles or solids).

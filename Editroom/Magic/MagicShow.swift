@@ -120,8 +120,9 @@ final class MagicShow: NSObject {
             return
         }
         // The song: the one the edit uses, or (for a new cut) the longest in the library.
+        // (A song, not a sound effect: 8 seconds or more.)
         let songOnTimeline = project.clips.filter { $0.kind == .audio && $0.linkID == nil }
-            .compactMap { c in project.assets.first { $0.id == c.assetID && $0.kind == .audio } }
+            .compactMap { c in project.assets.first { $0.id == c.assetID && $0.kind == .audio && $0.duration >= 8 } }
             .max { $0.duration < $1.duration }
         let librarySong = project.assets.filter { $0.kind == .audio && !offline.contains($0.id) && $0.duration >= 8 }.max { $0.duration < $1.duration }
         // Music they asked to add when the edit has none: the longest song in the library.
@@ -144,12 +145,13 @@ final class MagicShow: NSObject {
                 let analyses = Dictionary(found.clips.map { ($0.0.id, $0.1) }, uniquingKeysWith: { a, _ in a })
                 let outcome = LocalImprover.plan(project: model.project, analyses: analyses, music: found.music?.1,
                                                  recipe: recipe, newSong: newSong)
-                plan = outcome?.plan
+                plan = outcome.flatMap { $0.plan.tasks.isEmpty ? nil : $0.plan }
                 said = outcome.map { o in
+                    if let message = o.message { return message }
                     // "Kept only IMG_1607 (2 shots out); everything else off the timeline." for a focused request.
-                    o.focused ? o.summary.prefix(1).uppercased() + o.summary.dropFirst() + "." : "Improved your edit: \(o.summary)."
+                    return o.focused ? o.summary.prefix(1).uppercased() + o.summary.dropFirst() + "." : "Improved your edit: \(o.summary)."
                 } ?? "Your edit already looks good; nothing to change."
-                notes += outcome?.notes ?? []
+                if outcome?.message == nil { notes += outcome?.notes ?? [] }
                 if CommandLine.arguments.contains("--magic") {
                     FileHandle.standardError.write("MAGIC IMPROVE \(outcome?.summary ?? "nothing to change") (\(outcome?.plan.tasks.count ?? 0) edits) recipe: \(recipe.summary)\n".data(using: .utf8)!)
                 }
