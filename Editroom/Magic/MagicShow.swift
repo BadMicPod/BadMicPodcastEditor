@@ -44,6 +44,8 @@ final class MagicState: ObservableObject {
     static let shared = MagicState()
     @Published var busy = false
     @Published var status: String?
+    /// The thinking show's stage ("Looking", "Analyzing", "Thinking"), or "Editing" during the swarm.
+    @Published var stage: String?
 }
 
 private final class FlippedView: NSView {
@@ -131,16 +133,20 @@ final class MagicShow: NSObject {
             : improving ? (newSong ?? songOnTimeline.flatMap { offline.contains($0.id) ? nil : $0 })
             : librarySong
         state.busy = true
-        state.status = "Watching"
+        state.status = nil
         // The thinking show while it studies the clips (one already running, for a request being read, carries on).
         let thinking = MagicThinking.current ?? MagicThinking.begin(model: model, name: "Local", color: NSColor(white: 0.95, alpha: 1))
-        thinking?.scout(assets: Set(visuals.map(\.id)))
+        thinking?.look()
+        let visualIDs = Set(visuals.map(\.id))
         Task { @MainActor in
             let started = CACurrentMediaTime()
+            // Looking for a moment, then Analyzing (with progress on the button).
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            MagicThinking.current?.analyze(assets: visualIDs)
             let found = await analyze(visuals, song: song) { done, total in
-                state.status = "Watching \(done) of \(total)"
+                state.status = done < total ? "Analyzing \(done) of \(total)" : nil
             }
-            state.status = "Planning"
+            state.status = nil
             var plan: MagicPlan?
             var said = ""
             var notes = recipe.cannotDo.isEmpty ? [] : [recipe.cannotDo]
@@ -203,13 +209,12 @@ final class MagicShow: NSObject {
             if let thinking = MagicThinking.current {
                 // Long enough to see the scouting (cached analysis is instant).
                 let watched = CACurrentMediaTime() - started
-                if watched < 1.8 { try? await Task.sleep(nanoseconds: UInt64((1.8 - watched) * 1e9)) }
+                if watched < 2.4 { try? await Task.sleep(nanoseconds: UInt64((2.4 - watched) * 1e9)) }
                 // A moment to sketch the coming cut, then the cursors hand over to the swarm.
-                state.status = "Planning"
                 var final = plan.base
                 for task in plan.tasks { task.edit.apply(&final, 1) }
                 thinking.plan(final)
-                try? await Task.sleep(nanoseconds: 1_700_000_000)
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
                 state.status = nil
                 thinking.end { launch() }
             } else {
@@ -398,6 +403,7 @@ final class MagicShow: NSObject {
     // MARK: Setup
 
     private func begin() {
+        if !agentMode { MagicState.shared.stage = "Editing" }
         model.pause()
         model.selection = []
         model.rebuildSuspended = true
@@ -1389,6 +1395,7 @@ final class MagicShow: NSObject {
         model.seek(to: 0)
         Self.current = nil
         MagicState.shared.busy = false
+        if MagicThinking.current == nil { MagicState.shared.stage = nil }
         let callback = onFinish
         onFinish = nil
         // A moment after the overlay closes, or a popover opened now (the finished note) closes with it.

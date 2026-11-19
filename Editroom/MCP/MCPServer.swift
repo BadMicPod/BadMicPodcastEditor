@@ -263,7 +263,8 @@ enum MCPHandler {
                 switch name {
                 case "look_at_media", "analyze_media":
                     if let id = (args["asset_id"] as? String).flatMap(UUID.init(uuidString:)) { show.focus(asset: id) }
-                case "list_media", "get_project", "list_looks": show.scout(assets: nil)
+                case "list_media", "get_project", "list_looks": show.look()
+                case "get_frame": show.think()
                 default: _ = draft
                 }
             }

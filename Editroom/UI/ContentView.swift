@@ -248,7 +248,14 @@ struct MagicButton: View {
     @State private var hovering = false
 
     private var hasMedia: Bool { model.project.assets.contains { $0.kind != .audio } || !model.project.clips.isEmpty }
-    private var status: String? { ai.running ? ai.status : ai.ready ?? state.status }
+    /// The same stage words as the cursors' tags ("Claude is thinking", "Analyzing 3 of 5", "Editing").
+    private var status: String? {
+        if ai.running {
+            if let stage = state.stage, let name = ai.agent?.name { return "\(name) is \(stage.lowercased())" }
+            return ai.status
+        }
+        return ai.ready ?? state.status ?? state.stage
+    }
     /// While the AI works, hovering offers Stop in the same space (the button keeps its size, so the
     /// pointer never slips off it).
     private var offerStop: Bool { ai.running && hovering }

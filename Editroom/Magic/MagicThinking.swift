@@ -1,18 +1,28 @@
 import AppKit
 import QuartzCore
 
-/// The show while Magic works out an edit, before the swarm makes it, in the swarm's own plain style.
-/// Cursors come out of the Magic button and then, following what's really happening:
-/// - scout: fly to clips and sweep a scan across each one they "watch";
-/// - think: circle the viewer with typing dots in their name tags, over a dot field (drifting noise,
-///   brightest under each cursor);
-/// - plan: sketch the clips of the coming edit as dashed ghosts on the timeline;
-/// then go back into the button, and the swarm takes over. Nothing on the timeline moves.
+/// The show while Magic works out an edit, before the swarm makes it (Editing), in the swarm's own plain
+/// style. Cursors come out of the Magic button and go through three stages, only ever forwards:
+/// - Looking: they visit the items in the Media panel;
+/// - Analyzing: they sweep a scan across the clips being studied, on the timeline and in Media;
+/// - Thinking: they circle the viewer over a dot field (drifting noise, brightest under each cursor),
+///   while the coming edit appears on the timeline as dashed ghost clips;
+/// then they fade out where they are, and the swarm takes over. Nothing on the timeline moves.
 @MainActor
 final class MagicThinking: NSObject {
     static private(set) var current: MagicThinking?
 
-    enum Phase { case scout, think, plan, leaving }
+    enum Stage: Int, Comparable {
+        case looking, analyzing, thinking
+        static func < (a: Stage, b: Stage) -> Bool { a.rawValue < b.rawValue }
+        var word: String {
+            switch self {
+            case .looking: "Looking"
+            case .analyzing: "Analyzing"
+            case .thinking: "Thinking"
+            }
+        }
+    }
 
     private final class Cursor {
         let body = CALayer()
@@ -26,8 +36,8 @@ final class MagicThinking: NSObject {
         var watching: CGRect?
         var watchUntil = 0.0
         var watchStart = 0.0
-        /// Planning: the ghost it's drawing.
-        var ghost: Int?
+        /// Thinking: off to look at a clip for a moment, until then.
+        var detourUntil = 0.0
         var seed: Double
         var born: Double
         init(at p: CGPoint, seed: Double, born: Double) { pos = p; target = p; self.seed = seed; self.born = born }
@@ -39,7 +49,8 @@ final class MagicThinking: NSObject {
         let fill = CALayer()
         var progress = 0.0
         var done = false
-        init(_ r: CGRect) { rect = r }
+        let born: Double
+        init(_ r: CGRect, born: Double) { rect = r; self.born = born }
     }
 
     private weak var host: NSWindow?
@@ -55,8 +66,9 @@ final class MagicThinking: NSObject {
     private var link: CADisplayLink?
     private var t0 = CACurrentMediaTime()
     private var last = CACurrentMediaTime()
-    private(set) var phase: Phase = .scout
-    private var phaseSince = 0.0
+    private(set) var stage: Stage = .looking {
+        didSet { MagicState.shared.stage = stage.word }
+    }
     private var targets: [CGRect] = []
     private var focusQueue: [CGRect] = []
     private var fieldAlpha = 0.0
@@ -134,9 +146,10 @@ final class MagicThinking: NSObject {
             c.tag.opacity = 0
             cursors.append(c)
         }
-        for c in cursors { c.tag.bounds.size.width = Self.tagWidth(stateWord) }
+        for c in cursors { c.tag.bounds.size.width = Self.tagWidth(stage.word) }
+        MagicState.shared.stage = stage.word
         startLoop()
-        scout(assets: nil)
+        look()
     }
 
     /// Ends the show: everything carries on as it was and fades out where it is, then `done` (where the
@@ -157,61 +170,80 @@ final class MagicThinking: NSObject {
         link = nil
         host?.removeChildWindow(overlay)
         overlay.orderOut(nil)
-        if Self.current === self { Self.current = nil }
+        if Self.current === self {
+            Self.current = nil
+            MagicState.shared.stage = nil
+        }
     }
 
-    // MARK: What's happening
+    // MARK: What's happening (stages only move forward)
 
-    /// Scouting: the clips of these library items (all of them when nil), on the timeline and in the Media panel.
-    func scout(assets: Set<UUID>?) {
+    private func advance(to s: Stage) {
         lastEvent = CACurrentMediaTime()
-        guard phase != .leaving else { return }
-        if phase != .scout { phase = .scout; phaseSince = now }
-        guard let model else { return }
+        guard fadeFrom == nil, s > stage else { return }
+        stage = s
+        for c in cursors { c.watching = nil }
+    }
+
+    /// Looking: the items in the Media panel.
+    func look() {
+        lastEvent = CACurrentMediaTime()
+        guard let model, stage == .looking else { return }
+        targets = model.project.assets.compactMap { MagicAnchors.rect($0.id.uuidString).map(toOverlay) }.filter { $0.width > 6 }
+    }
+
+    /// Analyzing: these library items (all of them when nil), on the timeline and in the Media panel.
+    func analyze(assets: Set<UUID>?) {
+        advance(to: .analyzing)
+        guard let model, stage == .analyzing else { return }
         var rects: [CGRect] = []
-        for a in model.project.assets where assets?.contains(a.id) ?? true {
-            if let r = MagicAnchors.rect(a.id.uuidString).map(toOverlay) { rects.append(r) }
-        }
         if let canvas = TimelineCanvas.current {
             for c in model.project.clips where (c.kind == .video || c.kind == .image) && (assets?.contains(c.assetID ?? UUID()) ?? true) {
                 if let r = canvas.magicWindowRect(of: c, in: model.project).map(toOverlay) { rects.append(r) }
             }
         }
+        for a in model.project.assets where assets?.contains(a.id) ?? true {
+            if let r = MagicAnchors.rect(a.id.uuidString).map(toOverlay) { rects.append(r) }
+        }
         targets = rects.filter { $0.width > 6 && $0.height > 6 }
     }
 
-    /// One library item is being looked at: a cursor goes straight to it.
+    /// One library item is being looked at: a cursor goes straight to it (for a moment, if it's already
+    /// thinking: the stage doesn't go back).
     func focus(asset: UUID) {
+        if stage < .analyzing { analyze(assets: nil) }
         lastEvent = CACurrentMediaTime()
-        guard phase != .leaving else { return }
-        if phase != .scout { phase = .scout; phaseSince = now }
-        if let r = MagicAnchors.rect(asset.uuidString).map(toOverlay) { focusQueue.append(r) }
-        if let model, let canvas = TimelineCanvas.current {
-            for c in model.project.clips where c.assetID == asset {
-                if let r = canvas.magicWindowRect(of: c, in: model.project).map(toOverlay) { focusQueue.append(r); break }
+        guard fadeFrom == nil else { return }
+        var rect = MagicAnchors.rect(asset.uuidString).map(toOverlay)
+        if let model, let canvas = TimelineCanvas.current, let c = model.project.clips.first(where: { $0.assetID == asset }) {
+            rect = canvas.magicWindowRect(of: c, in: model.project).map(toOverlay) ?? rect
+        }
+        guard let rect else { return }
+        if stage == .thinking {
+            if let c = cursors.min(by: { $0.detourUntil < $1.detourUntil }) {
+                c.watching = rect
+                c.watchStart = now
+                c.detourUntil = now + 1.6
             }
+        } else {
+            focusQueue.append(rect)
         }
     }
 
-    func think() {
-        guard phase != .leaving, phase != .think else { return }
-        phase = .think
-        phaseSince = now
-        for c in cursors { c.watching = nil }
-    }
+    func think() { advance(to: .thinking) }
 
-    /// Planning: the clips of the coming edit, sketched as ghosts on the timeline.
+    /// The coming edit, sketched as dashed ghosts on the timeline as it takes shape (Thinking).
     func plan(_ project: Project) {
-        lastEvent = CACurrentMediaTime()
-        guard phase != .leaving, let canvas = TimelineCanvas.current else { return }
-        if phase != .plan { phase = .plan; phaseSince = now; for c in cursors { c.watching = nil } }
+        advance(to: .thinking)
+        guard fadeFrom == nil, let canvas = TimelineCanvas.current else { return }
         let clips = project.clips.filter { $0.kind != .audio || $0.linkID == nil }
         for c in clips {
             let key = "\(c.trackID)|\(Int(c.start * 100))|\(Int(c.duration * 100))"
             guard !ghostKeys.contains(key), let r = canvas.magicWindowRect(of: c, in: project).map(toOverlay),
                   r.width > 3 else { continue }
             ghostKeys.append(key)
-            let g = Ghost(r.insetBy(dx: 1, dy: 3))
+            // One after another, a little apart.
+            let g = Ghost(r.insetBy(dx: 1, dy: 3), born: max(now, (ghosts.last?.born ?? 0) + 0.12))
             let path = CGPath(roundedRect: CGRect(origin: .zero, size: g.rect.size), cornerWidth: 6, cornerHeight: 6, transform: nil)
             g.shape.path = path
             g.shape.frame = g.rect
@@ -264,8 +296,8 @@ final class MagicThinking: NSObject {
         let dt = min(1.0 / 30, max(1.0 / 240, wall - last))
         last = wall
         let t = now
-        // A while with nothing new from the AI: it's thinking.
-        if phase != .leaving, phase != .think, wall - lastEvent > 2.5, focusQueue.isEmpty { think() }
+        // Analyzing, then a while with nothing new from the AI: it's thinking.
+        if fadeFrom == nil, stage == .analyzing, wall - lastEvent > 2.5, focusQueue.isEmpty { think() }
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -275,8 +307,8 @@ final class MagicThinking: NSObject {
             let alive = t >= c.born
             if !alive { continue }
             // Where to go.
-            switch phase {
-            case .scout:
+            let detouring = stage == .thinking && t < c.detourUntil
+            if stage < .thinking {
                 if c.watching == nil || t > c.watchUntil {
                     if !focusQueue.isEmpty {
                         c.watching = focusQueue.removeFirst()
@@ -289,40 +321,18 @@ final class MagicThinking: NSObject {
                     c.watchUntil = t + Double.random(in: 1.2...2.2)
                 }
                 if let r = c.watching { c.target = CGPoint(x: r.minX + r.width * 0.55, y: r.midY + 4) }
-            case .think:
+            } else if detouring, let r = c.watching {
+                c.target = CGPoint(x: r.minX + r.width * 0.55, y: r.midY + 4)
+            } else {
+                if c.watching != nil, !detouring { c.watching = nil }
                 let ang = t * 0.42 + Double(i) / Double(cursors.count) * .pi * 2
                 let wobble = 1 + 0.08 * sin(t * 1.6 + c.seed)
                 c.target = CGPoint(x: center.x + cos(ang) * view.width * 0.36 * wobble,
                                    y: center.y + sin(ang) * view.height * 0.36 * wobble)
-            case .plan:
-                if c.ghost == nil || ghosts[c.ghost!].done {
-                    c.ghost = ghosts.indices.first { k in !ghosts[k].done && !cursors.contains { $0 !== c && $0.ghost == k } }
-                }
-                if let k = c.ghost {
-                    let g = ghosts[k]
-                    let distance = hypot(c.pos.x - (g.rect.minX + g.rect.width * g.progress), c.pos.y - g.rect.minY)
-                    if distance < 30 {
-                        g.progress = min(1, g.progress + dt * (220 / max(60, g.rect.width + g.rect.height)))
-                        g.shape.strokeEnd = g.progress
-                        if g.progress >= 1, !g.done { g.done = true }
-                    }
-                    let p = g.progress
-                    // Along the top, then down the right side.
-                    c.target = p < 0.8
-                        ? CGPoint(x: g.rect.minX + g.rect.width * min(1, p / 0.8), y: g.rect.minY)
-                        : CGPoint(x: g.rect.maxX, y: g.rect.minY + g.rect.height * (p - 0.8) / 0.2)
-                } else {
-                    // Nothing left to sketch: drift over the timeline, admiring the plan.
-                    let tl = timelineRect
-                    let ang = t * 0.5 + c.seed * 2
-                    c.target = CGPoint(x: tl.midX + cos(ang) * tl.width * 0.32, y: tl.minY + tl.height * 0.4 + sin(ang * 1.3) * tl.height * 0.18)
-                }
-            case .leaving:
-                break
             }
 
             // Smooth easing towards where it's going, no overshoot, like the swarm's cursors.
-            let rate: CGFloat = phase == .leaving ? 9 : phase == .think ? 4 : 5
+            let rate: CGFloat = stage == .thinking && !detouring ? 4 : 5
             let follow = 1 - exp(-rate * CGFloat(dt))
             let before = c.pos
             c.pos.x += (c.target.x - c.pos.x) * follow
@@ -337,7 +347,7 @@ final class MagicThinking: NSObject {
             c.tag.opacity = opacity
             c.tag.position = CGPoint(x: c.pos.x + 10, y: c.pos.y + 20)
             // The tag says what they're doing, with typing dots after it.
-            let word = stateWord
+            let word = stage.word
             if c.name.string as? String != word {
                 c.name.string = word
                 c.tag.bounds.size.width = Self.tagWidth(word)
@@ -368,15 +378,6 @@ final class MagicThinking: NSObject {
         }
     }
 
-    /// What the tags say.
-    private var stateWord: String {
-        switch phase {
-        case .scout: "Analyzing"
-        case .think: "Thinking"
-        case .plan, .leaving: "Planning"
-        }
-    }
-
     private static func tagWidth(_ word: String) -> CGFloat {
         ceil((word as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 10, weight: .semibold)]).width) + 30
     }
@@ -387,7 +388,7 @@ final class MagicThinking: NSObject {
         var seen = Set<ObjectIdentifier>()
         for c in cursors {
             let key = ObjectIdentifier(c)
-            guard phase == .scout, let r = c.watching, hypot(c.pos.x - (r.minX + r.width * 0.55), c.pos.y - (r.midY + 4)) < 40 else { continue }
+            guard let r = c.watching, stage < .thinking || t < c.detourUntil, hypot(c.pos.x - (r.minX + r.width * 0.55), c.pos.y - (r.midY + 4)) < 40 else { continue }
             seen.insert(key)
             let s = scans[key] ?? {
                 let box = CALayer()
@@ -415,7 +416,7 @@ final class MagicThinking: NSObject {
     }
 
     private func updateField(_ t: Double, view: CGRect, dt: Double) {
-        let want = phase == .think ? 1.0 : 0.0
+        let want = stage == .thinking ? 1.0 : 0.0
         fieldAlpha += (want - fieldAlpha) * min(1, dt * (want > fieldAlpha ? 1.2 : 3))
         field.frame = view
         field.opacity = Float(fieldAlpha * (fadeFrom.map { max(0, 1 - (now - $0) / Self.fadeTime) } ?? 1))
@@ -426,10 +427,14 @@ final class MagicThinking: NSObject {
         field.setNeedsDisplay()
     }
 
+    /// Ghosts draw themselves, one after another.
     private func updateGhosts(_ t: Double) {
         for g in ghosts {
+            g.progress = min(1, max(0, (t - g.born) / 0.7))
+            g.shape.strokeEnd = g.progress
+            g.done = g.progress >= 1
             g.shape.lineDashPhase = CGFloat(-t * 24)
-            g.fill.opacity = g.done ? 1 : 0
+            g.fill.opacity = Float(max(0, (g.progress - 0.6) / 0.4))
         }
     }
 

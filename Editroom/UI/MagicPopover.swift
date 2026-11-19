@@ -607,8 +607,8 @@ enum LocalMagic {
         guard !state.busy, !MagicShow.isRunning else { return }
         state.busy = true
         state.status = "Reading your request"
-        // The thinking show while Apple's model reads it.
-        MagicThinking.begin(model: model, name: "Local", color: NSColor(white: 0.95, alpha: 1))?.think()
+        // The thinking show (Looking) while Apple's model reads it.
+        MagicThinking.begin(model: model, name: "Local", color: NSColor(white: 0.95, alpha: 1))
         Task {
             var recipe: LocalRecipe
             do {
