@@ -78,6 +78,9 @@ struct MentionField: NSViewRepresentable {
         func textDidChange(_ note: Notification) {
             guard let tv = note.object as? NSTextView else { return }
             parent.text = tv.string
+            // An `@` just typed is a new one, even where a closed one was: the list opens for it.
+            let caret = tv.selectedRange().location
+            if caret > 0, caret <= (tv.string as NSString).length, (tv.string as NSString).character(at: caret - 1) == 0x40 { dismissed = nil }
             recolor(tv)
             report(tv)
         }
@@ -102,7 +105,8 @@ struct MentionField: NSViewRepresentable {
         /// The `@` the caret is in, and what's typed after it.
         func report(_ tv: NSTextView) {
             let found = Self.query(in: tv)
-            if let at = found?.at, at != dismissed { dismissed = nil }
+            // Closed with esc: only until the cursor leaves that `@`.
+            if found == nil || found?.at != dismissed { dismissed = nil }
             let q = found.flatMap { $0.at == dismissed ? nil : $0.query }
             parent.controller.at = q == nil ? nil : found?.at
             DispatchQueue.main.async { self.parent.onQuery(q) }

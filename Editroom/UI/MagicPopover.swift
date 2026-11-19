@@ -472,6 +472,25 @@ private struct PromptBox: View {
         .onAppear {
             // `--magic-type "text"` (testing): types into the box, as a person would.
             let args = CommandLine.arguments
+            // `--magic-esc-test` (testing): @, esc, delete it, @ again; the list should be open.
+            if args.contains("--magic-esc-test") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    guard let tv = controller.textView else { return }
+                    tv.insertText("@", replacementRange: tv.selectedRange())
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        let before = query != nil
+                        tv.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            let closed = query == nil
+                            tv.deleteBackward(nil)
+                            tv.insertText("@", replacementRange: tv.selectedRange())
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                FileHandle.standardError.write("MENTION ESC open=\(before) closed=\(closed) reopened=\(query != nil)\n".data(using: .utf8)!)
+                            }
+                        }
+                    }
+                }
+            }
             if let k = args.firstIndex(of: "--magic-type"), args.count > k + 1 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                     controller.textView?.insertText(args[k + 1], replacementRange: controller.textView?.selectedRange() ?? NSRange())
