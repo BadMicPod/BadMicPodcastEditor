@@ -127,10 +127,12 @@ struct MagicPopover: View {
                 HStack(spacing: 5) {
                     // Where the AI tabs pick a model: Local always uses Apple's, so plain text, not a chip.
                     if LocalBrain.available {
-                        Text("Apple Intelligence")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(Theme.textDim)
-                            .padding(.leading, 2)
+                        HStack(spacing: 4) {
+                            Image(systemName: "apple.logo").font(.system(size: 10, weight: .semibold))
+                            Text("Apple Intelligence").font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundStyle(Theme.textDim)
+                        .padding(.leading, 2)
                     }
                     Spacer()
                     PillButton(title: "Make it", prominent: true, action: goLocal)
@@ -233,7 +235,7 @@ private struct AITab: View {
                 if let kind = tab.kind {
                     AppLogo(kind: kind, size: 15).opacity(on ? 1 : 0.8)
                 } else {
-                    Image(systemName: "apple.logo").font(.system(size: 11, weight: .semibold))
+                    Image(systemName: "laptopcomputer").font(.system(size: 11, weight: .semibold))
                 }
                 Text(tab.name).font(.system(size: 11.5, weight: .semibold))
             }
@@ -598,7 +600,7 @@ struct MagicNoteView: View {
                 if let agent = note.agent {
                     AppLogo(kind: agent, size: 18)
                 } else {
-                    Image(systemName: "apple.logo").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text).frame(width: 18, height: 18)
+                    Image(systemName: "laptopcomputer").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text).frame(width: 18, height: 18)
                 }
                 Text(note.agent?.name ?? "Local").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text)
                 if !note.detail.isEmpty {
