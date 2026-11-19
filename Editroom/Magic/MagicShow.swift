@@ -388,7 +388,8 @@ final class MagicShow: NSObject {
     /// The finished cut, and every clip as it's first dropped, for working out where things will be.
     private var finalProject = Project()
     private var staged: [UUID: Clip] = [:]
-    private var lastFlash = -1.0
+    /// The first shot shows a second in, not the moment the cursors come out (that jump is jarring).
+    private var lastFlash = 0.7
     private var flashIndex = -1
     private var frames = 0
     private var longestFrame = 0.0
