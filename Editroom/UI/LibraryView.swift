@@ -35,6 +35,9 @@ struct LibraryView: View {
             .padding(.leading, 16)
             .padding(.trailing, 12)
             .frame(height: 44)
+            .contentShape(Rectangle())
+            // Right-click: the header buttons' actions in words, and how the list looks.
+            .contextMenu { panelMenu }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
@@ -83,6 +86,8 @@ struct LibraryView: View {
             }
             // The part of the list on screen, for Magic's scans.
             .background(MagicAnchor(key: "libraryList"))
+            // The same menu on the space around the items (each item keeps its own).
+            .contextMenu { panelMenu }
         }
         .background(Theme.panel).panelTopLight()
         .overlay(
@@ -94,6 +99,21 @@ struct LibraryView: View {
             loadURLs(providers) { model.importFiles($0) }
             return true
         }
+    }
+}
+
+extension LibraryView {
+    /// The Media panel's own menu: add a text or solid at the playhead, import, and List or Thumbnails.
+    @ViewBuilder var panelMenu: some View {
+        Button("Add Text") { model.addAtPlayhead(.text) }
+        Button("Add Solid") { model.addAtPlayhead(.solid) }
+        Button("Import Media…") { model.showImportPanel() }
+            .keyboardShortcut("i", modifiers: .command)
+        Divider()
+        Picker("View as", selection: $layout) {
+            ForEach(MediaLayout.allCases) { Text($0.name).tag($0) }
+        }
+        .pickerStyle(.inline)
     }
 }
 

@@ -201,6 +201,16 @@ final class EditorModel: ObservableObject {
                         FileHandle.standardError.write("SCRUB \(a.name) \(hits)/101 frames ready, \(String(format: "%.2f", ms)) ms each\n".data(using: .utf8)!)
                     }
                 }
+                // `--media-menu header|empty` (testing): right-click the Media panel's header or the space under its list.
+                if let k = args.firstIndex(of: "--media-menu"), args.count > k + 1,
+                   let r = MagicAnchors.rect("libraryList"), let w = NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    let at = args[k + 1] == "header" ? NSPoint(x: r.minX + 60, y: r.maxY + 22) : NSPoint(x: r.midX, y: r.minY + 30)
+                    if let e = NSEvent.mouseEvent(with: .rightMouseDown, location: at, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                  windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                        DispatchQueue.main.async { w.sendEvent(e) }
+                    }
+                }
                 if args.contains("--play") { self.play() }
                 if args.contains("--magic") {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
