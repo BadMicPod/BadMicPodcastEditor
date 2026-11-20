@@ -28,12 +28,14 @@ struct LocalRecipe: Equatable {
     /// Asks for nothing Local can do (no setting, no media): it shouldn't edit anything.
     var isEmpty: Bool {
         seconds == nil && pace == .unchanged && look == nil && music == .unchanged && frame == .unchanged
-            && keepOnly.isEmpty && takeOut.isEmpty && speed == nil && !soundEffects && !levelAudio && title == nil && !wholeLibrary
+            && keepOnly.isEmpty && takeOut.isEmpty && speed == nil && !soundEffects && !levelAudio && title == nil && !wholeLibrary && shots == nil
     }
 
     /// They want the whole Media library, not just what's in the edit ("use most of the clips", "make a
     /// new intro"): a new cut from everything, in place of the edit.
     var wholeLibrary = false
+    /// How many shots they asked for, at least ("at least 10 clips", "12 shots").
+    var shots: Int?
     /// Asks only for the audio levels to match (and maybe a look): nothing about the picture's cut.
     var onlyLevels: Bool {
         levelAudio && seconds == nil && pace == .unchanged && music == .unchanged && frame == .unchanged
@@ -72,6 +74,7 @@ struct LocalRecipe: Equatable {
         if music == .off { parts.append("no music") } else if music == .add { parts.append("music added") }
         if frame != .unchanged { parts.append(frame.rawValue) }
         if let speed { parts.append(String(format: "speed ×%g", speed)) }
+        if let shots { parts.append("\(shots)+ shots") }
         if soundEffects { parts.append("sound effects") }
         if levelAudio { parts.append("audio levelled") }
         if !keepOnly.isEmpty { parts.append("only " + mediaNames.joined(separator: ", ")) }
@@ -125,13 +128,25 @@ enum LocalBrain {
                                    "any good", "makes sense", "if it fits", "where it fits", "if needed", "only if"].contains { t.contains($0) }
     }
 
+    /// How many shots or clips they asked for: "at least 10 clips", "12 shots", "ten cuts".
+    static func shotCount(_ request: String) -> Int? {
+        var t = request.lowercased()
+        let words = ["two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+                     "eleven": 11, "twelve": 12, "fifteen": 15, "twenty": 20, "thirty": 30]
+        for (w, n) in words { t = t.replacingOccurrences(of: "\\b\(w)\\b", with: String(n), options: .regularExpression) }
+        guard let r = t.range(of: #"(\d+)\s*(\+\s*)?(different |unique |separate |short |quick |fast )?(clips|shots|cuts|scenes|videos)"#,
+                              options: .regularExpression),
+              let n = Int(t[r].prefix { $0.isNumber }), (2...200).contains(n) else { return nil }
+        return n
+    }
+
     /// Asks for footage beyond what's in the edit: most or all of the clips, more or other shots, a new video.
     static func wantsLibrary(_ request: String) -> Bool {
         let t = request.lowercased()
         return ["most of the clips", "most clips", "all the clips", "all clips", "all of the clips", "all my clips", "every clip",
                 "more clips", "more shots", "other clips", "other shots", "the rest of the clips", "whole library", "all my media",
                 "media folder", "all the media", "all of my", "from scratch", "start over", "make a new", "create a new",
-                "new video", "new cut", "new edit"].contains { t.contains($0) }
+                "new video", "new cut", "new edit", "create ", "montage"].contains { t.contains($0) }
     }
 
     /// The title they asked for, if they did: their quoted words, or "" for one made from the dates.

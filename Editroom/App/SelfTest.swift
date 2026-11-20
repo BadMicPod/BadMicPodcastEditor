@@ -1333,8 +1333,10 @@ enum SelfTest {
                 let tagOK = tags.shows("pool") && tags.shows("chairs") && tags.shows("po", typing: true) && !tags.shows("po") && !tags.shows("beach")
                     && SceneTags(tags: [.init(name: "portal", confidence: 0.7, times: [])]).shows("door")
                     && SceneTags(tags: [.init(name: "adult", confidence: 0.7, times: [])]).shows("wom", typing: true)
-                let mOK = tagOK && speechOK && cutOK && timeOK && typedOK && clipOK && moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
-                log("MENTIONS \(mOK ? "OK" : "FAIL") tags=\(tagOK) speech=\(speechOK) cut=\(cutOK) \(cutPlan.said) time=\(timeOK) typed=\(typedOK) clip=\(clipOK) \(labels) move=\(moveOK) keep=\(keepOK) find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
+                let countOK = LocalBrain.shotCount("create 7 second montage with at least 10 clips") == 10
+                    && LocalBrain.shotCount("twelve quick cuts") == 12 && LocalBrain.shotCount("make it 7 seconds") == nil
+                let mOK = countOK && tagOK && speechOK && cutOK && timeOK && typedOK && clipOK && moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
+                log("MENTIONS \(mOK ? "OK" : "FAIL") count=\(countOK) tags=\(tagOK) speech=\(speechOK) cut=\(cutOK) \(cutPlan.said) time=\(timeOK) typed=\(typedOK) clip=\(clipOK) \(labels) move=\(moveOK) keep=\(keepOK) find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
                 good = good && mOK
             }
             log("LOCAL IMPROVE \(good ? "OK" : "FAIL") \(detail)")

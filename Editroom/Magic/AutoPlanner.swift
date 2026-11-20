@@ -78,10 +78,23 @@ enum AutoPlanner {
             longBeats = [2, 4, 8, 16].first { Double($0) * p >= 1.5 * pace } ?? 16
             shortBeats = Double(longBeats / 2) * p >= 0.8 ? longBeats / 2 : longBeats
         }
+        // A number of shots they asked for sets the shot length: about the length over the count (whole beats
+        // with music, rounded down), so there are at least that many.
+        var perShot: Double?
+        if let n = recipe.shots {
+            let length = recipe.seconds ?? Double(n) * (recipe.pace == .calm ? 2.5 : recipe.pace == .fast ? 0.9 : 1.5)
+            perShot = max(0.35, length / Double(n))
+            if let p = period {
+                let b = max(1, Int((perShot! / p).rounded(.down)))
+                longBeats = b
+                shortBeats = b
+            }
+        }
         let rhythm = [true, false, false, true, true, false]
         func beatsFor(_ k: Int) -> Int { rhythm[k % rhythm.count] ? longBeats : shortBeats }
         func lengthFor(_ k: Int) -> Double {
             if let p = period { return Double(beatsFor(k)) * p }
+            if let perShot { return perShot * [1.08, 0.94, 1.0, 1.06, 0.92, 1.0][k % 6] }
             return [2.4, 1.8, 2.1, 2.8, 1.7, 2.2][k % 6] * pace
         }
 
@@ -90,7 +103,7 @@ enum AutoPlanner {
             let step = s.analysis.samples.count > 1 ? s.analysis.duration / Double(s.analysis.samples.count) : 2.5
             return sum + Double(s.scores.filter { $0 >= floor }.count) * step
         }
-        var target = recipe.seconds ?? min(40, max(12, good * 0.5))
+        var target = recipe.seconds ?? perShot.map { $0 * Double(recipe.shots ?? 1) } ?? min(40, max(12, good * 0.5))
         if let m = music?.1 { target = min(target, m.duration - 2) }
 
         /// The best window of `length` in a source that doesn't overlap what's already been taken from it.
@@ -134,7 +147,7 @@ enum AutoPlanner {
                 var found = bestWindow(sources[i], length + 0.08)
                 if found == nil, beats != shortBeats || period == nil {
                     beats = shortBeats
-                    length = period.map { Double(shortBeats) * $0 } ?? 1.6
+                    length = period.map { Double(shortBeats) * $0 } ?? min(1.6, perShot ?? 1.6)
                     found = bestWindow(sources[i], length + 0.08)
                 }
                 guard let w = found else { continue }
