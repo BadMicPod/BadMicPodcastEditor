@@ -7,7 +7,7 @@ enum AudioLevels {
     static func envelopeDB(_ c: Clip, media: MediaStore) -> Double? {
         guard let wf = media.waveform(c), !wf.peaks.isEmpty else { return nil }
         let lo = max(0, Int(c.sourceStart * wf.peaksPerSecond))
-        let hi = min(wf.peaks.count, Int((c.sourceStart + c.duration * c.speed) * wf.peaksPerSecond))
+        let hi = min(wf.peaks.count, Int((c.sourceStart + c.sourceLength) * wf.peaksPerSecond))
         guard hi > lo else { return nil }
         var sum = 0.0, n = 0
         for i in lo..<hi where wf.peaks[i] > 0.003 {
@@ -23,7 +23,7 @@ enum AudioLevels {
     static func peakDB(_ c: Clip, media: MediaStore) -> Double? {
         guard let wf = media.waveform(c), !wf.peaks.isEmpty else { return nil }
         let lo = max(0, Int(c.sourceStart * wf.peaksPerSecond))
-        let hi = min(wf.peaks.count, Int((c.sourceStart + c.duration * c.speed) * wf.peaksPerSecond))
+        let hi = min(wf.peaks.count, Int((c.sourceStart + c.sourceLength) * wf.peaksPerSecond))
         guard hi > lo, let peak = wf.peaks[lo..<hi].max(), peak > 0 else { return nil }
         return 20 * log10(Double(peak))
     }
@@ -37,9 +37,9 @@ enum AudioLevels {
             var open: Double?
             var t = c.start
             while t < c.end {
-                let src = c.sourceStart + (t - c.start) * c.speed
+                let src = c.sourceTime(at: t)
                 let lo = max(0, Int(src * wf.peaksPerSecond))
-                let hi = min(wf.peaks.count - 1, Int((src + step * c.speed) * wf.peaksPerSecond))
+                let hi = min(wf.peaks.count - 1, Int(c.sourceTime(at: t + step) * wf.peaksPerSecond))
                 var peak: Float = 0
                 if hi >= lo { for i in lo...hi { peak = max(peak, wf.peaks[i]) } }
                 let active = Double(peak) * dbToLinear(c.gainDB) * c.fadeGain(at: t) > 0.03

@@ -7,6 +7,7 @@ struct InspectorView: View {
 
     @ObservedObject var model: EditorModel
     @State private var speedOrigin: [Clip]?
+    @State private var rampOrigin: [Clip]?
 
     private var selected: [Clip] {
         model.project.clips.filter { model.selection.contains($0.id) }
@@ -126,7 +127,20 @@ struct InspectorView: View {
         let offGain = audio.first.map { abs($0.gainDB) > 0.001 } ?? false
 
         if sourced.first != nil || audio.first != nil {
-            InspectorSection("Playback", action: offSpeed ? ("Reset speed", { model.setSpeed(1) }) : nil, marked: offSpeed || offGain) {
+            let ramped = sourced.first?.isRamped ?? false
+            InspectorSection("Playback", action: offSpeed || ramped ? ("Reset speed", { model.resetSpeed() }) : nil,
+                             marked: offSpeed || ramped || offGain) {
+                if let first = audio.first {
+                    ParamRow(icon: .symbol("speaker.wave.2"), label: "Volume",
+                             value: first.gainDB, range: -60...12, format: formatDB,
+                             onEditing: { if !$0 { model.commitLive() } },
+                             onChange: { v in
+                                 let audioIDs = Set(audio.map(\.id))
+                                 model.live(autoCommit: false) { p in
+                                     for i in p.clips.indices where audioIDs.contains(p.clips[i].id) { p.clips[i].gainDB = (v * 10).rounded() / 10 }
+                                 }
+                             })
+                }
                 if let first = sourced.first {
                     ParamRow(icon: .symbol("clock.arrow.circlepath"), label: "Speed",
                              value: first.speed * 100, range: 10...5000, logarithmic: true,
@@ -140,17 +154,27 @@ struct InspectorView: View {
                                  }
                              },
                              onChange: { applySpeed($0 / 100, ids: ids) })
-                }
-                if let first = audio.first {
-                    ParamRow(icon: .symbol("speaker.wave.2"), label: "Volume",
-                             value: first.gainDB, range: -60...12, format: formatDB,
-                             onEditing: { if !$0 { model.commitLive() } },
-                             onChange: { v in
-                                 let audioIDs = Set(audio.map(\.id))
-                                 model.live(autoCommit: false) { p in
-                                     for i in p.clips.indices where audioIDs.contains(p.clips[i].id) { p.clips[i].gainDB = (v * 10).rounded() / 10 }
-                                 }
-                             })
+                    // The ramp, once the speed isn't 100% (or the clip already ramps). Kept up while
+                    // dragging, so passing through 100% doesn't pull it away under the mouse.
+                    if offSpeed || ramped || speedOrigin != nil || rampOrigin != nil {
+                        SpeedRampGraph(clip: first, onEditing: { began in
+                            if began {
+                                rampOrigin = model.project.clips
+                            } else {
+                                rampOrigin = nil
+                                model.commitLive()
+                            }
+                        }, onChange: { shape in
+                            guard let origin = rampOrigin else { return }
+                            let sticky = model.sticky
+                            model.live(autoCommit: false) { p in
+                                p.clips = origin
+                                p.setRamp(ids: p.linked(ids), speed: shape.mid, a: shape.a, b: shape.b,
+                                          start: shape.start, end: shape.end, sticky: sticky)
+                            }
+                        })
+                        .transition(.opacity)
+                    }
                 }
             }
         }
@@ -1103,5 +1127,196 @@ private struct ColorWheel: View {
         }
         .frame(maxWidth: .infinity)
         .help("Drag to tint \(title.lowercased()). Double-click to reset.")
+    }
+}
+
+
+/// A clip's speed across its footage, under the Speed row: the line is the speed (the same as the
+/// slider), and a dot pulled in from either edge ramps that end from (or to) another speed, set by the
+/// small bar that appears at that edge. Across the graph is the clip's footage, which stays put while
+/// the clip's length changes.
+private struct SpeedRampGraph: View {
+    struct Shape {
+        var mid: Double
+        var a: Double
+        var b: Double
+        var start: Double
+        var end: Double
+    }
+
+    let clip: Clip
+    let onEditing: (Bool) -> Void
+    let onChange: (Shape) -> Void
+
+    private enum Part { case inDot, outDot, startBar, endBar, line }
+    @State private var dragging: Part?
+    @State private var drawn: Shape?
+
+    private static let lo = 0.1, hi = 10.0
+    private static let height: CGFloat = 76
+
+    /// The clip's ramp as the graph draws it.
+    private var shape: Shape {
+        let s0 = clip.sourceStart, L = max(1e-6, clip.sourceLength), s1 = s0 + L
+        var a = 0.0, b = 0.0
+        if let r = clip.ramp, clip.isRamped {
+            if r.inTo > s0 + 1e-6, r.inTo > r.inFrom { a = min(1, (r.inTo - s0) / L) }
+            if r.outFrom < s1 - 1e-6, r.outTo > r.outFrom { b = min(1 - a, (s1 - r.outFrom) / L) }
+        }
+        return Shape(mid: clip.speed, a: a, b: b, start: clip.speed(atSource: s0), end: clip.speed(atSource: s1))
+    }
+
+    private func y(_ v: Double, _ h: CGFloat) -> CGFloat {
+        let n = (log(min(max(v, Self.lo), Self.hi)) - log(Self.lo)) / (log(Self.hi) - log(Self.lo))
+        return 6 + (h - 12) * CGFloat(1 - n)
+    }
+
+    private func speed(_ y: CGFloat, _ h: CGFloat) -> Double {
+        let n = Double(1 - (y - 6) / (h - 12))
+        let v = exp(log(Self.lo) + min(1, max(0, n)) * (log(Self.hi) - log(Self.lo)))
+        // A little pull toward 100%.
+        return abs(log(v)) < 0.06 ? 1 : v
+    }
+
+    var body: some View {
+        let s = drawn ?? shape
+        VStack(spacing: 6) {
+            GeometryReader { geo in
+                let w = geo.size.width, h = geo.size.height
+                let midY = y(s.mid, h), ax = CGFloat(s.a) * w, bx = w - CGFloat(s.b) * w
+                ZStack(alignment: .topLeading) {
+                    Canvas { ctx, size in
+                        // 100%, for reference.
+                        var base = Path()
+                        base.move(to: CGPoint(x: 0, y: y(1, h)))
+                        base.addLine(to: CGPoint(x: w, y: y(1, h)))
+                        ctx.stroke(base, with: .color(Theme.ink.opacity(0.14)), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                        // The speed across the footage.
+                        let line = curve(s, w: w, h: h)
+                        var area = line
+                        area.addLine(to: CGPoint(x: w, y: y(1, h)))
+                        area.addLine(to: CGPoint(x: 0, y: y(1, h)))
+                        area.closeSubpath()
+                        ctx.fill(area, with: .color(Theme.ink.opacity(0.05)))
+                        ctx.stroke(line, with: .color(Theme.text), lineWidth: 1.5)
+                    }
+                    if s.a > 0 { bar(at: 0, y: y(s.start, h)) }
+                    if s.b > 0 { bar(at: w, y: y(s.end, h)) }
+                    dot(at: CGPoint(x: max(5, ax), y: midY))
+                    dot(at: CGPoint(x: min(w - 5, bx), y: midY))
+                    if let part = dragging {
+                        let (x, yy, v): (CGFloat, CGFloat, Double) = switch part {
+                        case .startBar: (22, y(s.start, h), s.start)
+                        case .endBar: (w - 22, y(s.end, h), s.end)
+                        default: ((ax + bx) / 2, midY, s.mid)
+                        }
+                        Text("\(Int((v * 100).rounded()))%")
+                            .font(Theme.mono(10.5))
+                            .foregroundStyle(Theme.text)
+                            .fixedSize()
+                            .position(x: x, y: yy < 18 ? yy + 12 : yy - 11)
+                    }
+                }
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0).onChanged { g in
+                    if dragging == nil {
+                        guard let part = hit(g.startLocation, s: s, w: w, h: h) else { return }
+                        dragging = part
+                        drawn = s
+                        onEditing(true)
+                    }
+                    guard let part = dragging, var d = drawn else { return }
+                    let p = g.location
+                    switch part {
+                    case .inDot:
+                        var a = Double(min(max(0, p.x), w) / w)
+                        if p.x < 6 { a = 0 }
+                        d.a = min(a, 1 - d.b)
+                        if d.a == 0 { d.start = d.mid } else if s.a == 0, d.start == d.mid { d.start = 1 }
+                    case .outDot:
+                        var b = Double(min(max(0, w - p.x), w) / w)
+                        if p.x > w - 6 { b = 0 }
+                        d.b = min(b, 1 - d.a)
+                        if d.b == 0 { d.end = d.mid } else if s.b == 0, d.end == d.mid { d.end = 1 }
+                    case .startBar: d.start = speed(p.y, h)
+                    case .endBar: d.end = speed(p.y, h)
+                    case .line: d.mid = speed(p.y, h)
+                    }
+                    drawn = d
+                    onChange(d)
+                }.onEnded { _ in
+                    guard dragging != nil else { return }
+                    dragging = nil
+                    drawn = nil
+                    onEditing(false)
+                })
+                .onHover { inside in if !inside, dragging == nil { NSCursor.arrow.set() } }
+                .onContinuousHover { phase in
+                    guard dragging == nil else { return }
+                    if case .active(let p) = phase {
+                        switch hit(p, s: s, w: w, h: h) {
+                        case .inDot, .outDot: NSCursor.resizeLeftRight.set()
+                        case .startBar, .endBar, .line: NSCursor.resizeUpDown.set()
+                        case nil: NSCursor.arrow.set()
+                        }
+                    }
+                }
+            }
+            .frame(height: Self.height)
+            HStack {
+                Text(String(format: "%.1fs footage", clip.sourceLength))
+                Spacer()
+                Text(String(format: "plays in %.1fs", clip.duration))
+            }
+            .font(Theme.mono(10.5))
+            .foregroundStyle(Theme.textFaint)
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
+        .padding(.leading, 26)
+    }
+
+    /// The speed line: flat, with eased ramps at the ends (as it plays).
+    private func curve(_ s: Shape, w: CGFloat, h: CGFloat) -> Path {
+        let ease = { (u: Double) in u * u * (3 - 2 * u) }
+        let at = { (x: Double) -> Double in
+            if s.a > 0, x < s.a { return exp(log(s.start) + (log(s.mid) - log(s.start)) * ease(x / s.a)) }
+            if s.b > 0, x > 1 - s.b { return exp(log(s.mid) + (log(s.end) - log(s.mid)) * ease((x - (1 - s.b)) / s.b)) }
+            return s.mid
+        }
+        var path = Path()
+        let n = 96
+        for i in 0...n {
+            let x = Double(i) / Double(n)
+            let pt = CGPoint(x: CGFloat(x) * w, y: y(at(x), h))
+            if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
+        }
+        return path
+    }
+
+    private func hit(_ p: CGPoint, s: Shape, w: CGFloat, h: CGFloat) -> Part? {
+        let midY = y(s.mid, h), ax = max(5, CGFloat(s.a) * w), bx = min(w - 5, w - CGFloat(s.b) * w)
+        func near(_ x: CGFloat, _ yy: CGFloat) -> Bool { hypot(p.x - x, p.y - yy) < 9 }
+        if s.a > 0, p.x < 8, abs(p.y - y(s.start, h)) < 10 { return .startBar }
+        if s.b > 0, p.x > w - 8, abs(p.y - y(s.end, h)) < 10 { return .endBar }
+        if near(ax, midY) && near(bx, midY) { return p.x < (ax + bx) / 2 ? .inDot : .outDot }
+        if near(ax, midY) { return .inDot }
+        if near(bx, midY) { return .outDot }
+        if p.x > ax, p.x < bx, abs(p.y - midY) < 8 { return .line }
+        return nil
+    }
+
+    private func dot(at p: CGPoint) -> some View {
+        Circle().fill(Theme.text).frame(width: 10, height: 10)
+            .overlay(Circle().strokeBorder(Theme.field, lineWidth: 2.5).padding(-2.5))
+            .position(p)
+            .allowsHitTesting(false)
+    }
+
+    private func bar(at x: CGFloat, y: CGFloat) -> some View {
+        Capsule().fill(Theme.text).frame(width: 5, height: 14)
+            .overlay(Capsule().strokeBorder(Theme.field, lineWidth: 2).padding(-2))
+            .position(x: x, y: y)
+            .allowsHitTesting(false)
     }
 }

@@ -113,6 +113,8 @@ struct Clip: Identifiable, Codable, Hashable {
     /// Plays its source backwards. Source time `s` is time `length - s` in the file, so trims and
     /// splits work as on any clip.
     var reversed: Bool?
+    /// The speed changing across the clip; nil plays at `speed` throughout.
+    var ramp: SpeedRamp?
 
     var isFreeze: Bool { freeze == true }
     var playsBackwards: Bool { reversed == true }
@@ -143,9 +145,10 @@ struct Clip: Identifiable, Codable, Hashable {
 
     mutating func trimHead(to t: Double) {
         let d = t - start
+        let newSource = sourceTime(at: t)
         start = t
         duration -= d
-        if playsSource { sourceStart = max(0, sourceStart + d * speed) }
+        if playsSource { sourceStart = max(0, newSource) }
         clampFades()
     }
 
@@ -432,14 +435,14 @@ extension Project {
         if left {
             let prevEnd = others.filter { $0.end <= c.start + 1e-6 }.map(\.end).max() ?? 0
             var lo = prevEnd - c.start
-            if c.playsSource { lo = max(lo, -c.sourceStart / c.speed) }
+            if c.playsSource { lo = max(lo, -c.timelineSpan(from: 0, to: c.sourceStart)) }
             let hi = c.duration - minDur
             return min(lo, hi)...hi
         } else {
             let nextStart = others.filter { $0.start >= c.end - 1e-6 }.map(\.start).min() ?? .infinity
             var hi = nextStart - c.end
             if let limit = sourceLimit(c) {
-                hi = min(hi, (limit - c.sourceStart) / c.speed - c.duration)
+                hi = min(hi, c.timelineSpan(from: c.sourceStart, to: limit) - c.duration)
             }
             let lo = minDur - c.duration
             return lo...max(lo, hi)
@@ -589,10 +592,30 @@ extension Project {
     /// Changed clips on a track stay butted together (later ones slide by however much earlier ones
     /// grew or shrank), and anything that would be overlapped is pushed later instead.
     mutating func setSpeed(ids: Set<UUID>, speed: Double, sticky: Bool = false) {
+        let speed = min(max(speed, 0.05), 100)
+        retime(ids: ids, sticky: sticky) { $0.speed = speed }
+    }
+
+    /// Sets the speed ramp drawn in the inspector on these clips (each over its own footage), with the
+    /// middle speed: `a` and `b` are how much of the start and end ramp, `start` and `end` the speeds
+    /// there. Each keeps its footage; its length follows.
+    mutating func setRamp(ids: Set<UUID>, speed: Double, a: Double, b: Double, start: Double, end: Double, sticky: Bool = false) {
+        let clamp = { (v: Double) in min(max(v, 0.05), 100) }
+        retime(ids: ids, sticky: sticky) { c in
+            let s0 = c.sourceStart, s1 = c.sourceStart + c.sourceLength
+            c.speed = clamp(speed)
+            c.ramp = SpeedRamp.drawn(s0: s0, s1: s1, a: a, b: b, start: clamp(start), end: clamp(end), mid: c.speed)
+        }
+    }
+
+    /// Changes how the given clips play, each keeping its footage so its length follows.
+    /// Changed clips on a track stay butted together (later ones slide by however much earlier ones
+    /// grew or shrank), and anything that would be overlapped is pushed later instead.
+    mutating func retime(ids: Set<UUID>, sticky: Bool = false, _ change: (inout Clip) -> Void) {
         if sticky {
             // Work out the changed clips as usual, then let whatever touched them follow.
             var plain = self
-            plain.setSpeed(ids: ids, speed: speed)
+            plain.retime(ids: ids, change)
             var edited: [UUID: Clip] = [:]
             for c in plain.clips where ids.contains(c.id) { edited[c.id] = c }
             let carried = carried(by: edited)
@@ -601,7 +624,6 @@ extension Project {
             }
             return
         }
-        let speed = min(max(speed, 0.05), 100)
         for track in videoTracks + audioTracks {
             let order = clips.indices.filter { clips[$0].trackID == track.id }.sorted { clips[$0].start < clips[$1].start }
             guard order.contains(where: { ids.contains(clips[$0].id) && clips[$0].playsSource }) else { continue }
@@ -610,12 +632,10 @@ extension Project {
             for i in order {
                 var c = clips[i]
                 if ids.contains(c.id), c.playsSource {
-                    let newDuration = max(snapFrame(c.duration * c.speed / speed), 1 / fps)
+                    let before = c.duration
+                    c.retime(snap: snapFrame, minimum: 1 / fps, change)
                     c.start += shift
-                    shift += newDuration - c.duration
-                    c.speed = speed
-                    c.duration = newDuration
-                    c.clampFades()
+                    shift += c.duration - before
                 } else if ids.contains(c.id) {
                     c.start += shift
                 }
@@ -692,13 +712,13 @@ extension Project {
 
     /// Unused media before a clip's in point, in timeline seconds.
     private func headRoom(_ c: Clip) -> Double {
-        c.playsSource ? c.sourceStart / c.speed : .infinity
+        c.playsSource ? c.timelineSpan(from: 0, to: c.sourceStart) : .infinity
     }
 
     /// Unused media after a clip's out point, in timeline seconds.
     private func tailRoom(_ c: Clip) -> Double {
         guard c.playsSource, let limit = sourceLimit(c) else { return .infinity }
-        return max(0, (limit - c.sourceStart - c.duration * c.speed) / c.speed)
+        return max(0, c.timelineSpan(from: c.sourceStart + c.sourceLength, to: limit))
     }
 
     /// Where the transition into `b` from `a` sits. A dissolve or wipe needs both pictures at once, so

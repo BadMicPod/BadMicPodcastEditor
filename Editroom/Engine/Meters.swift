@@ -49,9 +49,9 @@ final class MeterState: ObservableObject {
                 for c in project.clips where c.trackID == track.id && c.kind == .audio && t >= c.start && t < c.end {
                     guard let wf = media.waveform(c), !wf.peaks.isEmpty else { continue }
                     // The loudest peak over the last ~30ms of source.
-                    let src = c.sourceStart + (t - c.start) * c.speed
+                    let src = c.sourceTime(at: t)
                     let hi = min(wf.peaks.count - 1, Int(src * wf.peaksPerSecond))
-                    let lo = max(0, Int((src - 0.03 * c.speed) * wf.peaksPerSecond))
+                    let lo = max(0, Int((src - 0.03 * c.speed(atSource: src)) * wf.peaksPerSecond))
                     guard hi >= lo else { continue }
                     var peak: Float = 0, pl: Float = 0, pr: Float = 0
                     for i in lo...hi {

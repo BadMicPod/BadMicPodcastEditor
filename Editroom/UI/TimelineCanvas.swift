@@ -746,11 +746,11 @@ final class TimelineCanvas: NSView {
         var lo = -Double.infinity, hi = Double.infinity
         for c in originals {
             if left {
-                if c.playsSource { lo = max(lo, -c.sourceStart / c.speed) }
+                if c.playsSource { lo = max(lo, -c.timelineSpan(from: 0, to: c.sourceStart)) }
                 hi = min(hi, c.duration - minDur)
             } else {
                 lo = max(lo, minDur - c.duration)
-                if let limit = project.sourceLimit(c) { hi = min(hi, (limit - c.sourceStart) / c.speed - c.duration) }
+                if let limit = project.sourceLimit(c) { hi = min(hi, c.timelineSpan(from: c.sourceStart, to: limit) - c.duration) }
             }
         }
         let clamped = min(max(d, lo), max(lo, hi))
@@ -1684,6 +1684,27 @@ final class TimelineCanvas: NSView {
         guard visible.width > 0, asset.height > 0 else { return }
         let aspect = CGFloat(asset.width) / CGFloat(asset.height)
         let tileW = max(24, r.height * aspect)
+        if c.isRamped {
+            // Speed changes across it: evenly spaced frames from the clip's start, each showing the
+            // footage playing at that moment.
+            var x = r.minX + floor(max(0, visible.minX - r.minX) / tileW) * tileW
+            var drawn = 0
+            ctx.saveGState()
+            ctx.setAlpha(0.88)
+            while x < min(r.maxX, visible.maxX), drawn < 240 {
+                let t = c.start + Double((x + tileW / 2 - r.minX) / pps)
+                let ts = c.sourceTime(at: min(t, c.end))
+                let shown = c.playsBackwards ? asset.duration - ts : ts
+                let sample = min(max(0, shown), max(0, asset.duration - 0.05))
+                if let img = model.media.thumbnail(asset: asset.id, time: sample).map({ graded($0, c.grade) }) {
+                    drawImage(img, fill: CGRect(x: x, y: r.minY, width: max(1, tileW - 1), height: r.height), ctx: ctx)
+                }
+                x += tileW
+                drawn += 1
+            }
+            ctx.restoreGState()
+            return
+        }
         // Source seconds per tile: the smallest power of two that keeps tiles at least one thumbnail wide.
         var step = 1.0 / 16
         while CGFloat(step / c.speed) * pps < tileW, step < 16384 { step *= 2 }
@@ -1723,14 +1744,27 @@ final class TimelineCanvas: NSView {
         let lift = 2.0, headroom: CGFloat = 0.92
         let step: CGFloat = 1
         let secPerPx = Double(1 / pps) * c.speed
-        let origin = r.minX - CGFloat(c.sourceStart / secPerPx)
+        // A ramped clip's footage doesn't run evenly across it: its grid starts at the clip.
+        let origin = c.isRamped ? r.minX : r.minX - CGFloat(c.sourceStart / secPerPx)
+        // Worked out every few points across what's shown, and read in between.
+        let every: CGFloat = 4, from = visible.minX - 16
+        let table: [Double] = c.isRamped
+            ? stride(from: from, through: visible.maxX + 24, by: every).map { c.sourceTime(at: c.start + Double(($0 - r.minX) / pps)) }
+            : []
+        func source(_ x: CGFloat) -> Double {
+            guard c.isRamped, !table.isEmpty else { return Double(x - origin) * secPerPx }
+            let f = Double((x - from) / every)
+            let i = min(max(0, Int(f)), table.count - 2)
+            guard i >= 0, table.count > 1 else { return table[0] }
+            return table[i] + (table[i + 1] - table[i]) * (f - Double(i))
+        }
         let levels = wf.rms.isEmpty ? wf.peaks : wf.rms
         let count = levels.count
 
         func level(at k: Int) -> Double {
-            let t0 = Double(CGFloat(k) * step) * secPerPx
-            let i0 = Int(t0 * wf.peaksPerSecond)
-            let i1 = Int((t0 + Double(step) * secPerPx) * wf.peaksPerSecond)
+            let x = origin + CGFloat(k) * step
+            let i0 = Int(source(x) * wf.peaksPerSecond)
+            let i1 = Int(source(x + step) * wf.peaksPerSecond)
             guard i0 < count, i1 >= 0 else { return 0 }
             let a = max(0, i0), b = min(count - 1, max(i0, i1 - 1))
             guard a <= b else { return 0 }

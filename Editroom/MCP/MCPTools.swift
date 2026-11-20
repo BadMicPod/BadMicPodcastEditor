@@ -273,12 +273,12 @@ enum MCPTools {
             var newStart = c.start, newEnd = c.end
             if let s = args["start"] as? Double {
                 // Not before the start of the file.
-                let earliest = c.playsSource ? c.start - c.sourceStart / max(0.01, c.speed) : 0
+                let earliest = c.playsSource ? c.start - c.timelineSpan(from: 0, to: c.sourceStart) : 0
                 newStart = p.snapFrame(max(max(0, earliest), s))
             }
             if let e = args["end"] as? Double {
                 var latest = Double.infinity
-                if c.playsSource, let limit = p.sourceLimit(c) { latest = c.start + (limit - c.sourceStart) / max(0.01, c.speed) }
+                if c.playsSource, let limit = p.sourceLimit(c) { latest = c.start + c.timelineSpan(from: c.sourceStart, to: limit) }
                 newEnd = p.snapFrame(min(latest, e))
             }
             guard newEnd - newStart >= 1 / p.fps else { throw MCPToolError("That would leave the clip with no length.") }
@@ -623,6 +623,12 @@ enum MCPTools {
                                 "start": round3(c.start), "end": round3(c.end), "duration": round3(c.duration)]
         if c.kind.usesSource { d["source_start"] = round3(c.sourceStart); d["asset_id"] = c.assetID?.uuidString ?? "" }
         if c.speed != 1 { d["speed"] = c.speed }
+        if c.isRamped, let r = c.ramp {
+            // Speed ramp: eases from the start speed into `speed`, then out to the end speed.
+            d["speed_ramp"] = ["start_speed": r.startSpeed, "end_speed": r.endSpeed,
+                               "in_seconds": max(0, c.timelineSpan(from: c.sourceStart, to: min(r.inTo, c.sourceStart + c.sourceLength))),
+                               "out_seconds": max(0, c.timelineSpan(from: max(r.outFrom, c.sourceStart), to: c.sourceStart + c.sourceLength))]
+        }
         if c.isReversed { d["reversed"] = true }
         if c.isFreeze { d["freeze_frame"] = true }
         if let link = c.linkID, let other = p.clips.first(where: { $0.linkID == link && $0.id != c.id }) { d["linked_to"] = other.id.uuidString }

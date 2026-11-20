@@ -1082,7 +1082,7 @@ final class EditorModel: ObservableObject {
             (project.trackIndex(a.trackID, kind: .video) ?? 0) < (project.trackIndex(b.trackID, kind: .video) ?? 0)
         }
         guard let c = chosen else { return }
-        var source = c.sourceStart + (t - c.start) * c.speed
+        var source = c.sourceTime(at: t)
         if c.playsBackwards, let length = project.asset(c.assetID)?.duration { source = max(0, length - source - 0.001) }
         var made: UUID?
         mutate { p in
@@ -1135,7 +1135,8 @@ final class EditorModel: ObservableObject {
                 guard let length = p.asset(p.clips[i].assetID)?.duration else { continue }
                 let m = p.clips[i]
                 // The same stretch of the file, measured from the other end.
-                p.clips[i].sourceStart = max(0, length - (m.sourceStart + m.duration * m.speed))
+                p.clips[i].sourceStart = max(0, length - (m.sourceStart + m.sourceLength))
+                p.clips[i].ramp = m.ramp?.mirrored(length: length)
                 p.clips[i].reversed = backwards ? true : nil
             }
         }
@@ -1317,6 +1318,16 @@ final class EditorModel: ObservableObject {
         }
         guard let best = (selected.isEmpty ? cuts : selected).min(by: { abs($0.start - playhead) < abs($1.start - playhead) }) else { return }
         setTransition(into: best.id, best.transitionIn ?? Transition())
+    }
+
+    /// Back to 100%, with no ramp.
+    func resetSpeed() {
+        let ids = project.linked(selection)
+        let sticky = self.sticky
+        mutate { $0.retime(ids: ids, sticky: sticky) { c in
+            c.speed = 1
+            c.ramp = nil
+        } }
     }
 
     func setSpeed(_ speed: Double) {

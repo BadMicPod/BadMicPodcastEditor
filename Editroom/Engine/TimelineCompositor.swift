@@ -9,11 +9,11 @@ struct RenderLayer {
         case image(CIImage)
         case color(CIColor)
         /// Played backwards: at timeline time t the frame is the one just before file time
-        /// `length - (sourceStart + (t - start) * speed)`, kept no bigger than `limit` pixels.
-        case reversed(ReverseFrames, CGImagePropertyOrientation, limit: Int, start: Double, sourceStart: Double, speed: Double, length: Double)
+        /// `length - clock.source(at: t)`, kept no bigger than `limit` pixels.
+        case reversed(ReverseFrames, CGImagePropertyOrientation, limit: Int, clock: SourceClock, length: Double)
         /// Played forwards, read straight from the file (HDR and Log): at timeline time t the frame
-        /// is the one showing at file time `sourceStart + (t - start) * speed`.
-        case decoded(ReverseFrames, CGImagePropertyOrientation, limit: Int, start: Double, sourceStart: Double, speed: Double)
+        /// is the one showing at file time `clock.source(at: t)`.
+        case decoded(ReverseFrames, CGImagePropertyOrientation, limit: Int, clock: SourceClock)
     }
 
     /// When the layer is drawn: the clip, plus any extra a transition shows before or after it.
@@ -186,11 +186,11 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
                 if case .track(let id, let o) = layer.source {
                     buffer = request.sourceFrame(byTrackID: id)
                     orientation = o
-                } else if case .reversed(let frames, let o, let limit, let start, let sourceStart, let speed, let length) = layer.source {
-                    buffer = frames.frame(before: length - (sourceStart + (t - 1e-4 - start) * speed), limit: limit)
+                } else if case .reversed(let frames, let o, let limit, let clock, let length) = layer.source {
+                    buffer = frames.frame(before: length - clock.source(at: t - 1e-4), limit: limit)
                     orientation = o
-                } else if case .decoded(let frames, let o, let limit, let start, let sourceStart, let speed) = layer.source {
-                    buffer = frames.frame(at: sourceStart + (t - 1e-4 - start) * speed, limit: limit)
+                } else if case .decoded(let frames, let o, let limit, let clock) = layer.source {
+                    buffer = frames.frame(at: clock.source(at: t - 1e-4), limit: limit)
                     orientation = o
                 }
                 guard let buffer else { continue }

@@ -102,11 +102,10 @@ enum CompositionBuilder {
                               let length = project.asset(id)?.duration else { continue }
                         var shown = clip
                         shown.start -= plan.leadIn
-                        shown.sourceStart -= plan.leadIn * clip.speed
+                        shown.sourceStart = clip.sourceTime(at: shown.start)
                         hash(shown, into: &hasher)
                         let limit = Int(max(canvas.width, canvas.height).rounded())
-                        layers.append(RenderLayer(clip: clip, source: .reversed(frames, rt.orientation, limit: limit, start: shown.start,
-                                                                                sourceStart: shown.sourceStart, speed: clip.speed, length: length),
+                        layers.append(RenderLayer(clip: clip, source: .reversed(frames, rt.orientation, limit: limit, clock: SourceClock(shown), length: length),
                                                   cube: GradeBaker.cube(for: clip.grade), color: rt.sourceColor, plan: plan))
                     case .video where clip.assetID.flatMap { media.runtimes[$0] }.map { !$0.sourceColor.isStandard } == true:
                         // HDR and Log: read from the file as it plays, so the compositor gets the file's own
@@ -114,11 +113,10 @@ enum CompositionBuilder {
                         guard let id = clip.assetID, let rt = media.runtimes[id], let frames = rt.reverseFrames else { continue }
                         var shown = clip
                         shown.start -= plan.leadIn
-                        shown.sourceStart -= plan.leadIn * clip.speed
+                        if !clip.isFreeze { shown.sourceStart = clip.sourceTime(at: shown.start) }
                         hash(shown, into: &hasher)
                         let limit = Int(max(canvas.width, canvas.height).rounded())
-                        layers.append(RenderLayer(clip: clip, source: .decoded(frames, rt.orientation, limit: limit, start: shown.start,
-                                                                               sourceStart: shown.sourceStart, speed: clip.isFreeze ? 0 : clip.speed),
+                        layers.append(RenderLayer(clip: clip, source: .decoded(frames, rt.orientation, limit: limit, clock: SourceClock(shown)),
                                                   cube: GradeBaker.cube(for: clip.grade), color: rt.sourceColor, plan: plan))
                     case .video:
                         guard let id = clip.assetID, let rt = media.runtimes[id], let src = rt.videoTrack else { continue }
@@ -130,7 +128,7 @@ enum CompositionBuilder {
                         // The stretch of media actually shown, including any a transition borrows.
                         var shown = clip
                         shown.start -= plan.leadIn
-                        shown.sourceStart -= plan.leadIn * clip.speed
+                        if !clip.isFreeze { shown.sourceStart = clip.sourceTime(at: shown.start) }
                         shown.duration += plan.leadIn + plan.tailOut
                         guard let ct = compTracks[lane], insert(shown, source: src, range: rt.videoRange, into: ct, cursor: &cursors[lane]) else { continue }
                         hash(shown, into: &hasher)
@@ -174,7 +172,7 @@ enum CompositionBuilder {
                 }
                 let duckLow = dbToLinear(track.duckDB)
                 for clip in clips {
-                    guard clip.speed <= 32, clip.speed >= 1.0 / 32,
+                    guard clip.speedRange.hi <= 32, clip.speedRange.lo >= 1.0 / 32,
                           let id = clip.assetID, let rt = media.runtimes[id], var src = rt.audioTrack else { continue }
                     var clip = clip
                     var sourceRange = rt.audioRange
@@ -183,6 +181,7 @@ enum CompositionBuilder {
                         // file's length, which a reversed clip's source time is measured from.
                         guard let r = media.reversedAudio(id), let length = project.asset(id)?.duration else { hasher.combine(-1); continue }
                         clip.sourceStart += r.range.duration.seconds - length
+                        clip.ramp = clip.ramp?.shifted(by: r.range.duration.seconds - length)
                         src = r.track
                         sourceRange = r.range
                         hasher.combine(-2)
@@ -275,6 +274,7 @@ enum CompositionBuilder {
         hasher.combine(clip.sourceStart)
         hasher.combine(clip.speed)
         hasher.combine(clip.reversed)
+        hasher.combine(clip.ramp)
     }
 
     /// Places one clip's media on a composition track, applying speed by scaling the inserted range.
@@ -295,6 +295,7 @@ enum CompositionBuilder {
             cursor = end
             return true
         }
+        if clip.isRamped { return insertRamped(clip, source: source, range: range, into: track, cursor: &cursor) }
         let unity = abs(clip.speed - 1) < 1e-9
         var srcStart = time(clip.sourceStart)
         var tgtDur = end - start
@@ -317,6 +318,37 @@ enum CompositionBuilder {
         }
         cursor = start + tgtDur
         return true
+    }
+
+    /// A ramped clip: its footage in short pieces, each played at its own speed, so the speed
+    /// changes smoothly (about every frame through a ramp; one piece where it holds steady).
+    private static func insertRamped(_ clip: Clip, source: AVAssetTrack, range: CMTimeRange,
+                                     into track: AVMutableCompositionTrack, cursor: inout CMTime) -> Bool {
+        guard let ramp = clip.ramp else { return false }
+        let start = time(clip.start)
+        guard start >= cursor, clip.duration > 0 else { return false }
+        let lo = range.start.seconds, hi = range.end.seconds
+        let s0 = max(lo, clip.sourceStart)
+        let s1 = min(hi, clip.sourceTime(at: clip.end))
+        guard s1 > s0 else { return false }
+        // Where the footage is cut into pieces: the ramp's marks, and steps through each ramp.
+        var cuts = [s0, s1]
+        for (a, b) in [(ramp.inFrom, ramp.inTo), (ramp.outFrom, ramp.outTo)] where b > a {
+            let steps = max(4, min(90, Int((clip.timelineSpan(from: a, to: b) * 30).rounded(.up))))
+            for i in 0...steps { cuts.append(a + (b - a) * Double(i) / Double(steps)) }
+        }
+        cuts = Array(Set(cuts.filter { $0 >= s0 && $0 <= s1 })).sorted()
+        var at = start
+        for (a, b) in zip(cuts, cuts.dropFirst()) where b - a > 1e-6 {
+            let srcRange = CMTimeRange(start: time(a), end: time(b))
+            let end = time(clip.start + clip.timelineSpan(from: clip.sourceStart, to: b))
+            guard srcRange.duration > .zero, end > at else { continue }
+            do { try track.insertTimeRange(srcRange, of: source, at: at) } catch { return false }
+            if srcRange.duration != end - at { track.scaleTimeRange(CMTimeRange(start: at, duration: srcRange.duration), toDuration: end - at) }
+            at = end
+        }
+        cursor = at
+        return at > start
     }
 }
 

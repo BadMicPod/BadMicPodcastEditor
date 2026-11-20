@@ -246,6 +246,59 @@ enum SelfTest {
             log("SPEED GROUP \(pass ? "OK" : "FAIL") fast=\(f) slow=\(sl)")
             ok = ok && pass
         }
+        // Speed ramps: 100% → 400% → 100% over 4s of footage. Timing round-trips, the footage stays the
+        // same, a split keeps both halves on the same curve, reversing mirrors it, and it exports.
+        do {
+            var p = Project()
+            p.assets = project.assets
+            let t = p.videoTracks[0].id, at = p.audioTracks[0].id
+            let link = UUID()
+            var v = Clip(trackID: t, kind: .video, assetID: video.id, start: 0, duration: 4, sourceStart: 0.5)
+            v.linkID = link
+            var a = v
+            a.id = UUID()
+            a.trackID = at
+            a.kind = .audio
+            let after = Clip(trackID: t, kind: .solid, start: 4, duration: 1)
+            p.clips = [v, a, after]
+            p.setRamp(ids: [v.id, a.id], speed: 4, a: 0.25, b: 0.25, start: 1, end: 1)
+            let rv = p.clip(v.id)!, ra = p.clip(a.id)!
+            let footage = abs(rv.sourceLength - 4) < 0.02
+            // Pure 400% would be 1s, pure 100% 4s: a ramp at both ends lands in between.
+            let shorter = rv.duration > 1.2 && rv.duration < 3
+            let together = abs(ra.duration - rv.duration) < 1e-6 && p.clip(after.id)!.start >= rv.end - 1e-6
+            var trips = true
+            for x in stride(from: 0.0, through: 4, by: 0.37) {
+                let s = rv.sourceStart + x
+                let back = rv.sourceTime(at: rv.start + rv.timelineSpan(from: rv.sourceStart, to: s))
+                if abs(back - s) > 1e-4 { trips = false }
+            }
+            let ends = abs(rv.speed(atSource: rv.sourceStart) - 1) < 1e-6 && abs(rv.speed(atSource: rv.sourceStart + 2) - 4) < 1e-6
+            var q = p
+            let mid = rv.start + rv.duration * 0.3
+            _ = q.split(ids: [rv.id], at: mid)
+            let halves = q.clips.filter { $0.trackID == t && $0.kind == .video }.sorted { $0.start < $1.start }
+            let split = halves.count == 2 && abs(halves[0].sourceLength + halves[1].sourceLength - rv.sourceLength) < 1e-3
+                && abs(halves[1].sourceStart - rv.sourceTime(at: mid)) < 1e-4
+                && abs(halves[1].speed(atSource: halves[1].sourceStart) - rv.speed(atSource: halves[1].sourceStart)) < 1e-9
+            let length = video.duration
+            let m = rv.ramp!.mirrored(length: length)
+            let mirrored = abs(m.speed(at: length - (rv.sourceStart + 0.3), mid: 4) - rv.speed(atSource: rv.sourceStart + 0.3)) < 1e-9
+            var back = p
+            back.setRamp(ids: [v.id, a.id], speed: 4, a: 0, b: 0, start: 1, end: 1)
+            let flat = back.clip(v.id)!.ramp == nil && abs(back.clip(v.id)!.duration - 1) < 0.04
+            p.sanitize()
+            let exported = await export(p, media, ExportSettings(), to: outDir.appendingPathComponent("ramp.mp4"))
+            let file = AVURLAsset(url: outDir.appendingPathComponent("ramp.mp4"))
+            let seconds = (try? await file.load(.duration).seconds) ?? 0
+            let lasts = abs(seconds - p.duration) < 0.1
+            let pass = footage && shorter && together && trips && ends && split && mirrored && flat && exported && lasts
+            if !pass {
+                log("RAMP DEBUG v=\(rv.start)+\(rv.duration) a=\(ra.start)+\(ra.duration) after=\(p.clip(after.id)!.start) halves=\(halves.map { [$0.start, $0.duration, $0.sourceStart, $0.sourceLength] }) mid=\(mid) src(mid)=\(rv.sourceTime(at: mid))")
+            }
+            log("RAMP \(pass ? "OK" : "FAIL") footage=\(footage) length=\(String(format: "%.2f", rv.duration)) together=\(together) trips=\(trips) ends=\(ends) split=\(split) mirrored=\(mirrored) flat=\(flat) export=\(exported) lasts=\(lasts) (\(String(format: "%.2f", seconds)) of \(String(format: "%.2f", p.duration)))")
+            ok = ok && pass
+        }
         // Zoom/scroll limits: whatever is asked for, the state must stay inside the bars and be stable.
         do {
             let m = EditorModel()

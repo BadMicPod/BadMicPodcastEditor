@@ -71,7 +71,7 @@ enum LocalImprover {
         func frames(_ t: Double) -> Double { (t * fps).rounded() / fps }
 
         /// The part of the file a shot plays, in file time.
-        func sourceRange(_ c: Clip) -> ClosedRange<Double> { c.sourceStart...(c.sourceStart + c.duration * c.speed) }
+        func sourceRange(_ c: Clip) -> ClosedRange<Double> { c.sourceStart...(c.sourceStart + c.sourceLength) }
 
         /// The best window of `length` (timeline seconds) inside a shot's current part of its file.
         func best(_ c: Clip, length: Double) -> (sourceStart: Double, score: Double) {
@@ -582,7 +582,7 @@ enum LocalImprover {
     static func strongMoments(keep: [Clip], cuts: [Double], analyses: [UUID: ClipAnalysis]) -> [(time: Double, kind: MomentKind, score: Double)] {
         func samples(_ c: Clip) -> [ClipAnalysis.Sample] {
             guard let id = c.assetID, let a = analyses[id] else { return [] }
-            let r = c.sourceStart...(c.sourceStart + c.duration * c.speed)
+            let r = c.sourceStart...(c.sourceStart + c.sourceLength)
             return a.samples.filter { c.kind == .image || r.contains($0.time) }
         }
         func edge(_ c: Clip, end: Bool) -> (luma: Double, color: Double)? {
@@ -624,7 +624,7 @@ enum LocalImprover {
 
     /// The song's own beat number for a timeline beat (the list was filtered, so offsets shift).
     private static func beatIndex(_ offset: Int, of time: Double, in m: MusicAnalysis, song: Clip) -> Int {
-        let sourceTime = song.sourceStart + (time - song.start) * song.speed
+        let sourceTime = song.sourceTime(at: time)
         return m.beats.indices.min { abs(m.beats[$0] - sourceTime) < abs(m.beats[$1] - sourceTime) } ?? offset
     }
 }
