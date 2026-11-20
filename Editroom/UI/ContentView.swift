@@ -55,7 +55,7 @@ struct ContentView: View {
             .overlay(alignment: .top) { Hairline() }
             }
         }
-        .id(themes.theme)
+        .id(themes.look)
         .background(Theme.bg)
         // Files dropped anywhere the timeline or library doesn't handle them are imported.
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
@@ -93,19 +93,19 @@ struct ContentView: View {
                         Circle().fill(Theme.textFaint).frame(width: 5, height: 5)
                     }
                 }
-                .id(themes.theme)
+                .id(themes.look)
             }
             .withoutGlass()
             ToolbarItem(placement: .primaryAction) {
                 ExportProgressPill(queue: model.exports)
-                    .id(themes.theme)
+                    .id(themes.look)
             }
             .withoutGlass()
             if magicEnabled {
                 ToolbarItem(placement: .primaryAction) {
                     MagicButton(model: model)
                         .padding(.trailing, 8)
-                        .id(themes.theme)
+                        .id(themes.look)
                 }
                 .withoutGlass()
             }
@@ -113,7 +113,7 @@ struct ContentView: View {
                 PillButton(title: "Export", prominent: true) { model.showExport = true }
                     .help("Export (\(ShortcutStore.shared.combos(.export).first?.display ?? "⌘E"))")
                     .padding(.trailing, 10)
-                    .id(themes.theme)
+                    .id(themes.look)
             }
             .withoutGlass()
         }

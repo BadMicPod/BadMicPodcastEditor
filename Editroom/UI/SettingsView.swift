@@ -53,7 +53,7 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .id(themes.theme)
+        .id(themes.look)
         .frame(width: 600, height: 640)
         .background(Theme.panel)
         .navigationTitle("Settings")
@@ -95,38 +95,109 @@ private struct AppearanceSettings: View {
     @AppStorage(MediaLayout.key) private var mediaLayout = MediaLayout.thumbnails
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("How Editroom looks. The viewer stays black in every theme, so pictures look the same.")
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.textDim)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 12) {
-                ForEach(AppTheme.allCases) { theme in
-                    ThemeChoice(theme: theme, selected: themes.theme == theme) { themes.theme = theme }
+        VStack(alignment: .leading, spacing: 18) {
+            SettingsSection("Theme") {
+                HStack(alignment: .top, spacing: 10) {
+                    ForEach(AppTheme.allCases) { theme in
+                        ThemeChoice(theme: theme, selected: themes.theme == theme) { themes.theme = theme }
+                    }
                 }
+                .padding(.horizontal, 10)
+                .padding(.top, 12)
+                .padding(.bottom, 10)
             }
-            Divider().overlay(Theme.ink.opacity(0.06)).padding(.vertical, 4)
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Media")
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(Theme.text)
-                    Text("Larger thumbnails to see more of each shot, or a list with small pictures.")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.textDim)
-                        .fixedSize(horizontal: false, vertical: true)
+            SettingsSection("View") {
+                SettingsRow("Media") {
+                    SegmentedChoice(options: MediaLayout.allCases.map { ($0, $0.name) }, selection: $mediaLayout)
                 }
-                Spacer(minLength: 16)
-                Picker("Media", selection: $mediaLayout) {
-                    ForEach(MediaLayout.allCases) { Text($0.name).tag($0) }
+                Divider().overlay(Theme.stroke)
+                SettingsRow("Show time as", detail: "In the viewer and on the timeline") {
+                    SegmentedChoice(options: [(TimeStyle.timecode, "00:00:05:15"), (TimeStyle.simple, "0:05.50")],
+                                    selection: $themes.timeStyle, mono: true)
                 }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .fixedSize()
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 22)
+        .padding(.top, 14)
+        .padding(.bottom, 22)
+    }
+}
+
+/// A small grey label over a rounded box of settings, like the inspector's section names.
+private struct SettingsSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    init(_ title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title.uppercased())
+                .font(Theme.label())
+                .kerning(1.5)
+                .foregroundStyle(Theme.textFaint)
+                .padding(.leading, 2)
+            VStack(spacing: 0) { content }
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.field))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.stroke))
+        }
+    }
+}
+
+/// One setting: its name (and a line on what it does) on the left, its control on the right.
+private struct SettingsRow<Control: View>: View {
+    let title: String
+    var detail: String?
+    @ViewBuilder let control: Control
+
+    init(_ title: String, detail: String? = nil, @ViewBuilder control: () -> Control) {
+        self.title = title
+        self.detail = detail
+        self.control = control()
+    }
+
+    var body: some View {
+        HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 13)).foregroundStyle(Theme.text)
+                if let detail { Text(detail).font(.system(size: 11)).foregroundStyle(Theme.textDim) }
+            }
+            Spacer(minLength: 0)
+            control
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+}
+
+/// A segmented switch in Editroom's own greys (the system one is drawn in the system's colours).
+private struct SegmentedChoice<Value: Hashable>: View {
+    let options: [(Value, String)]
+    @Binding var selection: Value
+    var mono = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(options, id: \.0) { value, name in
+                Button { selection = value } label: {
+                    Text(name)
+                        .font(mono ? Theme.mono(11.5) : .system(size: 12))
+                        .foregroundStyle(selection == value ? Theme.text : Theme.textDim)
+                        .padding(.horizontal, 11)
+                        .frame(height: 22)
+                        .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(selection == value ? Theme.ink.opacity(0.16) : .clear))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.ink.opacity(0.06)))
+        .fixedSize()
     }
 }
 
@@ -136,11 +207,23 @@ private struct ThemeChoice: View {
     let pick: () -> Void
     @State private var hovering = false
 
+    /// Auto: half Light, half Dark.
+    @ViewBuilder private var preview: some View {
+        if theme == .auto {
+            ZStack {
+                ThemePreview(palette: AppTheme.light.palette)
+                ThemePreview(palette: AppTheme.dark.palette).mask(Diagonal())
+            }
+        } else {
+            ThemePreview(palette: theme.palette)
+        }
+    }
+
     var body: some View {
         Button(action: pick) {
-            VStack(spacing: 8) {
-                ThemePreview(palette: theme.palette)
-                    .frame(height: 78)
+            VStack(spacing: 7) {
+                preview
+                    .frame(height: 56)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .strokeBorder(Theme.ink.opacity(0.12), lineWidth: 1))
@@ -148,7 +231,7 @@ private struct ThemeChoice: View {
                     .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .strokeBorder(selected ? Theme.accent : (hovering ? Theme.ink.opacity(0.25) : .clear), lineWidth: 2))
                 Text(theme.name)
-                    .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                    .font(.system(size: 11.5, weight: selected ? .semibold : .regular))
                     .foregroundStyle(selected ? Theme.text : Theme.textDim)
             }
             .contentShape(Rectangle())
@@ -156,6 +239,19 @@ private struct ThemeChoice: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// The right part of a box, cut on a slant: Auto's Dark half.
+private struct Diagonal: Shape {
+    func path(in r: CGRect) -> Path {
+        Path { p in
+            p.move(to: CGPoint(x: r.minX + r.width * 0.62, y: r.minY))
+            p.addLine(to: CGPoint(x: r.maxX, y: r.minY))
+            p.addLine(to: CGPoint(x: r.maxX, y: r.maxY))
+            p.addLine(to: CGPoint(x: r.minX + r.width * 0.38, y: r.maxY))
+            p.closeSubpath()
+        }
     }
 }
 

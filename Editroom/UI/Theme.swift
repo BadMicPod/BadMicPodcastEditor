@@ -26,21 +26,31 @@ extension RGBA {
     }
 }
 
-/// The app's looks, picked in Settings > Appearance. Dark is the original.
+/// The app's looks, picked in Settings > Appearance. Dark is the original; Auto is Light or Dark, as
+/// macOS is.
 enum AppTheme: String, CaseIterable, Identifiable {
-    case dark, grey, amber, light
+    case auto, dark, grey, amber, light
     var id: Self { self }
     var name: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
-    var isLight: Bool { self == .light }
+    var isLight: Bool { resolved == .light }
+
+    /// The theme it draws with: Auto becomes Light or Dark.
+    var resolved: AppTheme {
+        guard self == .auto else { return self }
+        return Self.macOSIsDark ? .dark : .light
+    }
 
     var palette: Palette {
-        switch self {
-        case .dark: .dark
+        switch resolved {
         case .grey: .grey
         case .amber: .amber
         case .light: .light
+        default: .dark
         }
     }
+
+    /// macOS is set to dark (or is dark right now, on its own Auto).
+    static var macOSIsDark: Bool { UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark" }
 
     static let key = "appearance"
     static var saved: AppTheme { UserDefaults.standard.string(forKey: key).flatMap(AppTheme.init(rawValue:)) ?? .dark }
@@ -112,7 +122,8 @@ struct Palette {
 /// The palette in use, shared by SwiftUI and the AppKit timeline. Changing it (Settings > Appearance)
 /// redraws the windows.
 enum Theme {
-    nonisolated(unsafe) static var current: AppTheme = .saved
+    /// The theme being drawn (never Auto: that's resolved to Light or Dark).
+    nonisolated(unsafe) static var current: AppTheme = AppTheme.saved.resolved
     static var p: Palette { current.palette }
 
     enum NS {
@@ -206,18 +217,46 @@ enum Theme {
 @MainActor
 final class ThemeStore: ObservableObject {
     static let shared = ThemeStore()
-    @Published var theme: AppTheme = Theme.current {
+    /// What they picked (maybe Auto).
+    @Published var theme: AppTheme = AppTheme.saved {
         didSet {
             guard theme != oldValue else { return }
-            Theme.current = theme
             UserDefaults.standard.set(theme.rawValue, forKey: AppTheme.key)
-            apply()
+            resolve()
         }
+    }
+    /// What's drawn: Auto as Light or Dark. Views rebuild when this changes.
+    @Published private(set) var resolved: AppTheme = AppTheme.saved.resolved
+    /// Times as timecode or as plain minutes and seconds. Views rebuild when it changes.
+    @Published var timeStyle: TimeStyle = TimeStyle.current {
+        didSet {
+            guard timeStyle != oldValue else { return }
+            UserDefaults.standard.set(timeStyle.rawValue, forKey: TimeStyle.key)
+            TimelineCanvas.current?.needsDisplay = true
+        }
+    }
+    /// Everything that changes how the views draw, for rebuilding them.
+    var look: String { "\(resolved.rawValue)-\(timeStyle.rawValue)" }
+    private var observer: NSObjectProtocol?
+
+    private init() {
+        // macOS switching between light and dark (by hand, or on its own schedule) moves Auto with it.
+        observer = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("AppleInterfaceThemeChangedNotification"), object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { ThemeStore.shared.resolve() }
+        }
+    }
+
+    private func resolve() {
+        let now = theme.resolved
+        Theme.current = now
+        if now != resolved { resolved = now }
+        apply()
     }
 
     /// The windows' own colours, and light or dark for what macOS draws.
     func apply() {
-        NSApp.appearance = NSAppearance(named: theme.isLight ? .aqua : .darkAqua)
+        NSApp.appearance = NSAppearance(named: resolved.isLight ? .aqua : .darkAqua)
         for window in NSApp.windows where window.canBecomeMain || window.title == "Settings" {
             window.backgroundColor = Theme.NS.panel
         }

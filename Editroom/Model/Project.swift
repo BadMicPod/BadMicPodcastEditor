@@ -809,8 +809,29 @@ extension Project {
 
 // MARK: - Helpers
 
+/// How times are shown (Settings > Appearance): full timecode with frames, or plain minutes and seconds.
+enum TimeStyle: String, CaseIterable, Identifiable {
+    case timecode, simple
+    var id: Self { self }
+    static let key = "timeStyle"
+    static var current: TimeStyle { UserDefaults.standard.string(forKey: key).flatMap(TimeStyle.init(rawValue:)) ?? .timecode }
+}
+
 enum Timecode {
+    /// A time as the person chose to see times: "00:00:05:15", or "0:05.50".
     static func string(_ t: Double, fps: Double) -> String {
+        TimeStyle.current == .simple ? simple(t) : full(t, fps: fps)
+    }
+
+    /// Minutes, seconds and hundredths ("0:05.50"), with hours when there are any ("1:02:05.50").
+    static func simple(_ t: Double) -> String {
+        let cs = Int((max(0, t) * 100).rounded())
+        let c = cs % 100, secs = cs / 100
+        let s = secs % 60, m = (secs / 60) % 60, h = secs / 3600
+        return h > 0 ? String(format: "%d:%02d:%02d.%02d", h, m, s, c) : String(format: "%d:%02d.%02d", m, s, c)
+    }
+
+    static func full(_ t: Double, fps: Double) -> String {
         let f = max(1, Int(fps.rounded()))
         let total = Int((max(0, t) * fps).rounded())
         let frames = total % f
@@ -821,9 +842,14 @@ enum Timecode {
 
     /// Reads a typed timecode. "1:02:03" counts from the right (frames, seconds, minutes, hours);
     /// plain digits are read in pairs from the right, so "1000" is 10 seconds.
+    /// With simple times, a typed "0:05.50" or "1:05" is minutes and seconds (the way they're shown).
     static func parse(_ s: String, fps: Double) -> Double? {
         let f = max(1, Int(fps.rounded()))
         let text = s.trimmingCharacters(in: .whitespaces)
+        if TimeStyle.current == .simple, text.range(of: #"^\d+(:\d{1,2}){0,2}(\.\d+)?$"#, options: .regularExpression) != nil {
+            let parts = text.split(separator: ":").map { Double($0) ?? 0 }
+            return parts.reduce(0) { $0 * 60 + $1 }
+        }
         var parts: [Int] = []
         if text.contains(where: { ":;.".contains($0) }) {
             let comps = text.split(whereSeparator: { ":;.".contains($0) }).map(String.init)
