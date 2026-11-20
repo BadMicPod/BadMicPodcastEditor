@@ -67,6 +67,14 @@ enum MCPTools {
             tool("trim_clip", "Trim clip", "Moves a clip's start and/or end edge on the timeline (and its linked clip's). The source moves with the start edge.", ["clip_id": str("A clip's id."), "start": num("New start edge."), "end": num("New end edge.")], required: ["clip_id"]),
             tool("set_speed", "Set speed", "Speeds a clip (and its linked sound) up or slows it down, keeping the same part of the file: 4 plays four times as fast and a quarter as long (a timelapse), 0.5 is slow motion. Clips after it on the track move to stay butted up.",
                  ["clip_id": str("A clip's id."), "speed": num("0.05...100; 1 is normal.")], required: ["clip_id", "speed"]),
+            tool("set_speed_ramp", "Set speed ramp", "A speed ramp on a clip (and its linked sound): it plays at `around` speed, eases into `speed` for the part of the file from `from` to `to`, then eases back. For a slow-motion moment (speed 0.25, around 1), fast-normal-fast B-roll (speed 1, around 4), or ramping into a cut (`to` left out, `speed` 4: it eases up toward the clip's end). Times are seconds in the file, like source_start. The clip's length changes; clips after it on the track move to stay butted up. remove: true takes a clip's ramp away.",
+                 ["clip_id": str("A clip's id."), "speed": num("The speed from `from` to `to`, 0.05...100 (1 is normal)."),
+                  "from": num("Seconds in the file where it reaches `speed` (default: the clip's start, so no ease in)."),
+                  "to": num("Seconds in the file where it starts easing back (default: the clip's end, so no ease out)."),
+                  "ease": num("Seconds of the file each ease takes (default 0.4)."),
+                  "around": num("The speed before and after (default 1)."),
+                  "remove": ["type": "boolean", "description": "Take the clip's ramp away (its speed stays)."]],
+                 required: ["clip_id"]),
             tool("split_clip", "Split clip", "Cuts a clip (and its linked clip) in two with the blade. Returns the new right-hand pieces.", ["clip_id": str("A clip's id."), "at": num("Timeline time inside the clip.")], required: ["clip_id", "at"]),
             tool("delete_clips", "Delete clips", "Deletes clips and anything linked to them.", ["clip_ids": ["type": "array", "items": ["type": "string"]], "ripple": ["type": "boolean", "description": "Close the gap left behind (default false)."]], required: ["clip_ids"]),
             tool("set_grade", "Set grade", "Colour for video, photo and title clips. Leave out what shouldn't change.",
@@ -295,6 +303,33 @@ enum MCPTools {
             let ids = p.unlocked(p.linked([c.id]))
             let label = speed >= 1 ? String(format: "Speed ×%g", speed) : String(format: "Slow ×%g", speed)
             try await perform([.change(c.id, label) { proj in proj.setSpeed(ids: ids, speed: speed) }], model, who, draft)
+            return json(clipsJSON(Array(ids), now()))
+
+        case "set_speed_ramp":
+            let c = try clipArg(args, p)
+            guard c.playsSource else { throw MCPToolError("Only video and sound clips have a speed.") }
+            let ids = p.unlocked(p.linked([c.id]))
+            func number(_ k: String) -> Double? { (args[k] as? Double) ?? (args[k] as? Int).map(Double.init) }
+            if args["remove"] as? Bool == true {
+                try await perform([.change(c.id, "No ramp") { proj in proj.retime(ids: ids) { $0.ramp = nil } }], model, who, draft)
+                return json(clipsJSON(Array(ids), now()))
+            }
+            guard let speed = number("speed")?.clamped(to: 0.05...100) else { throw MCPToolError("speed is needed (or remove: true).") }
+            let s0 = c.sourceStart, L = max(1e-6, c.sourceLength), s1 = s0 + L
+            let ease = max(0.04, number("ease") ?? 0.4)
+            let around = (number("around") ?? 1).clamped(to: 0.05...100)
+            let from = number("from").map { min(max($0, s0), s1) }
+            let to = number("to").map { min(max($0, from ?? s0), s1) }
+            guard from != nil || to != nil else { throw MCPToolError("Give from and/or to (seconds in the file); for one speed throughout, use set_speed.") }
+            let f = { (s: Double) in min(1, max(0, (s - s0) / L)) }
+            var points = (0.0, 0.0, 1.0, 1.0)
+            if let from, from > s0 + 1e-3 { points.0 = f(from - ease); points.1 = f(from) }
+            if let to, to < s1 - 1e-3 { points.2 = f(to); points.3 = f(to + ease) }
+            if points.1 - points.0 < 0.001, points.3 - points.2 < 0.001 { throw MCPToolError("That ramp would sit outside the clip: from and to should be inside its part of the file (\(String(format: "%.2f", s0))–\(String(format: "%.2f", s1))s).") }
+            let label = speed < around ? "Slow-mo ramp" : "Speed ramp"
+            try await perform([.change(c.id, label) { proj in
+                proj.setRamp(ids: ids, speed: speed, points: points, start: around, end: around)
+            }], model, who, draft)
             return json(clipsJSON(Array(ids), now()))
 
         case "split_clip":
@@ -624,10 +659,10 @@ enum MCPTools {
         if c.kind.usesSource { d["source_start"] = round3(c.sourceStart); d["asset_id"] = c.assetID?.uuidString ?? "" }
         if c.speed != 1 { d["speed"] = c.speed }
         if c.isRamped, let r = c.ramp {
-            // Speed ramp: eases from the start speed into `speed`, then out to the end speed.
-            d["speed_ramp"] = ["start_speed": r.startSpeed, "end_speed": r.endSpeed,
-                               "in_seconds": max(0, c.timelineSpan(from: c.sourceStart, to: min(r.inTo, c.sourceStart + c.sourceLength))),
-                               "out_seconds": max(0, c.timelineSpan(from: max(r.outFrom, c.sourceStart), to: c.sourceStart + c.sourceLength))]
+            // Speed ramp, in seconds of the file (as set_speed_ramp takes them): `speed` from `from` to `to`,
+            // easing from `start_speed` before and to `end_speed` after.
+            d["speed_ramp"] = ["from": r.inTo, "to": r.outFrom, "ease_in": r.inTo - r.inFrom, "ease_out": r.outTo - r.outFrom,
+                               "start_speed": r.startSpeed, "end_speed": r.endSpeed]
         }
         if c.isReversed { d["reversed"] = true }
         if c.isFreeze { d["freeze_frame"] = true }

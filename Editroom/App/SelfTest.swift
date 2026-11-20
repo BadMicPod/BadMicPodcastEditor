@@ -974,6 +974,8 @@ enum SelfTest {
                 _ = await call("history", ["action": "undo"])   // takes back the move
                 _ = await call("set_audio", ["clip_id": c, "gain_db": -12.0, "fade_out": 0.5])
                 let (sped, speedError) = await call("set_speed", ["clip_id": b, "speed": 4.0])
+                // Then a slow-motion moment in that sped-up clip (file 1–3): 25% from 1.5 to 2.2s, 400% around it.
+                let (_, rampError) = await call("set_speed_ramp", ["clip_id": b, "speed": 0.25, "from": 1.5, "to": 2.2, "ease": 0.2, "around": 4.0])
                 _ = await call("set_sequence", ["width": 1080, "height": 1920])
                 _ = await call("delete_clips", ["clip_ids": [a], "ripple": true])
                 // Two ripple deletes in a row: played as plain deletes side by side, then "Close gaps".
@@ -1016,9 +1018,13 @@ enum SelfTest {
                 let parallel = plan.tasks.filter { $0.after.isEmpty }.count
                 let shapeOK = target.width == 1080 && target.clips.contains { $0.kind == .text && $0.text.string == "Hello" }
                     && target.clip(UUID(uuidString: c)!)?.start ?? 0 < 8 && target.clip(UUID(uuidString: a)!) == nil
-                let speedOK = speedError == nil && sped != nil && target.clip(UUID(uuidString: b)!)?.speed == 4
+                let ramped = target.clip(UUID(uuidString: b)!)
+                let rampOK = rampError == nil && ramped?.isRamped == true && ramped?.speed == 0.25
+                    && abs((ramped?.ramp?.inTo ?? 0) - 1.5) < 1e-3 && abs((ramped?.ramp?.outFrom ?? 0) - 2.2) < 1e-3
+                    && abs((ramped.map { $0.speed(atSource: $0.sourceStart) } ?? 0) - 4) < 1e-6
+                let speedOK = speedError == nil && sped != nil && rampOK
                 good = untouched && replayOK && shapeOK && speedOK && refused != nil && frameError == nil && parallel > 1
-                detail = "speed=\(speedOK) untouched=\(untouched) replay=\(replayOK) failing=\(failing.count)/\(orders.count) shape=\(shapeOK) edits=\(plan.tasks.count) startFree=\(parallel) refused=\(refused != nil)"
+                detail = "speed=\(speedOK) ramp=\(rampOK)\(rampError.map { " " + $0 } ?? "") untouched=\(untouched) replay=\(replayOK) failing=\(failing.count)/\(orders.count) shape=\(shapeOK) edits=\(plan.tasks.count) startFree=\(parallel) refused=\(refused != nil)"
             }
             log("MAGIC DRAFT \(good ? "OK" : "FAIL") \(detail)")
             ok = ok && good
@@ -1395,10 +1401,26 @@ enum SelfTest {
                 let tagOK = tags.shows("pool") && tags.shows("chairs") && tags.shows("po", typing: true) && !tags.shows("po") && !tags.shows("beach")
                     && SceneTags(tags: [.init(name: "portal", confidence: 0.7, times: [])]).shows("door")
                     && SceneTags(tags: [.init(name: "adult", confidence: 0.7, times: [])]).shows("wom", typing: true)
+                // Local's ramps: a slow-mo moment at the playhead in the talk shot; then ramps into the cut.
+                let at5 = MagicPointers(playhead: 5, selected: [], range: nil)
+                var rq = sp
+                let moment = LocalRamp.plan(request: "speed ramp here", pointers: at5, project: sp)
+                for task in moment.plan?.tasks ?? [] { task.edit.apply(&rq, 1) }
+                let rt = rq.clip(tv.id)
+                var cq = sp
+                let cutsPlan = LocalRamp.plan(request: "ramp into the cuts", pointers: at5, project: sp)
+                for task in cutsPlan.plan?.tasks ?? [] { task.edit.apply(&cq, 1) }
+                let before = cq.clip(tv.id), after = cq.clip(broll.id)
+                let rampOK = LocalRamp.asks("add a speed ramp") && LocalRamp.asks("slow-mo moment please") && !LocalRamp.asks("make it slow motion")
+                    && rt?.isRamped == true && abs((rt?.speed ?? 0) - 0.3) < 1e-9 && rq.clip(ta.id)?.isRamped == true
+                    && abs((rt.map { $0.speed(atSource: $0.sourceStart + 5) } ?? 0) - 0.3) < 1e-6
+                    && abs((before.map { $0.speed(atSource: $0.sourceStart + $0.sourceLength - 1e-3) } ?? 0) - 4) < 0.05
+                    && abs((after.map { $0.speed(atSource: $0.sourceStart) } ?? 0) - 4) < 1e-6
+                    && abs((after.map { $0.speed(atSource: $0.sourceStart + $0.sourceLength * 0.5) } ?? 0) - 1) < 1e-6
                 let countOK = LocalBrain.shotCount("create 7 second montage with at least 10 clips") == 10
                     && LocalBrain.shotCount("twelve quick cuts") == 12 && LocalBrain.shotCount("make it 7 seconds") == nil
-                let mOK = countOK && tagOK && speechOK && cutOK && timeOK && typedOK && clipOK && moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
-                log("MENTIONS \(mOK ? "OK" : "FAIL") count=\(countOK) tags=\(tagOK) speech=\(speechOK) cut=\(cutOK) \(cutPlan.said) time=\(timeOK) typed=\(typedOK) clip=\(clipOK) \(labels) move=\(moveOK) keep=\(keepOK) find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
+                let mOK = rampOK && countOK && tagOK && speechOK && cutOK && timeOK && typedOK && clipOK && moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
+                log("MENTIONS \(mOK ? "OK" : "FAIL") ramp=\(rampOK) \(moment.said) / \(cutsPlan.said) count=\(countOK) tags=\(tagOK) speech=\(speechOK) cut=\(cutOK) \(cutPlan.said) time=\(timeOK) typed=\(typedOK) clip=\(clipOK) \(labels) move=\(moveOK) keep=\(keepOK) find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
                 good = good && mOK
             }
             log("LOCAL IMPROVE \(good ? "OK" : "FAIL") \(detail)")

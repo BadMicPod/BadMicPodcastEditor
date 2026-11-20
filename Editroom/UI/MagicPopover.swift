@@ -923,6 +923,17 @@ enum LocalMagic {
                 await perform(outcome, model: model, run: run)
                 return
             }
+            // Speed ramps: a slow-motion moment, or ramping into the cuts.
+            if LocalRamp.asks(request) {
+                state.busy = false
+                state.status = nil
+                let outcome = LocalRamp.plan(request: typed, pointers: pointers, project: model.project)
+                if CommandLine.arguments.contains("--magic-local") {
+                    FileHandle.standardError.write("MAGIC LOCAL ramp: \(outcome.said) (\(outcome.plan?.tasks.count ?? 0) edits)\n".data(using: .utf8)!)
+                }
+                await perform(outcome, model: model, run: run)
+                return
+            }
             var recipe: LocalRecipe
             do {
                 recipe = try await LocalBrain.recipe(for: request, media: media, pointed: pointed,

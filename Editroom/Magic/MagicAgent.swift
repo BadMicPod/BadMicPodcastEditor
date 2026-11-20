@@ -249,7 +249,10 @@ final class MagicAgent: ObservableObject {
         5. To make an edit shorter or keep people watching: open on the strongest moment, cut the slow starts and \
         ends of shots, drop weak or repeated shots, and close every gap (delete_clips with ripple, or move clips).
         6. Speed: set_speed speeds a clip up (4 to 20 times for a timelapse) or slows it down. Turn a sped-up \
-        clip's own sound right down (set_audio gain_db -60) unless they asked to keep it. For a long video like a \
+        clip's own sound right down (set_audio gain_db -60) unless they asked to keep it. set_speed_ramp eases \
+        the speed within a clip: a slow-motion moment on the best part of an action (look at the frames to find \
+        it), fast-normal-fast on travel shots, or ramping up into a cut and down out of it on the next shot. \
+        Use ramps when asked, or sparingly where they make the moment. For a long video like a \
         vlog, keep what people say whole, and use short titles to mark each part.
         7. Finish. Colour only when they asked for it, or when the footage clearly needs it (look at the frames): \
         shots from different cameras or light that don't match, or shots too dark or washed out. Then one look \

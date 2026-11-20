@@ -269,7 +269,7 @@ enum MCPHandler {
                 }
             }
             defer {
-                let edits: Set<String> = ["add_clip", "add_title", "move_clip", "trim_clip", "split_clip", "delete_clips", "set_speed",
+                let edits: Set<String> = ["add_clip", "add_title", "move_clip", "trim_clip", "split_clip", "delete_clips", "set_speed", "set_speed_ramp",
                                           "set_grade", "set_audio", "set_transition", "set_sequence", "add_track", "history", "download_media"]
                 if let draft, edits.contains(name) { MagicThinking.current?.plan(draft.project) }
             }
