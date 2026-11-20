@@ -20,14 +20,25 @@ struct MagicPopover: View {
     @State private var justConnected: MagicAgent.Kind?
     /// Connecting started from here (so finishing it shows "connected").
     @State private var connecting: MagicAgent.Kind?
+    /// The list of past prompts, shown in place of the prompt.
+    @State private var showingHistory = false
 
     private var hasEdit: Bool { model.project.clips.contains { $0.kind != .audio } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             AITabs(selection: $ai.tab)
-            content
-                .padding(.top, 12)
+            Group {
+                if showingHistory {
+                    HistoryList(back: { showingHistory = false }) { entry in
+                        request = entry.text
+                        showingHistory = false
+                    }
+                } else {
+                    content
+                }
+            }
+            .padding(.top, 12)
             footer
         }
         .padding(14)
@@ -148,11 +159,9 @@ struct MagicPopover: View {
         HStack {
             Text(footerText)
             Spacer()
-            Button("Manage AI Agents") {
-                close()
-                model.showAgents = true
-            }
-            .buttonStyle(.plain)
+            // Past prompts. (AI Agents, which this used to open, is in Settings, on the Magic tab.)
+            Button("History") { showingHistory.toggle() }
+                .buttonStyle(.plain)
         }
         .font(.system(size: 10.5))
         .foregroundStyle(Theme.textFaint)
@@ -197,11 +206,13 @@ struct MagicPopover: View {
         close()
         let text = request.trimmingCharacters(in: .whitespacesAndNewlines)
         request = ""
+        MagicHistory.add(text, tab: .local)
         LocalMagic.run(text, model: model)
     }
 
     private func go(_ kind: MagicAgent.Kind) {
         close()
+        MagicHistory.add(request, tab: kind == .claude ? .claude : .chatgpt)
         ai.start(request: request, with: kind, model: model)
         request = ""
     }
@@ -552,7 +563,9 @@ private struct PromptBox: View {
         let usable = list.indices.filter { list[$0].enabled }
         switch k {
         case .up, .down:
-            guard open else { return false }
+            // No list open: ↑ in an empty box brings back the last prompt, and each ↑ the one before;
+            // ↓ comes forward again, to an empty box.
+            guard open else { return recall(back: k == .up) }
             guard !usable.isEmpty else { return true }
             let at = usable.firstIndex(of: picked) ?? 0
             picked = usable[(at + (k == .down ? 1 : usable.count - 1)) % usable.count]
@@ -569,6 +582,24 @@ private struct PromptBox: View {
             submit()
             return true
         }
+    }
+
+    private func recall(back: Bool) -> Bool {
+        let past = MagicHistory.entries.map(\.text)
+        guard !past.isEmpty else { return false }
+        let now = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if now.isEmpty {
+            guard back else { return false }
+            text = past[0]
+            return true
+        }
+        guard let i = past.firstIndex(of: now) else { return false }
+        if back {
+            if i + 1 < past.count { text = past[i + 1] }
+        } else {
+            text = i > 0 ? past[i - 1] : ""
+        }
+        return true
     }
 
     private func accept(_ option: MentionOption) {
@@ -1098,5 +1129,66 @@ enum LocalMagic {
         }
         MagicAgent.shared.note = MagicAgent.Note(agent: nil, text: said, changed: changed,
                                                 detail: detail.filter { !$0.isEmpty }.joined(separator: " · "))
+    }
+}
+
+/// Past prompts, newest first, in place of the prompt: pick one to put it back in the box.
+private struct HistoryList: View {
+    let back: () -> Void
+    let pick: (MagicHistory.Entry) -> Void
+    @State private var hovered: String?
+
+    var body: some View {
+        let entries = MagicHistory.entries
+        VStack(alignment: .leading, spacing: 6) {
+            Button(action: back) {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left").font(.system(size: 9, weight: .semibold))
+                    Text("History").font(.system(size: 11.5, weight: .medium))
+                }
+                .foregroundStyle(Theme.textDim)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            // esc goes back to the prompt rather than closing Magic.
+            .keyboardShortcut(.cancelAction)
+            if entries.isEmpty {
+                Text("Prompts you send show up here.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textFaint)
+                    .frame(maxWidth: .infinity, minHeight: 90)
+            } else {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(entries) { e in
+                            Button { pick(e) } label: {
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text(e.text)
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(Theme.text)
+                                        .lineLimit(1)
+                                        .truncationMode(.tail)
+                                    Spacer(minLength: 6)
+                                    Text("\(MagicAgent.Tab(rawValue: e.tab)?.name ?? "") · \(MagicHistory.when(e.date))")
+                                        .font(.system(size: 10.5))
+                                        .foregroundStyle(Theme.textFaint)
+                                        .fixedSize()
+                                }
+                                .padding(.horizontal, 8)
+                                .frame(height: 28)
+                                .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(hovered == e.id ? Theme.hover : .clear))
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .onHover { hovered = $0 ? e.id : (hovered == e.id ? nil : hovered) }
+                            .help(e.text)
+                        }
+                    }
+                }
+                .frame(maxHeight: 220)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }
