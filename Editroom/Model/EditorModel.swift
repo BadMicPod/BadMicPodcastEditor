@@ -1320,14 +1320,17 @@ final class EditorModel: ObservableObject {
         setTransition(into: best.id, best.transitionIn ?? Transition())
     }
 
-    /// Back to 100%, with no ramp.
-    func resetSpeed() {
+    /// The Playback section back as it was: 100% with no ramp, and these clips' volume at 0 dB.
+    func resetPlayback(volume: Set<UUID>) {
         let ids = project.linked(selection)
         let sticky = self.sticky
-        mutate { $0.retime(ids: ids, sticky: sticky) { c in
-            c.speed = 1
-            c.ramp = nil
-        } }
+        mutate { p in
+            p.retime(ids: ids, sticky: sticky) { c in
+                c.speed = 1
+                c.ramp = nil
+            }
+            for i in p.clips.indices where volume.contains(p.clips[i].id) { p.clips[i].gainDB = 0 }
+        }
     }
 
     func setSpeed(_ speed: Double) {

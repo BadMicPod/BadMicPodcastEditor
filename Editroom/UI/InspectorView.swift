@@ -128,7 +128,8 @@ struct InspectorView: View {
 
         if sourced.first != nil || audio.first != nil {
             let ramped = sourced.first?.isRamped ?? false
-            InspectorSection("Playback", action: offSpeed || ramped ? ("Reset speed", { model.resetSpeed() }) : nil,
+            // Like the other sections: Reset puts the whole section back (speed, ramp and volume).
+            InspectorSection("Playback", action: offSpeed || ramped || offGain ? ("Reset", { model.resetPlayback(volume: Set(audio.map(\.id))) }) : nil,
                              marked: offSpeed || ramped || offGain) {
                 if let first = audio.first {
                     ParamRow(icon: .symbol("speaker.wave.2"), label: "Volume",
@@ -1273,7 +1274,6 @@ private struct SpeedRampGraph: View {
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
-        .padding(.leading, 26)
     }
 
     /// The speed line: flat, with eased ramps at the ends (as it plays).
