@@ -31,8 +31,8 @@ cp -R "$app" "$work/src/"
 mkdir -p "${out:h}"
 rm -f "$out"
 # Window is 600×412 points: the 380pt background plus the 32pt title bar. Icons sit in the usual
-# spots across the middle. At 148pt the app's tile (about 118pt) covers the dark square in the
-# background, which marks where it goes.
+# spots across the middle. At 148pt the app's tile (about 118pt) sits over the horse frame of the
+# film strip in the background.
 create-dmg \
   --volname "Editroom" \
   --background "$work/background.tiff" \
