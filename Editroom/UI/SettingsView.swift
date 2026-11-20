@@ -431,7 +431,7 @@ private struct ShortcutSettings: View {
 
 /// Under Play / Pause: where space plays from while skimming.
 private struct SkimPlayRow: View {
-    @AppStorage(EditorModel.playFromSkimmerKey) private var fromSkimmer = false
+    @AppStorage(EditorModel.playFromSkimmerKey) private var fromSkimmer = true
 
     var body: some View {
         HStack(spacing: 8) {
