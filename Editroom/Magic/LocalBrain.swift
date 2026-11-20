@@ -28,9 +28,12 @@ struct LocalRecipe: Equatable {
     /// Asks for nothing Local can do (no setting, no media): it shouldn't edit anything.
     var isEmpty: Bool {
         seconds == nil && pace == .unchanged && look == nil && music == .unchanged && frame == .unchanged
-            && keepOnly.isEmpty && takeOut.isEmpty && speed == nil && !soundEffects && !levelAudio && title == nil
+            && keepOnly.isEmpty && takeOut.isEmpty && speed == nil && !soundEffects && !levelAudio && title == nil && !wholeLibrary
     }
 
+    /// They want the whole Media library, not just what's in the edit ("use most of the clips", "make a
+    /// new intro"): a new cut from everything, in place of the edit.
+    var wholeLibrary = false
     /// Asks only for the audio levels to match (and maybe a look): nothing about the picture's cut.
     var onlyLevels: Bool {
         levelAudio && seconds == nil && pace == .unchanged && music == .unchanged && frame == .unchanged
@@ -120,6 +123,15 @@ enum LocalBrain {
         let t = request.lowercased()
         return t.contains("?") || ["do you think", "should i", "should we", "would it", "if so", "if you think", "worth",
                                    "any good", "makes sense", "if it fits", "where it fits", "if needed", "only if"].contains { t.contains($0) }
+    }
+
+    /// Asks for footage beyond what's in the edit: most or all of the clips, more or other shots, a new video.
+    static func wantsLibrary(_ request: String) -> Bool {
+        let t = request.lowercased()
+        return ["most of the clips", "most clips", "all the clips", "all clips", "all of the clips", "all my clips", "every clip",
+                "more clips", "more shots", "other clips", "other shots", "the rest of the clips", "whole library", "all my media",
+                "media folder", "all the media", "all of my", "from scratch", "start over", "make a new", "create a new",
+                "new video", "new cut", "new edit"].contains { t.contains($0) }
     }
 
     /// The title they asked for, if they did: their quoted words, or "" for one made from the dates.

@@ -19,20 +19,36 @@ struct MagicAnchor: NSViewRepresentable {
     final class AnchorView: NSView {
         var key = "" { didSet { MagicAnchors.register(self, key) } }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        // A lazy grid makes its items again as they scroll back into view: each copy says where it is
+        // once it's in the window.
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window != nil { MagicAnchors.register(self, key) }
+        }
     }
 }
 
 @MainActor
 enum MagicAnchors {
     private struct Weak { weak var view: NSView? }
-    private static var views: [String: Weak] = [:]
+    /// Every view that has said it's this key: a scrolled list can briefly hold old copies, out of the window.
+    private static var views: [String: [Weak]] = [:]
 
-    static func register(_ v: NSView, _ key: String) { views[key] = Weak(view: v) }
+    static func register(_ v: NSView, _ key: String) {
+        guard !key.isEmpty else { return }
+        var list = (views[key] ?? []).filter { $0.view != nil && $0.view !== v }
+        list.append(Weak(view: v))
+        views[key] = list
+    }
 
-    /// Where the view is, in window coordinates.
+    /// Where the view is, in window coordinates: the newest copy that's in a window and shown.
     static func rect(_ key: String) -> NSRect? {
-        guard let v = views[key]?.view, v.window != nil else { return nil }
-        return v.convert(v.bounds, to: nil)
+        guard let list = views[key] else { return nil }
+        for w in list.reversed() {
+            guard let v = w.view, v.window != nil, !v.isHiddenOrHasHiddenAncestor else { continue }
+            return v.convert(v.bounds, to: nil)
+        }
+        return nil
     }
 }
 
@@ -119,7 +135,8 @@ final class MagicShow: NSObject {
         // With an edit on the timeline, Magic improves that edit (its shots, its song) rather than
         // starting over from the whole library.
         let onTimeline = Set(project.clips.filter { $0.kind == .video || $0.kind == .image }.compactMap(\.assetID))
-        let improving = !onTimeline.isEmpty
+        // Unless they asked for the whole library ("use most of the clips"): then a new cut, in place of the edit.
+        let improving = !onTimeline.isEmpty && !recipe.wholeLibrary
         let visuals = project.assets.filter { a in
             !offline.contains(a.id) && (a.kind == .image || (a.kind == .video && a.duration >= 1))
                 && (!improving || onTimeline.contains(a.id))
