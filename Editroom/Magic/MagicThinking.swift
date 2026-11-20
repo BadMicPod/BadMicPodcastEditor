@@ -283,13 +283,14 @@ final class MagicThinking: NSObject {
     private func mediaRect(_ asset: UUID) -> CGRect? {
         guard let r = MagicAnchors.rect(asset.uuidString).map(toOverlay) else { return nil }
         guard let list = (MagicAnchors.rect("libraryList") ?? MagicAnchors.rect("library")).map(toOverlay) else { return r }
-        return Self.mostlyIn(r, list)
+        // Any part on screen is scanned, cut off at the list's edge like the picture is.
+        return Self.mostlyIn(r, list, share: 0)
     }
 
     /// The part of `r` inside `area`, when at least 60% of it is.
-    private static func mostlyIn(_ r: CGRect, _ area: CGRect) -> CGRect? {
+    private static func mostlyIn(_ r: CGRect, _ area: CGRect, share: CGFloat = 0.6) -> CGRect? {
         let v = r.intersection(area)
-        guard !v.isNull, r.width * r.height > 0, v.width * v.height >= 0.6 * r.width * r.height,
+        guard !v.isNull, r.width * r.height > 0, v.width * v.height >= share * r.width * r.height,
               v.width > 6, v.height > 6 else { return nil }
         return v
     }
