@@ -154,10 +154,10 @@ struct InspectorView: View {
                                      model.commitLive()
                                  }
                              },
-                             onChange: { applySpeed($0 / 100, ids: ids) })
-                    // The ramp, once the speed isn't 100% (or the clip already ramps). Kept up while
-                    // dragging, so passing through 100% doesn't pull it away under the mouse.
-                    if offSpeed || ramped || speedOrigin != nil || rampOrigin != nil {
+                             onChange: { applySpeed($0 / 100, ids: ids) },
+                             trailing: AnyView(RampButton(on: ramped) { toggleRamp(first, ids: ids) }))
+                    // The ramp, while the clip has one (kept up mid-drag, even if a dot is pulled back out).
+                    if ramped || rampOrigin != nil {
                         SpeedRampGraph(clip: first, onEditing: { began in
                             if began {
                                 rampOrigin = model.project.clips
@@ -202,6 +202,19 @@ struct InspectorView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// The ramp button: on, a starter ramp (100%, easing into the speed in the middle of the clip,
+    /// back to 100%; a dip to 50% if the speed is 100%); off, the ramp goes and the speed stays.
+    private func toggleRamp(_ clip: Clip, ids: Set<UUID>) {
+        let group = model.project.linked(ids)
+        let sticky = model.sticky
+        if clip.isRamped {
+            model.mutate { p in p.retime(ids: group, sticky: sticky) { $0.ramp = nil } }
+        } else {
+            let mid = abs(clip.speed - 1) < 0.001 ? 0.5 : clip.speed
+            model.mutate { p in p.setRamp(ids: group, speed: mid, points: (0.3, 0.4, 0.6, 0.7), start: 1, end: 1, sticky: sticky) }
         }
     }
 
@@ -1131,6 +1144,42 @@ private struct ColorWheel: View {
     }
 }
 
+
+/// Beside the Speed field: turns the clip's speed ramp on (the graph opens) or off. A small ramp
+/// curve, lit like an active fade curve when on.
+private struct RampButton: View {
+    let on: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            RampGlyph()
+                .stroke(on ? Theme.accent : Theme.textDim, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                .frame(width: 17, height: 10)
+                .frame(width: 30, height: 26)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hovering ? Theme.hover : Theme.field))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .help(on ? "Remove the speed ramp" : "Speed ramp: ease into and out of the speed")
+    }
+}
+
+private struct RampGlyph: SwiftUI.Shape {
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: r.minX, y: r.maxY))
+        p.addLine(to: CGPoint(x: r.minX + r.width * 0.22, y: r.maxY))
+        p.addCurve(to: CGPoint(x: r.minX + r.width * 0.6, y: r.minY),
+                   control1: CGPoint(x: r.minX + r.width * 0.42, y: r.maxY),
+                   control2: CGPoint(x: r.minX + r.width * 0.4, y: r.minY))
+        p.addLine(to: CGPoint(x: r.maxX, y: r.minY))
+        return p
+    }
+}
 
 /// A clip's speed across its footage, under the Speed row. The flat middle is the speed (the same as
 /// the slider). An inner dot pulled in from either edge makes a ramp; its outer dot then slides left or
