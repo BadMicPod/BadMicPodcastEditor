@@ -22,7 +22,9 @@ enum LocalPointed {
         let selection = !named.isEmpty || mentions.contains(.selected) || (!ptr.selected.isEmpty && says([
             "selected", "selection", "this clip", "this shot", "these clips", "these shots", "that clip", "that shot", "those clips", "those shots",
         ]))
-        let range = mentions.contains(.range) || says(["in/out", "in-out", "in and out points", "marked range", "the range"])
+        // A span they typed ("between 0:05 and 0:06") is a range, just like the in/out one.
+        let typedSpan = MagicTimes.span(in: request, fps: p.fps)
+        let range = typedSpan != nil || mentions.contains(.range) || says(["in/out", "in-out", "in and out points", "marked range", "the range"])
         let playhead = mentions.contains(.playhead) || says(["playhead"])
         if let moved = reorder(request: request, project: p) { return moved }
         guard selection || range || playhead else { return nil }
@@ -78,7 +80,9 @@ enum LocalPointed {
 
         // The in/out range.
         if range {
-            guard let r = ptr.range else { return Outcome(said: "There's no in/out range set. Mark one with I and O, then ask again.") }
+            guard let r = typedSpan.map({ (start: $0.start, end: min($0.end, p.duration)) }) ?? ptr.range, r.end > r.start else {
+                return Outcome(said: typedSpan != nil ? "That time is past the end of the edit." : "There's no in/out range set. Mark one with I and O, then ask again.")
+            }
             let span = String(format: "%.1fs to %.1fs", r.start, r.end)
             let all = p.unlocked(Set(p.clips.map(\.id)))
             if says(["only", "keep ", "just "]), !says(["remove", "delete", "take out", "get rid", "cut out"]) {

@@ -137,3 +137,65 @@ extension Project {
         return videoTracks.count + 1 + (audioTracks.firstIndex { $0.id == id } ?? 0)
     }
 }
+
+/// Times typed in a request: "0:05", "00:05", "1:02:30" and the viewer's own "00:00:05:00" (the last
+/// two digits frames, at the project's rate). A span ("between 0:05 and 0:06", "from 5s to 6s") is a
+/// range on the timeline; a lone time is just said to the AI, since "make it 0:30" is a length, not a place.
+enum MagicTimes {
+    struct Typed {
+        let range: NSRange
+        let text: String
+        let seconds: Double
+        /// "5s" or "5 seconds": only a time when it's part of a span.
+        let unitOnly: Bool
+    }
+
+    static func times(in text: String, fps: Double) -> [Typed] {
+        let s = text as NSString
+        let patterns: [(String, ([Double]) -> Double, Bool)] = [
+            // hh:mm:ss:ff, as the viewer shows it.
+            (#"(?<![\d:.])(\d{1,2}):(\d{2}):(\d{2})[;:](\d{2})(?![\d:])"#, { $0[0] * 3600 + $0[1] * 60 + $0[2] + $0[3] / max(1, fps) }, false),
+            // h:mm:ss
+            (#"(?<![\d:.])(\d{1,2}):(\d{2}):(\d{2}(?:\.\d+)?)(?![\d:])"#, { $0[0] * 3600 + $0[1] * 60 + $0[2] }, false),
+            // m:ss
+            (#"(?<![\d:.])(\d{1,3}):(\d{2}(?:\.\d+)?)(?![\d:])"#, { $0[0] * 60 + $0[1] }, false),
+            // 5s, 5 sec, 5 seconds
+            (#"(?<![\d:.])(\d+(?:\.\d+)?)\s*(?:s|secs?|seconds?)\b"#, { $0[0] }, true),
+        ]
+        var out: [Typed] = []
+        for (pattern, value, unitOnly) in patterns {
+            guard let re = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
+            for m in re.matches(in: text, range: NSRange(location: 0, length: s.length)) {
+                // The first, longest pattern that matched there wins.
+                guard !out.contains(where: { NSIntersectionRange($0.range, m.range).length > 0 }) else { continue }
+                let parts = (1..<m.numberOfRanges).compactMap { i -> Double? in
+                    let r = m.range(at: i)
+                    return r.location == NSNotFound ? nil : Double(s.substring(with: r))
+                }
+                out.append(Typed(range: m.range, text: s.substring(with: m.range), seconds: value(parts), unitOnly: unitOnly))
+            }
+        }
+        return out.sorted { $0.range.location < $1.range.location }
+    }
+
+    /// A span they typed: "between A and B", "from A to B" (or A to B / A–B with two clock times).
+    static func span(in text: String, fps: Double) -> (start: Double, end: Double, text: String)? {
+        let s = text as NSString
+        let found = times(in: text, fps: fps)
+        for (a, b) in zip(found, found.dropFirst()) {
+            let gapStart = NSMaxRange(a.range)
+            guard b.range.location >= gapStart else { continue }
+            let gap = s.substring(with: NSRange(location: gapStart, length: b.range.location - gapStart)).lowercased()
+                .trimmingCharacters(in: .whitespaces)
+            guard ["and", "to", "-", "–", "—", "through", "until", "till"].contains(gap) else { continue }
+            let before = s.substring(with: NSRange(location: max(0, a.range.location - 12), length: min(12, a.range.location))).lowercased()
+            let introduced = before.hasSuffix("between ") || before.hasSuffix("from ")
+            // Without "between" or "from", only two clock times ("0:05 to 0:06") make a span.
+            guard introduced || (!a.unitOnly && !b.unitOnly), b.seconds > a.seconds else { continue }
+            let from = introduced ? (before.hasSuffix("between ") ? 8 : 5) : 0
+            let whole = NSRange(location: a.range.location - from, length: NSMaxRange(b.range) - (a.range.location - from))
+            return (a.seconds, b.seconds, s.substring(with: whole))
+        }
+        return nil
+    }
+}

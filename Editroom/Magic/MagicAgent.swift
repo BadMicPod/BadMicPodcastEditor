@@ -307,6 +307,23 @@ final class MagicAgent: ObservableObject {
         if !meant.isEmpty {
             out += "They pointed with @: " + meant.sorted().joined(separator: " ") + " Act on exactly what they pointed at.\n"
         }
+        // Times they typed, in timeline seconds, with what's there (the viewer's timecode ends in frames).
+        var timed: [String] = []
+        let span = MagicTimes.span(in: request, fps: p.fps)
+        if let span {
+            let over = p.clips.filter { $0.kind != .audio && $0.start < span.end - 1e-6 && $0.end > span.start + 1e-6 }
+                .sorted { ($0.start, p.trackOrder($0.trackID)) < ($1.start, p.trackOrder($1.trackID)) }
+            timed.append("\"\(span.text)\" is \(t(span.start)) to \(t(span.end)) on the timeline" + (over.isEmpty ? "" : ", over " + over.map(clip).joined(separator: "; ")) + ".")
+        }
+        for typed in MagicTimes.times(in: request, fps: p.fps) where !typed.unitOnly {
+            if let span, span.text.contains(typed.text) { continue }
+            let under = p.clips.filter { $0.kind != .audio && $0.start <= typed.seconds + 1e-6 && typed.seconds < $0.end - 1e-6 }
+                .sorted { p.trackOrder($0.trackID) < p.trackOrder($1.trackID) }
+            timed.append("\"\(typed.text)\" is \(t(typed.seconds)) (if it's a place on the timeline" + (under.isEmpty ? "" : ", over " + under.map(clip).joined(separator: "; ")) + "; it may be a length instead).")
+        }
+        if !timed.isEmpty {
+            out += "Times in their request: " + timed.joined(separator: " ") + "\n"
+        }
         if !where_.isEmpty {
             out += """
             Use the playhead, selection and range only when their words point at them ("here", "this clip", \

@@ -1289,8 +1289,21 @@ enum SelfTest {
                     && clipFind.first == .clip(secondA.id) && clipFind.count == 2
                     && afterRemove.count == 3 && !afterRemove.contains { $0.id == secondA.id } && afterRemove.contains { $0.id == first.id }
                     && order("put @clip:B·2 in front of @clip:A") == [b.id, a.id, b.id, a.id]
-                let mOK = clipOK && moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
-                log("MENTIONS \(mOK ? "OK" : "FAIL") clip=\(clipOK) \(labels) move=\(moveOK) keep=\(keepOK) find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
+                // Typed times: the viewer's timecode (frames at the project's rate), m:ss, h:mm:ss; a span is a range.
+                func near(_ x: Double?, _ y: Double) -> Bool { x.map { abs($0 - y) < 1e-6 } ?? false }
+                let tc = MagicTimes.span(in: "between 00:00:05:15 and 00:00:06:00 find a better clip", fps: 30)
+                let timeOK = near(tc?.start, 5.5) && near(tc?.end, 6)
+                    && near(MagicTimes.span(in: "from 5s to 6.5 seconds", fps: 30)?.end, 6.5)
+                    && near(MagicTimes.span(in: "cut 0:05 to 0:06", fps: 30)?.start, 5)
+                    && MagicTimes.span(in: "make it 0:30 long", fps: 30) == nil
+                    && MagicTimes.span(in: "make it 30s, fast", fps: 30) == nil
+                    && near(MagicTimes.times(in: "at 1:02:30", fps: 30).first?.seconds, 3750)
+                    && MagicTimes.times(in: "make it 0:30", fps: 30).map(\.seconds) == [30]
+                let typedCut = run("remove between 0:02 and 0:04").map(shots) ?? []
+                let typedOK = typedCut.count == 5 && abs((typedCut.last?.end ?? 0) - 15) < 1e-6
+                    && MagicAgent.brief(request: "between 0:05 and 0:06 find a better clip", project: p, pointers: ptr).contains("is 5.00s to 6.00s on the timeline")
+                let mOK = timeOK && typedOK && clipOK && moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
+                log("MENTIONS \(mOK ? "OK" : "FAIL") time=\(timeOK) typed=\(typedOK) clip=\(clipOK) \(labels) move=\(moveOK) keep=\(keepOK) find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
                 good = good && mOK
             }
             log("LOCAL IMPROVE \(good ? "OK" : "FAIL") \(detail)")
