@@ -475,6 +475,12 @@ private struct PromptBox: View {
         // A new list (typed more, or what's on the timeline changed): the first row that can be picked.
         .onChange(of: options.map(\.id)) { _, _ in picked = options.firstIndex(where: \.enabled) ?? 0 }
         .onAppear {
+            // Clips selected: the prompt starts pointing at them (easy to delete for a whole-edit ask).
+            // A leftover "@selected" alone, with nothing selected now, goes.
+            let trimmed = text.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed == "@selected" {
+                text = model.selection.contains(where: { id in model.project.clips.contains { $0.id == id } }) ? "@selected " : ""
+            }
             // `--magic-type "text"` (testing): types into the box, as a person would.
             let args = CommandLine.arguments
             // `--magic-esc-test` (testing): @, esc, delete it, @ again; the list should be open.
@@ -854,6 +860,14 @@ struct MagicNoteView: View {
                     .keyboardShortcut(.defaultAction)
             }
         }
+        // Space plays and pauses, as it does in the edit, so the result can be watched straight away
+        // (the note stays up, Undo with it).
+        .background(
+            Button("") { model.togglePlay() }
+                .keyboardShortcut(.space, modifiers: [])
+                .opacity(0)
+                .allowsHitTesting(false)
+        )
         .padding(14)
         .frame(width: 340)
         .background(Theme.panel)

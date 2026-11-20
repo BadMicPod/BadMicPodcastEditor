@@ -100,6 +100,10 @@ struct MentionField: NSViewRepresentable {
             for (r, _) in MagicMention.find(in: storage.string, media: parent.media, clips: parent.clips) where NSMaxRange(r) <= storage.length {
                 storage.addAttributes([.font: MentionField.mentionFont, .foregroundColor: Theme.NS.text], range: r)
             }
+            // Times Magic understands ("0:05", "between 5s and 8s"), bold the same way.
+            for r in MagicTimes.recognised(in: storage.string) where NSMaxRange(r) <= storage.length {
+                storage.addAttributes([.font: MentionField.mentionFont], range: r)
+            }
             storage.endEditing()
             tv.typingAttributes = plainAttributes
         }

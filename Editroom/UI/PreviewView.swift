@@ -119,14 +119,6 @@ struct PreviewView: View {
                     PreviewSurfaceView(model: model)
                         .frame(width: w, height: h)
                         .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-                        .overlay(
-                            // A soft shadow inside the edge, as if the picture sits in a recessed well.
-                            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                .stroke(Color.black.opacity(0.75), lineWidth: 10)
-                                .blur(radius: 7)
-                                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-                                .allowsHitTesting(false)
-                        )
                         .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(Theme.ink.opacity(0.06)))
                     // Nothing on the timeline yet: say how to start, and take a click as "import".
                     if model.project.clips.isEmpty {

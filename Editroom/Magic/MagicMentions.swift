@@ -178,6 +178,25 @@ enum MagicTimes {
         return out.sorted { $0.range.location < $1.range.location }
     }
 
+    /// Where the prompt has times Magic will read as places in the edit, for showing them in bold: clock
+    /// times ("0:05", "00:00:05:12") always; "5s" or "5 seconds" only as part of a span ("between 5s and 8s").
+    static func recognised(in text: String) -> [NSRange] {
+        let s = text as NSString
+        let found = times(in: text, fps: 30)
+        var out = found.filter { !$0.unitOnly }.map(\.range)
+        for (a, b) in zip(found, found.dropFirst()) where a.unitOnly || b.unitOnly {
+            let gapStart = NSMaxRange(a.range)
+            guard b.range.location >= gapStart else { continue }
+            let gap = s.substring(with: NSRange(location: gapStart, length: b.range.location - gapStart)).lowercased()
+                .trimmingCharacters(in: .whitespaces)
+            let before = s.substring(with: NSRange(location: max(0, a.range.location - 12), length: min(12, a.range.location))).lowercased()
+            guard ["and", "to", "-", "–", "—", "through", "until", "till"].contains(gap),
+                  before.hasSuffix("between ") || before.hasSuffix("from ") else { continue }
+            out += [a.range, b.range]
+        }
+        return out
+    }
+
     /// A span they typed: "between A and B", "from A to B" (or A to B / A–B with two clock times).
     static func span(in text: String, fps: Double) -> (start: Double, end: Double, text: String)? {
         let s = text as NSString
