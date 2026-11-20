@@ -280,15 +280,17 @@ final class TimelineCanvas: NSView {
         guard p.y >= TimelineLayout.ruler else { return nil }
         for c in model.project.clips where !model.project.isLocked(c.trackID) {
             guard let r = rect(for: c), r.contains(p) else { continue }
-            let showHandles = r.width > 36
+            // Fade dots only for fades set (in the inspector): an unset fade has no dot to catch the
+            // mouse, so a clip's edges always trim.
+            let showHandles = r.width > 36 && (c.fadeIn > 0 || c.fadeOut > 0)
             if showHandles, p.y < r.minY + 17 {
                 let hi = fadeHandleX(c, r, fadeIn: true), ho = fadeHandleX(c, r, fadeIn: false)
-                let di = abs(p.x - hi), dout = abs(p.x - ho)
+                let di = c.fadeIn > 0 ? abs(p.x - hi) : .infinity, dout = c.fadeOut > 0 ? abs(p.x - ho) : .infinity
                 if min(di, dout) <= 7 {
                     var takeIn = di <= dout
                     // Overlapping dots: the one with the longer fade (the one dragged there) is on
                     // top and takes the click; with equal fades, the side clicked decides.
-                    if abs(hi - ho) < 8 {
+                    if abs(hi - ho) < 8, c.fadeIn > 0, c.fadeOut > 0 {
                         takeIn = c.fadeIn != c.fadeOut ? c.fadeIn > c.fadeOut : p.x < hi
                     }
                     return Hit(clip: c, zone: takeIn ? .fadeIn : .fadeOut, rect: r)
@@ -1521,7 +1523,7 @@ final class TimelineCanvas: NSView {
             if c.isReversed { label += "   Reversed" }
             if c.kind == .audio, abs(c.gainDB) > 0.05 { label += "   " + formatDB(c.gainDB) }
             var lx = max(r.minX, 0) + 8
-            if r.width > 36 { lx = max(lx, fadeHandleX(c, r, fadeIn: true) + 10) }
+            if r.width > 36, c.fadeIn > 0 { lx = max(lx, fadeHandleX(c, r, fadeIn: true) + 10) }
             ctx.saveGState()
             ctx.clip(to: CGRect(x: r.minX, y: r.minY, width: max(0, r.width - 16), height: 18))
             (label as NSString).draw(at: CGPoint(x: lx, y: r.minY + 2.5), withAttributes: Self.labelAttrs)
@@ -1601,11 +1603,12 @@ final class TimelineCanvas: NSView {
         ctx.strokePath()
 
         // Fade handles
-        if r.width > 36, alpha == 1, hovered || selected || c.fadeIn > 0 || c.fadeOut > 0 {
+        // Only for fades that are set (in the inspector, or dragged after).
+        if r.width > 36, alpha == 1, c.fadeIn > 0 || c.fadeOut > 0 {
             // The longer fade's dot is drawn last, on top, matching which one takes the click.
             for isIn in c.fadeIn > c.fadeOut ? [false, true] : [true, false] {
                 let active = (isIn ? c.fadeIn : c.fadeOut) > 0
-                guard hovered || selected || active else { continue }
+                guard active else { continue }
                 let hot = zone == (isIn ? .fadeIn : .fadeOut)
                 let hx = fadeHandleX(c, r, fadeIn: isIn)
                 let rad: CGFloat = hot ? 5.5 : 4
