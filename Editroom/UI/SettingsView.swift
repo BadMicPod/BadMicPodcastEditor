@@ -588,6 +588,8 @@ private struct ToggleRow: View {
             Toggle("", isOn: $isOn)
                 .toggleStyle(.switch)
                 .labelsHidden()
+                // Small, like the rest of Editroom's controls (the standard switch looks oversized here).
+                .controlSize(.small)
                 .tint(Theme.accent)
         }
         .padding(14)
