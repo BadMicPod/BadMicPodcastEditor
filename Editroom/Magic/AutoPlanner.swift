@@ -115,7 +115,7 @@ enum AutoPlanner {
         if let m = music?.1 { target = min(target, m.duration - 2) }
 
         /// The best window of `length` in a source that doesn't overlap what's already been taken from it.
-        func bestWindow(_ s: Source, _ length: Double) -> (start: Double, score: Double)? {
+        func bestWindow(_ s: Source, _ length: Double, apart: Double = 0.3) -> (start: Double, score: Double)? {
             let a = s.analysis
             if s.asset.kind == .image {
                 return s.picked.isEmpty ? (0, s.scores.first ?? 0) : nil
@@ -127,7 +127,7 @@ enum AutoPlanner {
             var start = 0.05
             while start + length <= limit - 0.05 {
                 let end = start + length
-                let clear = s.picked.allSatisfy { end + 0.3 <= $0.0 || start >= $0.1 + 0.3 }
+                let clear = s.picked.allSatisfy { end + apart <= $0.0 || start >= $0.1 + apart }
                 if clear {
                     let inside = a.samples.indices.filter { a.samples[$0].time >= start && a.samples[$0].time <= end }
                     if !inside.isEmpty {
@@ -150,14 +150,18 @@ enum AutoPlanner {
             var added = 0
             // Every clip asked for: the first round goes through them all, whatever the length so far.
             for i in sources.indices where total < target || (recipe.every && round == 0) {
+                // A second shot from a clip only if it's long and the moment is well away from the first:
+                // otherwise it reads as the same shot again.
+                if round > 0, min(sources[i].analysis.duration, sources[i].asset.duration) < 12 { continue }
+                let apart = round > 0 ? 4.0 : 0.3
                 // A short clip that can't give a long shot can still give a short one.
                 var length = lengthFor(shots.count)
                 var beats = beatsFor(shots.count)
-                var found = bestWindow(sources[i], length + 0.08)
+                var found = bestWindow(sources[i], length + 0.08, apart: apart)
                 if found == nil, beats != shortBeats || period == nil {
                     beats = shortBeats
                     length = period.map { Double(shortBeats) * $0 } ?? min(1.6, perShot ?? 1.6)
-                    found = bestWindow(sources[i], length + 0.08)
+                    found = bestWindow(sources[i], length + 0.08, apart: apart)
                 }
                 guard let w = found else { continue }
                 // Everything gets a shot in the first round if it has anything decent; after that, only
@@ -180,9 +184,10 @@ enum AutoPlanner {
             // Every clip asked for: once each, no repeats; the shots grow to fill the length below.
             if recipe.every { break }
         }
-        // Every clip, once each, short of the length: shots grow a beat (or a quarter second) at a time,
-        // in turn, as far as their clips allow.
-        if recipe.every, let limit = recipe.seconds {
+        // Short of the length (every clip once, or no more clips worth a second shot): shots grow a beat
+        // (or a quarter second) at a time, in turn, as far as their clips allow, rather than repeating clips.
+        do {
+            let limit = target
             let unit = period ?? 0.25
             var grew = true
             while total + unit <= limit + 0.05, grew {
@@ -190,6 +195,11 @@ enum AutoPlanner {
                 for i in shots.indices where total + unit <= limit + 0.05 {
                     let s = shots[i]
                     guard s.asset.kind == .video, s.source + s.duration + unit <= min(s.asset.duration, sources.first { $0.asset.id == s.asset.id }?.analysis.duration ?? s.asset.duration) - 0.05 else { continue }
+                    // Clear of any other shot from the same clip.
+                    let end = s.source + s.duration + unit
+                    guard shots.indices.allSatisfy({ j in
+                        j == i || shots[j].asset.id != s.asset.id || end + 0.1 <= shots[j].source || shots[j].source + shots[j].duration <= s.source
+                    }) else { continue }
                     shots[i].duration += unit
                     shotBeats[i] += 1
                     total += unit
