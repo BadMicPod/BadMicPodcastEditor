@@ -28,17 +28,17 @@ cp -R "$app" "$work/src/"
 
 mkdir -p "${out:h}"
 rm -f "$out"
-# Window is 600×380 points, the background's size. Icons sit in the open space bottom left,
-# under the film strip and clear of the scissors.
+# Window is 600×412 points: the 380pt background plus the 32pt title bar. Icons sit in the usual
+# spots, side by side across the middle.
 create-dmg \
   --volname "Editroom" \
   --background "$work/background.tiff" \
   --window-pos 200 120 \
-  --window-size 600 380 \
+  --window-size 600 412 \
   --icon-size 72 \
   --text-size 12 \
-  --icon "Editroom.app" 110 300 \
-  --app-drop-link 270 300 \
+  --icon "Editroom.app" 150 190 \
+  --app-drop-link 450 190 \
   --hide-extension "Editroom.app" \
   --no-internet-enable \
   "$out" "$work/src" >/dev/null
