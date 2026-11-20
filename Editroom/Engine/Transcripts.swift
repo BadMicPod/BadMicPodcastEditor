@@ -48,13 +48,19 @@ struct Transcript: Codable, Equatable {
         return out.map { (start: $0.0, end: $0.1, text: $0.2.joined(separator: " ")) }
     }
 
-    /// Whether they say these words, in this order (case and punctuation aside).
-    func says(_ phrase: String) -> Bool {
+    /// Whether they say these words, in this order (case and punctuation aside). With `typing`, the last
+    /// word can be the start of one ("gu" finds "guys"), for searching as it's typed.
+    func says(_ phrase: String, typing: Bool = false) -> Bool {
         let want = Self.tokens(phrase)
         guard !want.isEmpty else { return false }
         let have = Self.tokens(text)
         guard have.count >= want.count else { return false }
-        for i in 0...(have.count - want.count) where Array(have[i..<(i + want.count)]) == want { return true }
+        for i in 0...(have.count - want.count) {
+            let run = have[i..<(i + want.count)]
+            let whole = zip(run.dropLast(), want.dropLast()).allSatisfy { $0 == $1 }
+            let last = typing ? run.last!.hasPrefix(want.last!) : run.last! == want.last!
+            if whole && last { return true }
+        }
         return false
     }
 

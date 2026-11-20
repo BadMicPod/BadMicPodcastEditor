@@ -36,7 +36,7 @@ struct LibraryView: View {
             if !rest.isEmpty, !a.name.localizedCaseInsensitiveContains(rest) { return false }
             guard !phrases.isEmpty else { return true }
             guard let t = media.transcript(a.id) else { return false }
-            return phrases.allSatisfy { t.says($0) }
+            return phrases.allSatisfy { t.says($0, typing: true) }
         }
     }
 
