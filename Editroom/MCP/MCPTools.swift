@@ -598,6 +598,7 @@ enum MCPTools {
     /// A library item with whether people talk in it (once it's been heard), for list_media.
     @MainActor private static func assetJSON(_ a: MediaAsset, media: MediaStore) -> [String: Any] {
         var d = assetJSON(a)
+        if let s = media.sceneTags(a.id), !s.tags.isEmpty { d["shows"] = s.top(8) }
         if let t = media.transcript(a.id) {
             d["speech"] = !t.isEmpty
             if !t.isEmpty { d["says"] = String(t.text.prefix(120)) + (t.text.count > 120 ? "…" : "") }

@@ -161,6 +161,11 @@ final class MediaStore: ObservableObject {
         asset.kind == .image ? stills[asset.id] == nil : runtimes[asset.id] == nil
     }
 
+    private var tagURLs: [UUID: URL] = [:]
+
+    /// What a library item shows ("pool", "beach"), once it's been seen.
+    func sceneTags(_ id: UUID) -> SceneTags? { tagURLs[id].flatMap { SceneTagStore.shared.tags(for: $0) } }
+
     /// The file a library item's sound is read from (its converted copy, if it has one).
     func soundURL(_ id: UUID) -> URL? { runtimes[id]?.audioTrack != nil ? runtimes[id]?.asset.url : nil }
 
@@ -183,6 +188,9 @@ final class MediaStore: ObservableObject {
             let gen = rt.makeGenerator(maximumSize: CGSize(width: 320, height: 120))
             rt.generator = gen
             makePoster(asset, rt)
+            // What it shows, for Media search and Magic: once, in the background.
+            tagURLs[asset.id] = rt.asset.url
+            SceneTagStore.shared.make(rt.asset.url, isVideo: true, duration: asset.duration)
             strips.make(asset.id, rt, duration: asset.duration)
         }
         if rt.audioTrack != nil {
@@ -254,6 +262,8 @@ final class MediaStore: ObservableObject {
     private func loadStill(_ asset: MediaAsset) {
         let url = asset.url
         let id = asset.id
+        tagURLs[id] = url
+        SceneTagStore.shared.make(url, isVideo: false, duration: 0)
         Task.detached(priority: .userInitiated) {
             guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return }
             let opts: [CFString: Any] = [

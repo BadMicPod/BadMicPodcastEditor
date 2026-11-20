@@ -232,7 +232,8 @@ final class MagicAgent: ObservableObject {
 
         How to work:
         1. get_project and list_media.
-        2. Look at the footage with look_at_media to see what's in each shot. If people talk in it (list_media \
+        2. list_media says what each clip "shows" (seen on this Mac): a quick guide to find shots by what's in \
+        them. Look at the footage with look_at_media to see what's in each shot. If people talk in it (list_media \
         says "speech"), get_transcript gives what's said with times: cut pauses, retakes and filler between \
         sentences, keep sentences whole, and put other shots over the talking where it helps. analyze_media finds a clip's best \
         moments, or a song's tempo and bar starts.

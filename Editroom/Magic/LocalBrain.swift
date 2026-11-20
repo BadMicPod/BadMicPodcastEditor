@@ -173,11 +173,16 @@ enum LocalBrain {
         return nil
     }
 
+    /// Words in a request that aren't things a clip shows.
+    static let notThings: Set<String> = ["make", "the", "and", "use", "using", "only", "just", "clip", "clips", "shot", "shots",
+        "video", "videos", "cut", "edit", "fast", "slow", "with", "out", "take", "remove", "keep", "all", "some", "more", "less",
+        "seconds", "second", "minute", "music", "song", "look", "vertical", "square", "from", "into", "this", "that", "these"]
+
     static func applyMedia(_ r: inout LocalRecipe, named: [MediaAsset], action: String, request: String, pointed: Set<UUID> = [],
                            hasEdit: Bool = false) {
         guard !named.isEmpty else { return }
         let text = request.lowercased()
-        let only = ["only", "just ", "nothing else", "nothing but", "except", "solely", "keep "].contains { text.contains($0) }
+        let only = ["only", "just ", "nothing else", "nothing but", "except", "solely", "keep ", "use the ", "using the "].contains { text.contains($0) }
         let remove = ["remove", "take out", "without", "delete", "drop", "get rid", "cut out", "no more", "lose "].contains { text.contains($0) }
         // Naming files on an edit that's already made ("put @a in front of @b") never takes the others
         // out: only "only" or "remove" in so many words does (Apple's model guesses this wrong). For a
@@ -252,8 +257,14 @@ enum LocalBrain {
     }
 
     /// Reads a request into a recipe. `media` is the library, so named items can be picked out.
-    static func recipe(for request: String, media: [MediaAsset] = [], pointed: Set<UUID> = [], hasEdit: Bool = false) async throws -> LocalRecipe {
-        let named = media.filter { pointed.contains($0.id) || Self.named(in: request, media: [$0]).count == 1 }
+    static func recipe(for request: String, media: [MediaAsset] = [], pointed: Set<UUID> = [], hasEdit: Bool = false,
+                       shows: (UUID) -> SceneTags? = { _ in nil }) async throws -> LocalRecipe {
+        // Files named, with @ or by name, or by what they show ("the pool clips").
+        let words = Transcript.tokens(request).filter { $0.count >= 3 && !Self.notThings.contains($0) }
+        let named = media.filter { a in
+            pointed.contains(a.id) || Self.named(in: request, media: [a]).count == 1
+                || words.contains { w in shows(a.id)?.shows(w) == true }
+        }
         #if canImport(FoundationModels)
         if #available(macOS 26, *), available {
             let session = LanguageModelSession(instructions: """

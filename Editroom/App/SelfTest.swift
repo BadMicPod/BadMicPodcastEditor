@@ -1327,8 +1327,11 @@ enum SelfTest {
                     && abs(vids[1].sourceStart - 4.88) < 1e-6 && abs(vids[2].start - 2.64) < 1e-6 && vids[2].assetID == a.id
                     && auds.count == 2 && zip(auds, vids).allSatisfy { abs($0.start - $1.start) < 1e-6 && abs($0.duration - $1.duration) < 1e-6 }
                     && LocalSpeech.asks("cut out all the dead space") && !LocalSpeech.asks("make it fast")
-                let mOK = speechOK && cutOK && timeOK && typedOK && clipOK && moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
-                log("MENTIONS \(mOK ? "OK" : "FAIL") speech=\(speechOK) cut=\(cutOK) \(cutPlan.said) time=\(timeOK) typed=\(typedOK) clip=\(clipOK) \(labels) move=\(moveOK) keep=\(keepOK) find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
+                // Scene tags: a word matches a tag (plural or not), and as it's typed.
+                let tags = SceneTags(tags: [.init(name: "swimming pool", confidence: 0.8, times: [1]), .init(name: "chair", confidence: 0.6, times: [2])])
+                let tagOK = tags.shows("pool") && tags.shows("chairs") && tags.shows("po", typing: true) && !tags.shows("po") && !tags.shows("beach")
+                let mOK = tagOK && speechOK && cutOK && timeOK && typedOK && clipOK && moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
+                log("MENTIONS \(mOK ? "OK" : "FAIL") tags=\(tagOK) speech=\(speechOK) cut=\(cutOK) \(cutPlan.said) time=\(timeOK) typed=\(typedOK) clip=\(clipOK) \(labels) move=\(moveOK) keep=\(keepOK) find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
                 good = good && mOK
             }
             log("LOCAL IMPROVE \(good ? "OK" : "FAIL") \(detail)")

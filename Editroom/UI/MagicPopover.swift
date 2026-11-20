@@ -912,7 +912,8 @@ enum LocalMagic {
             var recipe: LocalRecipe
             do {
                 recipe = try await LocalBrain.recipe(for: request, media: media, pointed: pointed,
-                                                     hasEdit: model.project.clips.contains { $0.kind == .video || $0.kind == .image })
+                                                     hasEdit: model.project.clips.contains { $0.kind == .video || $0.kind == .image },
+                                                     shows: { model.media.sceneTags($0) })
                 // Stopped while it was reading: nothing to do.
                 guard run == MagicShow.runID else { return }
                 recipe.speed = LocalBrain.speed(in: request)

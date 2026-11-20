@@ -16,6 +16,7 @@ struct LibraryView: View {
 
     /// What's said in clips, for searching it (and to update as clips are heard).
     @ObservedObject private var transcripts = Transcripts.shared
+    @ObservedObject private var scenes = SceneTagStore.shared
 
     /// The search: words in "quotes" are what's said in a clip; anything else is in its name.
     private var shown: [MediaAsset] {
@@ -33,7 +34,12 @@ struct LibraryView: View {
                 .trimmingCharacters(in: .whitespaces)
         }
         return model.project.assets.filter { a in
-            if !rest.isEmpty, !a.name.localizedCaseInsensitiveContains(rest) { return false }
+            // Plain words: in its name, or what it shows ("pool"), each word as it's typed.
+            if !rest.isEmpty, !a.name.localizedCaseInsensitiveContains(rest) {
+                let tags = media.sceneTags(a.id)
+                let words = rest.lowercased().split(separator: " ").map(String.init)
+                guard words.allSatisfy({ w in a.name.lowercased().contains(w) || tags?.shows(w, typing: w == words.last) == true }) else { return false }
+            }
             guard !phrases.isEmpty else { return true }
             guard let t = media.transcript(a.id) else { return false }
             return phrases.allSatisfy { t.says($0, typing: true) }
