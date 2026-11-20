@@ -170,6 +170,11 @@ final class EditorModel: ObservableObject {
                     try? await Task.sleep(nanoseconds: 1_500_000_000)
                     self.seek(to: t)
                 }
+                // `--pps N` (testing): the timeline zoomed to N points a second.
+                if let j = args.firstIndex(of: "--pps"), args.count > j + 1, let v = Double(args[j + 1]) {
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    self.setView(pps: CGFloat(v), scrollX: 0)
+                }
                 if let j = args.firstIndex(of: "--rows"), args.count > j + 1, let r = Double(args[j + 1]) {
                     try? await Task.sleep(nanoseconds: 1_500_000_000)
                     self.setView(rowHeight: CGFloat(r))

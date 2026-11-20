@@ -111,7 +111,7 @@ private struct AppearanceSettings: View {
                     SegmentedChoice(options: MediaLayout.allCases.map { ($0, $0.name) }, selection: $mediaLayout)
                 }
                 Divider().overlay(Theme.stroke)
-                SettingsRow("Show time as", detail: "In the viewer and on the timeline") {
+                SettingsRow("Show time as") {
                     SegmentedChoice(options: [(TimeStyle.timecode, "00:00:05:15"), (TimeStyle.simple, "0:05.50")],
                                     selection: $themes.timeStyle, mono: true)
                 }

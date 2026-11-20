@@ -1319,8 +1319,13 @@ final class TimelineCanvas: NSView {
                 ctx.fill(CGRect(x: px.rounded(), y: ruler - 9, width: 1, height: 8))
                 var label = Timecode.short(t)
                 if showFrames {
-                    let frames = Int((t * fps).rounded()) % max(1, Int(fps.rounded()))
-                    label = Timecode.short(floor(t + 1e-6)) + String(format: ":%02d", frames)
+                    if TimeStyle.current == .simple {
+                        // Zoomed in, with plain times: hundredths, as the viewer shows them.
+                        label = Timecode.simple(t)
+                    } else {
+                        let frames = Int((t * fps).rounded()) % max(1, Int(fps.rounded()))
+                        label = Timecode.short(floor(t + 1e-6)) + String(format: ":%02d", frames)
+                    }
                 }
                 (label as NSString).draw(at: CGPoint(x: px + 5, y: 5), withAttributes: Self.rulerAttrs)
             }
