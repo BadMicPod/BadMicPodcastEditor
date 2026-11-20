@@ -28,14 +28,4 @@ enum MagicHistory {
         if let data = try? JSONEncoder().encode(Array(list.prefix(limit))) { UserDefaults.standard.set(data, forKey: key) }
     }
 
-    /// "2h", "Tue", "12 Nov".
-    static func when(_ date: Date, now: Date = Date()) -> String {
-        let s = now.timeIntervalSince(date)
-        if s < 60 { return "now" }
-        if s < 3600 { return "\(Int(s / 60))m" }
-        if s < 86400 { return "\(Int(s / 3600))h" }
-        let f = DateFormatter()
-        f.dateFormat = s < 6 * 86400 ? "EEE" : "d MMM"
-        return f.string(from: date)
-    }
 }

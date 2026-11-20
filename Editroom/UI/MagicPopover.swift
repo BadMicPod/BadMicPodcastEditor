@@ -1169,7 +1169,7 @@ private struct HistoryList: View {
                                         .lineLimit(1)
                                         .truncationMode(.tail)
                                     Spacer(minLength: 6)
-                                    Text("\(MagicAgent.Tab(rawValue: e.tab)?.name ?? "") · \(MagicHistory.when(e.date))")
+                                    Text(MagicAgent.Tab(rawValue: e.tab)?.name ?? "")
                                         .font(.system(size: 10.5))
                                         .foregroundStyle(Theme.textFaint)
                                         .fixedSize()
