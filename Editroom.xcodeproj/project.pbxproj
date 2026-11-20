@@ -6,7 +6,26 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		CA0000000000000000000102 /* ffmpeg in Copy ffmpeg */ = {isa = PBXBuildFile; fileRef = CA0000000000000000000101 /* ffmpeg */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		CA0000000000000000000103 /* Copy ffmpeg */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 6;
+			files = (
+				CA0000000000000000000102 /* ffmpeg in Copy ffmpeg */,
+			);
+			name = "Copy ffmpeg";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		CA0000000000000000000101 /* ffmpeg */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = Vendor/ffmpeg/ffmpeg; sourceTree = SOURCE_ROOT; };
 		CA0000000000000000000001 /* Editroom.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Editroom.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -33,6 +52,7 @@
 			isa = PBXGroup;
 			children = (
 				CA0000000000000000000002 /* Editroom */,
+				CA0000000000000000000101 /* ffmpeg */,
 				CA0000000000000000000005 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -55,6 +75,7 @@
 				CA0000000000000000000007 /* Sources */,
 				CA0000000000000000000003 /* Frameworks */,
 				CA0000000000000000000008 /* Resources */,
+				CA0000000000000000000103 /* Copy ffmpeg */,
 			);
 			buildRules = (
 			);

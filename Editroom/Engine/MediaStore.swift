@@ -584,8 +584,11 @@ enum WaveformReader {
 // MARK: - ffmpeg fallback
 
 enum FFmpeg {
+    /// Editroom's own (a small LGPL build in the app, Contents/MacOS/ffmpeg); one installed on the
+    /// Mac only if that's missing.
     static var binary: String? {
-        ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"]
+        ([Bundle.main.url(forAuxiliaryExecutable: "ffmpeg")?.path].compactMap { $0}
+            + ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"])
             .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
@@ -599,6 +602,9 @@ enum FFmpeg {
     /// Rewraps (or, failing that, transcodes) a file into something AVFoundation decodes.
     static func makePlayable(_ url: URL) async -> URL? {
         guard let bin = binary else { return nil }
+        if CommandLine.arguments.contains("--import-test") {
+            FileHandle.standardError.write("IMPORT converting with \(bin)\n".data(using: .utf8)!)
+        }
         let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
         let stamp = "\(url.path)|\(attrs?[.size] ?? 0)|\(attrs?[.modificationDate] ?? Date.distantPast)"
         // A hash that is the same on every launch, so re-converting a file reuses its copy's name.
