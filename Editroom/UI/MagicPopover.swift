@@ -389,7 +389,7 @@ private enum LocalIdeas {
         ("Clean it up", "sparkles", "Take out repeats and weak shots, and trim long shots."),
     ]
     static let make: [Idea] = [
-        ("Quick cut", "wand.and.stars", ""),
+        ("Quick cut", "wand.and.stars", "Make a new quick cut of the best moments, to the beat."),
         ("30-second highlight", "star", "Make a fast 30 second highlight cut to the beat."),
         ("Vertical reel", "iphone", "Make a 20 second vertical video, fast."),
         ("Timelapse", "timer", "Speed every shot up 8x, over the music."),
