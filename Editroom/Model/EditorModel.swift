@@ -662,7 +662,19 @@ final class EditorModel: ObservableObject {
         scrubSound(at: time)
     }
 
+    /// Space while skimming plays from where the skimmer is (as in Final Cut), instead of from the
+    /// playhead (the default). Set in Settings > Shortcuts, under Play / Pause.
+    static let playFromSkimmerKey = "playFromSkimmer"
+
     func play() {
+        if let s = skimTime {
+            if UserDefaults.standard.bool(forKey: Self.playFromSkimmerKey) {
+                playhead = s
+            } else {
+                // The viewer was showing the skimmed frame: back to the playhead to play from there.
+                engine.seek(to: playhead)
+            }
+        }
         skimTime = nil
         guard project.duration > 0 else { return }
         rebuildNow()

@@ -357,6 +357,12 @@ private struct ShortcutSettings: View {
     @StateObject private var recorder = ShortcutRecorder()
     @State private var search = ""
 
+    /// The skimming choice under Play / Pause shows with it, and for searches about skimming.
+    private var showsSkim: Bool {
+        let q = search.trimmingCharacters(in: .whitespaces).lowercased()
+        return matches(.playPause) || (!q.isEmpty && ["skim", "playhead", "space"].contains { $0.hasPrefix(q) || q.hasPrefix($0) })
+    }
+
     private func matches(_ a: ShortcutAction) -> Bool {
         let q = search.trimmingCharacters(in: .whitespaces).lowercased()
         guard !q.isEmpty else { return true }
@@ -383,12 +389,15 @@ private struct ShortcutSettings: View {
                 VStack(alignment: .leading, spacing: 18) {
                     ForEach(ShortcutAction.Group.allCases, id: \.self) { group in
                         let actions = ShortcutAction.allCases.filter { $0.group == group && matches($0) }
-                        if !actions.isEmpty {
+                        let skim = group == .playback && showsSkim
+                        if !actions.isEmpty || skim {
                             VStack(alignment: .leading, spacing: 4) {
                                 SectionLabel(text: group.rawValue).padding(.leading, 10)
                                 VStack(spacing: 0) {
+                                    if skim && !actions.contains(.playPause) { SkimPlayRow() }
                                     ForEach(actions) { a in
                                         ShortcutRow(action: a, keys: keys, recorder: recorder)
+                                        if a == .playPause, skim { SkimPlayRow() }
                                     }
                                 }
                                 .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.field))
@@ -417,6 +426,24 @@ private struct ShortcutSettings: View {
             .frame(height: 52)
         }
         .onDisappear { recorder.stop() }
+    }
+}
+
+/// Under Play / Pause: where space plays from while skimming.
+private struct SkimPlayRow: View {
+    @AppStorage(EditorModel.playFromSkimmerKey) private var fromSkimmer = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("↳  While skimming, play from")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textDim)
+            Spacer()
+            SegmentedChoice(options: [(false, "Playhead"), (true, "Skimmer")], selection: $fromSkimmer)
+        }
+        .padding(.leading, 24)
+        .padding(.trailing, 12)
+        .frame(height: 34)
     }
 }
 
