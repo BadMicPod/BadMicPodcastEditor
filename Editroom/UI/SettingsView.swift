@@ -92,7 +92,7 @@ private struct SectionLabel: View {
 /// The themes, each shown as a small picture of the editor in its colours.
 private struct AppearanceSettings: View {
     @ObservedObject var themes = ThemeStore.shared
-    @AppStorage(MediaLayout.key) private var mediaLayout = MediaLayout.list
+    @AppStorage(MediaLayout.key) private var mediaLayout = MediaLayout.thumbnails
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -111,7 +111,7 @@ private struct AppearanceSettings: View {
                     Text("Media")
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Theme.text)
-                    Text("A list with small pictures, or larger thumbnails to see more of each shot.")
+                    Text("Larger thumbnails to see more of each shot, or a list with small pictures.")
                         .font(.system(size: 11.5))
                         .foregroundStyle(Theme.textDim)
                         .fixedSize(horizontal: false, vertical: true)

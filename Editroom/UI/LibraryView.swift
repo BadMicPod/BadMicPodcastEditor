@@ -6,8 +6,8 @@ struct LibraryView: View {
     @ObservedObject var media: MediaStore
     @State private var dropTargeted = false
     @State private var search = ""
-    /// List (the default) or larger thumbnails, from Settings > Appearance.
-    @AppStorage(MediaLayout.key) private var layout = MediaLayout.list
+    /// Thumbnails (the default) or a list, from Settings > Appearance.
+    @AppStorage(MediaLayout.key) private var layout = MediaLayout.thumbnails
     /// How wide the panel is, so a list's pictures can grow a little when it's widened.
     @State private var panelWidth: CGFloat = 252
 
@@ -375,7 +375,7 @@ private struct AssetRow: View {
 
 /// How the Media panel shows its items.
 enum MediaLayout: String, CaseIterable, Identifiable {
-    case list, thumbnails
+    case thumbnails, list
     static let key = "mediaLayout"
     var id: String { rawValue }
     var name: String { self == .list ? "List" : "Thumbnails" }
