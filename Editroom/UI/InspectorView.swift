@@ -697,7 +697,7 @@ private struct ParamRow: View {
             ThinSlider(value: normalised, onEditing: onEditing) { onChange(denormalise($0)) }
             // Always a text field, so Tab moves to the next row's value like any form. Return or leaving the
             // field applies what was typed; Esc puts the value back.
-            HStack(spacing: 2) {
+            HStack(spacing: 4) {
                 TextField("", text: $text)
                     .textFieldStyle(.plain)
                     .multilineTextAlignment(.trailing)
@@ -1163,8 +1163,8 @@ private struct RampButton: View {
         Button(action: action) {
             RampGlyph()
                 .stroke(on ? Theme.accent : Theme.textDim, style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
-                .frame(width: 13, height: 8)
-                .frame(width: 22, height: 18)
+                .frame(width: 11, height: 8)
+                .frame(width: 18, height: 18)
                 .background(RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .fill(on ? Theme.accent.opacity(0.16) : Theme.ink.opacity(hovering ? 0.12 : 0.06)))
                 .contentShape(Rectangle())
