@@ -421,3 +421,35 @@ enum MediaAnalyzer {
         return MusicAnalysis(duration: Double(x.count) / rate, bpm: bpm, beats: beats, barPhase: barPhase, energy: energy)
     }
 }
+
+/// Studies new media in the background after import (each clip's moments, each song's beats), one file
+/// at a time, so Magic's first run on new footage doesn't wait for it. Results are kept on disk by
+/// MediaAnalyzer itself, so this does nothing for files already studied.
+@MainActor
+final class AnalysisWarmer {
+    static let shared = AnalysisWarmer()
+    private var queue: [(URL, MediaKind, Bool)] = []
+    private var queued = Set<String>()
+    private var working = false
+
+    /// Queues a file: a song (`song`) for its beats, anything else for its moments.
+    func warm(_ url: URL, kind: MediaKind, song: Bool) {
+        guard !queued.contains(url.path) else { return }
+        queued.insert(url.path)
+        queue.append((url, kind, song))
+        next()
+    }
+
+    private func next() {
+        guard !working, !queue.isEmpty else { return }
+        let (url, kind, song) = queue.removeFirst()
+        working = true
+        Task.detached(priority: .utility) {
+            if song { _ = await MediaAnalyzer.music(url) } else { _ = await MediaAnalyzer.clip(url, kind: kind) }
+            await MainActor.run {
+                AnalysisWarmer.shared.working = false
+                AnalysisWarmer.shared.next()
+            }
+        }
+    }
+}

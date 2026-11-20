@@ -191,10 +191,14 @@ final class MediaStore: ObservableObject {
             // What it shows, for Media search and Magic: once, in the background.
             tagURLs[asset.id] = rt.asset.url
             SceneTagStore.shared.make(rt.asset.url, isVideo: true, duration: asset.duration)
+            // Its best moments, as Magic scores them: ready before Magic needs them.
+            AnalysisWarmer.shared.warm(asset.url, kind: asset.kind, song: false)
             strips.make(asset.id, rt, duration: asset.duration)
         }
         if rt.audioTrack != nil {
             makeWaveform(asset.id, rt)
+            // A song (sound only, 8 seconds or more): its tempo and beats, ready for Magic.
+            if rt.videoTrack == nil, asset.duration >= 8 { AnalysisWarmer.shared.warm(asset.url, kind: asset.kind, song: true) }
             // What's said in it, for Magic and Media search: made once, in the background.
             Transcripts.shared.make(rt.asset.url)
         }
@@ -264,6 +268,7 @@ final class MediaStore: ObservableObject {
         let id = asset.id
         tagURLs[id] = url
         SceneTagStore.shared.make(url, isVideo: false, duration: 0)
+        AnalysisWarmer.shared.warm(url, kind: .image, song: false)
         Task.detached(priority: .userInitiated) {
             guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return }
             let opts: [CFString: Any] = [
