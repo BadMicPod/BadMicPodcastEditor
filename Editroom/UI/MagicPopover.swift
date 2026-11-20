@@ -428,36 +428,59 @@ private struct IdeasMenu: View {
     }
 }
 
-/// Prompts sent before (newest first, the AI each went to on the right): one fills the box.
+/// Prompts sent before (newest first, the AI each went to on the right): one fills the box. A menu
+/// made by hand, so each prompt can wrap to two lines and keep the menu narrow.
 private struct HistoryMenu: View {
     let use: (String) -> Void
 
     var body: some View {
-        Menu {
-            let entries = MagicHistory.entries
-            Section("History") {
-                if entries.isEmpty {
-                    Text("Prompts you send show up here.")
-                }
-                ForEach(entries) { e in
-                    Button { use(e.text) } label: { Text(Self.short(e.text)) }
-                        .badge(Text(MagicAgent.Tab(rawValue: e.tab)?.name ?? ""))
-                }
-            }
-        } label: {
-            MenuIcon(symbol: "clock.arrow.circlepath")
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("History")
+        Button(action: open) { MenuIcon(symbol: "clock.arrow.circlepath") }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .help("History")
     }
 
-    /// One line, kept to a menu's width.
-    static func short(_ text: String) -> String {
-        let one = text.replacingOccurrences(of: "\n", with: " ")
-        return one.count > 60 ? String(one.prefix(58)).trimmingCharacters(in: .whitespaces) + "…" : one
+    private func open() {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.addItem(NSMenuItem.sectionHeader(title: "History"))
+        let entries = MagicHistory.entries
+        if entries.isEmpty {
+            menu.addItem(ActionItem("Prompts you send show up here.", enabled: false) {})
+        }
+        let font = NSFont.menuFont(ofSize: 0)
+        for e in entries {
+            let item = ActionItem(e.text) { use(e.text) }
+            item.attributedTitle = NSAttributedString(string: Self.wrapped(e.text), attributes: [.font: font])
+            item.badge = NSMenuItemBadge(string: MagicAgent.Tab(rawValue: e.tab)?.name ?? "")
+            item.toolTip = e.text
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    /// At most two lines of about `width` characters, broken between words, with … if there's more.
+    static func wrapped(_ text: String, width: Int = 34) -> String {
+        let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        var lines: [String] = [""]
+        var rest = words[...]
+        while let w = rest.first {
+            let line = lines[lines.count - 1]
+            if line.isEmpty || line.count + 1 + w.count <= width {
+                lines[lines.count - 1] = line.isEmpty ? String(w.prefix(width)) : line + " " + w
+                rest = rest.dropFirst()
+            } else if lines.count < 2 {
+                lines.append("")
+            } else {
+                break
+            }
+        }
+        if !rest.isEmpty {
+            var last = lines[lines.count - 1]
+            if last.count > width - 1 { last = String(last.prefix(width - 1)).trimmingCharacters(in: .whitespaces) }
+            lines[lines.count - 1] = last + "…"
+        }
+        return lines.joined(separator: "\n")
     }
 }
 
