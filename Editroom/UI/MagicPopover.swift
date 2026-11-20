@@ -987,8 +987,8 @@ struct MagicNoteView: View {
                     }
                 }
                 Spacer()
-                PillButton(title: "Done", prominent: true, action: close)
-                    .keyboardShortcut(.defaultAction)
+                // Return closes it (given to the pill itself: one put around it doesn't reach its button).
+                PillButton(title: "Done", prominent: true, shortcut: .defaultAction, action: close)
             }
         }
         // Space plays and pauses, as it does in the edit, so the result can be watched straight away
@@ -996,6 +996,13 @@ struct MagicNoteView: View {
         .background(
             Button("") { model.togglePlay() }
                 .keyboardShortcut(.space, modifiers: [])
+                .opacity(0)
+                .allowsHitTesting(false)
+        )
+        // esc closes it too, like Done.
+        .background(
+            Button("", action: close)
+                .keyboardShortcut(.cancelAction)
                 .opacity(0)
                 .allowsHitTesting(false)
         )
