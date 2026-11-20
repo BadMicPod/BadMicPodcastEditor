@@ -261,7 +261,7 @@ enum SelfTest {
             a.kind = .audio
             let after = Clip(trackID: t, kind: .solid, start: 4, duration: 1)
             p.clips = [v, a, after]
-            p.setRamp(ids: [v.id, a.id], speed: 4, a: 0.25, b: 0.25, start: 1, end: 1)
+            p.setRamp(ids: [v.id, a.id], speed: 4, points: (0, 0.25, 0.75, 1), start: 1, end: 1)
             let rv = p.clip(v.id)!, ra = p.clip(a.id)!
             let footage = abs(rv.sourceLength - 4) < 0.02
             // Pure 400% would be 1s, pure 100% 4s: a ramp at both ends lands in between.
@@ -285,18 +285,27 @@ enum SelfTest {
             let m = rv.ramp!.mirrored(length: length)
             let mirrored = abs(m.speed(at: length - (rv.sourceStart + 0.3), mid: 4) - rv.speed(atSource: rv.sourceStart + 0.3)) < 1e-9
             var back = p
-            back.setRamp(ids: [v.id, a.id], speed: 4, a: 0, b: 0, start: 1, end: 1)
+            back.setRamp(ids: [v.id, a.id], speed: 4, points: (0, 0, 1, 1), start: 1, end: 1)
+            // A slow-motion moment in the middle: 100% to 30% of the way, easing to 25% by 40%, held to
+            // 60%, back to 100% by 70%, then 100% to the end.
+            var moment = p
+            moment.setRamp(ids: [v.id, a.id], speed: 0.25, points: (0.3, 0.4, 0.6, 0.7), start: 1, end: 1)
+            let mc = moment.clip(v.id)!
+            let L = mc.sourceLength, s0 = mc.sourceStart
+            let middle = abs(mc.speed(atSource: s0 + 0.1 * L) - 1) < 1e-6 && abs(mc.speed(atSource: s0 + 0.5 * L) - 0.25) < 1e-6
+                && abs(mc.speed(atSource: s0 + 0.9 * L) - 1) < 1e-6 && abs(L - rv.sourceLength) < 0.02
+                && abs(mc.duration - L * (0.6 + 0.2 / 0.25 + 0.2 * 2.2)) < 0.6
             let flat = back.clip(v.id)!.ramp == nil && abs(back.clip(v.id)!.duration - 1) < 0.04
             p.sanitize()
             let exported = await export(p, media, ExportSettings(), to: outDir.appendingPathComponent("ramp.mp4"))
             let file = AVURLAsset(url: outDir.appendingPathComponent("ramp.mp4"))
             let seconds = (try? await file.load(.duration).seconds) ?? 0
             let lasts = abs(seconds - p.duration) < 0.1
-            let pass = footage && shorter && together && trips && ends && split && mirrored && flat && exported && lasts
+            let pass = footage && shorter && together && trips && ends && split && mirrored && flat && middle && exported && lasts
             if !pass {
                 log("RAMP DEBUG v=\(rv.start)+\(rv.duration) a=\(ra.start)+\(ra.duration) after=\(p.clip(after.id)!.start) halves=\(halves.map { [$0.start, $0.duration, $0.sourceStart, $0.sourceLength] }) mid=\(mid) src(mid)=\(rv.sourceTime(at: mid))")
             }
-            log("RAMP \(pass ? "OK" : "FAIL") footage=\(footage) length=\(String(format: "%.2f", rv.duration)) together=\(together) trips=\(trips) ends=\(ends) split=\(split) mirrored=\(mirrored) flat=\(flat) export=\(exported) lasts=\(lasts) (\(String(format: "%.2f", seconds)) of \(String(format: "%.2f", p.duration)))")
+            log("RAMP \(pass ? "OK" : "FAIL") footage=\(footage) length=\(String(format: "%.2f", rv.duration)) together=\(together) trips=\(trips) ends=\(ends) split=\(split) mirrored=\(mirrored) flat=\(flat) middle=\(middle) (\(String(format: "%.2f", mc.duration))s) export=\(exported) lasts=\(lasts) (\(String(format: "%.2f", seconds)) of \(String(format: "%.2f", p.duration)))")
             ok = ok && pass
         }
         // Zoom/scroll limits: whatever is asked for, the state must stay inside the bars and be stable.

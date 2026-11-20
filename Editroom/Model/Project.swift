@@ -597,14 +597,14 @@ extension Project {
     }
 
     /// Sets the speed ramp drawn in the inspector on these clips (each over its own footage), with the
-    /// middle speed: `a` and `b` are how much of the start and end ramp, `start` and `end` the speeds
-    /// there. Each keeps its footage; its length follows.
-    mutating func setRamp(ids: Set<UUID>, speed: Double, a: Double, b: Double, start: Double, end: Double, sticky: Bool = false) {
+    /// middle speed: `points` are where the ramps start and end (fractions of each clip's footage, see
+    /// `SpeedRamp.drawn`), `start` and `end` the speeds outside them. Each keeps its footage; its length follows.
+    mutating func setRamp(ids: Set<UUID>, speed: Double, points: (Double, Double, Double, Double), start: Double, end: Double, sticky: Bool = false) {
         let clamp = { (v: Double) in min(max(v, 0.05), 100) }
         retime(ids: ids, sticky: sticky) { c in
             let s0 = c.sourceStart, s1 = c.sourceStart + c.sourceLength
             c.speed = clamp(speed)
-            c.ramp = SpeedRamp.drawn(s0: s0, s1: s1, a: a, b: b, start: clamp(start), end: clamp(end), mid: c.speed)
+            c.ramp = SpeedRamp.drawn(s0: s0, s1: s1, points: points, start: clamp(start), end: clamp(end), mid: c.speed)
         }
     }
 

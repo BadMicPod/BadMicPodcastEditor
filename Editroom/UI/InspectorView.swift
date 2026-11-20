@@ -170,7 +170,7 @@ struct InspectorView: View {
                             let sticky = model.sticky
                             model.live(autoCommit: false) { p in
                                 p.clips = origin
-                                p.setRamp(ids: p.linked(ids), speed: shape.mid, a: shape.a, b: shape.b,
+                                p.setRamp(ids: p.linked(ids), speed: shape.mid, points: (shape.p1, shape.p2, shape.p3, shape.p4),
                                           start: shape.start, end: shape.end, sticky: sticky)
                             }
                         })
@@ -1132,24 +1132,26 @@ private struct ColorWheel: View {
 }
 
 
-/// A clip's speed across its footage, under the Speed row: the line is the speed (the same as the
-/// slider), and a dot pulled in from either edge ramps that end from (or to) another speed, set by the
-/// small bar that appears at that edge. Across the graph is the clip's footage, which stays put while
-/// the clip's length changes.
+/// A clip's speed across its footage, under the Speed row. The flat middle is the speed (the same as
+/// the slider). An inner dot pulled in from either edge makes a ramp; its outer dot then slides left or
+/// right to say where the ramp begins, and up or down for the speed before (or after) it. Across the graph
+/// is the clip's footage, which stays put while the clip's length changes.
 private struct SpeedRampGraph: View {
     struct Shape {
         var mid: Double
-        var a: Double
-        var b: Double
+        /// Where the ramps begin and end, as fractions across the footage: in-ramp `p1...p2`, out-ramp `p3...p4`.
+        var p1 = 0.0, p2 = 0.0, p3 = 1.0, p4 = 1.0
         var start: Double
         var end: Double
+        var hasIn: Bool { p2 - p1 > 0.001 }
+        var hasOut: Bool { p4 - p3 > 0.001 }
     }
 
     let clip: Clip
     let onEditing: (Bool) -> Void
     let onChange: (Shape) -> Void
 
-    private enum Part { case inDot, outDot, startBar, endBar, line }
+    private enum Part { case inStart, inEnd, outStart, outEnd, line }
     @State private var dragging: Part?
     @State private var drawn: Shape?
 
@@ -1159,12 +1161,21 @@ private struct SpeedRampGraph: View {
     /// The clip's ramp as the graph draws it.
     private var shape: Shape {
         let s0 = clip.sourceStart, L = max(1e-6, clip.sourceLength), s1 = s0 + L
-        var a = 0.0, b = 0.0
+        let f = { (s: Double) in min(1, max(0, (s - s0) / L)) }
+        var out = Shape(mid: clip.speed, start: clip.speed, end: clip.speed)
         if let r = clip.ramp, clip.isRamped {
-            if r.inTo > s0 + 1e-6, r.inTo > r.inFrom { a = min(1, (r.inTo - s0) / L) }
-            if r.outFrom < s1 - 1e-6, r.outTo > r.outFrom { b = min(1 - a, (s1 - r.outFrom) / L) }
+            if r.inTo > r.inFrom, r.inTo > s0 + 1e-6 {
+                out.p1 = f(r.inFrom)
+                out.p2 = f(r.inTo)
+                out.start = clip.speed(atSource: s0 + out.p1 * L)
+            }
+            if r.outTo > r.outFrom, r.outFrom < s1 - 1e-6 {
+                out.p3 = max(out.p2, f(r.outFrom))
+                out.p4 = max(out.p3, f(r.outTo))
+                out.end = clip.speed(atSource: s0 + out.p4 * L)
+            }
         }
-        return Shape(mid: clip.speed, a: a, b: b, start: clip.speed(atSource: s0), end: clip.speed(atSource: s1))
+        return out
     }
 
     private func y(_ v: Double, _ h: CGFloat) -> CGFloat {
@@ -1179,14 +1190,23 @@ private struct SpeedRampGraph: View {
         return abs(log(v)) < 0.06 ? 1 : v
     }
 
+    /// Where each dot is drawn.
+    private func points(_ s: Shape, w: CGFloat, h: CGFloat) -> [(Part, CGPoint)] {
+        let midY = y(s.mid, h)
+        let x = { (f: Double) in min(max(5, CGFloat(f) * w), w - 5) }
+        var out: [(Part, CGPoint)] = [(.inEnd, CGPoint(x: x(s.p2), y: midY)), (.outStart, CGPoint(x: x(s.p3), y: midY))]
+        if s.hasIn { out.append((.inStart, CGPoint(x: x(s.p1), y: y(s.start, h)))) }
+        if s.hasOut { out.append((.outEnd, CGPoint(x: x(s.p4), y: y(s.end, h)))) }
+        return out
+    }
+
     var body: some View {
         let s = drawn ?? shape
         VStack(spacing: 6) {
             GeometryReader { geo in
                 let w = geo.size.width, h = geo.size.height
-                let midY = y(s.mid, h), ax = CGFloat(s.a) * w, bx = w - CGFloat(s.b) * w
                 ZStack(alignment: .topLeading) {
-                    Canvas { ctx, size in
+                    Canvas { ctx, _ in
                         // 100%, for reference.
                         var base = Path()
                         base.move(to: CGPoint(x: 0, y: y(1, h)))
@@ -1201,21 +1221,14 @@ private struct SpeedRampGraph: View {
                         ctx.fill(area, with: .color(Theme.ink.opacity(0.05)))
                         ctx.stroke(line, with: .color(Theme.text), lineWidth: 1.5)
                     }
-                    if s.a > 0 { bar(at: 0, y: y(s.start, h)) }
-                    if s.b > 0 { bar(at: w, y: y(s.end, h)) }
-                    dot(at: CGPoint(x: max(5, ax), y: midY))
-                    dot(at: CGPoint(x: min(w - 5, bx), y: midY))
+                    ForEach(points(s, w: w, h: h), id: \.0) { _, p in dot(at: p) }
                     if let part = dragging {
-                        let (x, yy, v): (CGFloat, CGFloat, Double) = switch part {
-                        case .startBar: (22, y(s.start, h), s.start)
-                        case .endBar: (w - 22, y(s.end, h), s.end)
-                        default: ((ax + bx) / 2, midY, s.mid)
-                        }
-                        Text("\(Int((v * 100).rounded()))%")
+                        let label = tip(part, s, w: w, h: h)
+                        Text(label.text)
                             .font(Theme.mono(10.5))
                             .foregroundStyle(Theme.text)
                             .fixedSize()
-                            .position(x: x, y: yy < 18 ? yy + 12 : yy - 11)
+                            .position(x: min(max(label.at.x, 22), w - 22), y: label.at.y < 18 ? label.at.y + 12 : label.at.y - 11)
                     }
                 }
                 .contentShape(Rectangle())
@@ -1228,21 +1241,31 @@ private struct SpeedRampGraph: View {
                     }
                     guard let part = dragging, var d = drawn else { return }
                     let p = g.location
+                    var f = Double(min(max(0, p.x), w) / w)
+                    if p.x < 6 { f = 0 }
+                    if p.x > w - 6 { f = 1 }
                     switch part {
-                    case .inDot:
-                        var a = Double(min(max(0, p.x), w) / w)
-                        if p.x < 6 { a = 0 }
-                        d.a = min(a, 1 - d.b)
-                        if d.a == 0 { d.start = d.mid } else if s.a == 0, d.start == d.mid { d.start = 1 }
-                    case .outDot:
-                        var b = Double(min(max(0, w - p.x), w) / w)
-                        if p.x > w - 6 { b = 0 }
-                        d.b = min(b, 1 - d.a)
-                        if d.b == 0 { d.end = d.mid } else if s.b == 0, d.end == d.mid { d.end = 1 }
-                    case .startBar: d.start = speed(p.y, h)
-                    case .endBar: d.end = speed(p.y, h)
-                    case .line: d.mid = speed(p.y, h)
+                    case .inEnd:
+                        let had = d.hasIn
+                        d.p2 = min(max(f, d.p1), d.p3)
+                        if !d.hasIn { d.p1 = d.p2; d.start = d.mid } else if !had { d.p1 = 0; d.start = 1 }
+                    case .outStart:
+                        let had = d.hasOut
+                        d.p3 = max(min(f, d.p4), d.p2)
+                        if !d.hasOut { d.p4 = d.p3; d.end = d.mid } else if !had { d.p4 = 1; d.end = 1 }
+                    case .inStart:
+                        // Up to its inner dot, never onto it (pulling the inner dot back out removes a ramp).
+                        d.p1 = min(f, d.p2 - 0.01)
+                        d.start = speed(p.y, h)
+                    case .outEnd:
+                        d.p4 = max(f, d.p3 + 0.01)
+                        d.end = speed(p.y, h)
+                    case .line:
+                        d.mid = speed(p.y, h)
                     }
+                    // A ramp squeezed to nothing is gone.
+                    if !d.hasIn { d.p1 = 0; d.p2 = 0; d.start = d.mid }
+                    if !d.hasOut { d.p3 = 1; d.p4 = 1; d.end = d.mid }
                     drawn = d
                     onChange(d)
                 }.onEnded { _ in
@@ -1251,15 +1274,17 @@ private struct SpeedRampGraph: View {
                     drawn = nil
                     onEditing(false)
                 })
-                .onHover { inside in if !inside, dragging == nil { NSCursor.arrow.set() } }
                 .onContinuousHover { phase in
                     guard dragging == nil else { return }
                     if case .active(let p) = phase {
                         switch hit(p, s: s, w: w, h: h) {
-                        case .inDot, .outDot: NSCursor.resizeLeftRight.set()
-                        case .startBar, .endBar, .line: NSCursor.resizeUpDown.set()
+                        case .inEnd, .outStart: NSCursor.resizeLeftRight.set()
+                        case .inStart, .outEnd: NSCursor.openHand.set()
+                        case .line: NSCursor.resizeUpDown.set()
                         case nil: NSCursor.arrow.set()
                         }
+                    } else {
+                        NSCursor.arrow.set()
                     }
                 }
             }
@@ -1276,16 +1301,29 @@ private struct SpeedRampGraph: View {
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
     }
 
-    /// The speed line: flat, with eased ramps at the ends (as it plays).
+    /// The speed shown while dragging, beside what's dragged.
+    private func tip(_ part: Part, _ s: Shape, w: CGFloat, h: CGFloat) -> (text: String, at: CGPoint) {
+        let pct = { (v: Double) in "\(Int((v * 100).rounded()))%" }
+        switch part {
+        case .inStart: return (pct(s.start), CGPoint(x: CGFloat(s.p1) * w, y: y(s.start, h)))
+        case .outEnd: return (pct(s.end), CGPoint(x: CGFloat(s.p4) * w, y: y(s.end, h)))
+        case .inEnd: return (pct(s.mid), CGPoint(x: CGFloat(s.p2) * w, y: y(s.mid, h)))
+        case .outStart: return (pct(s.mid), CGPoint(x: CGFloat(s.p3) * w, y: y(s.mid, h)))
+        case .line: return (pct(s.mid), CGPoint(x: CGFloat(s.p2 + s.p3) / 2 * w, y: y(s.mid, h)))
+        }
+    }
+
+    /// The speed line: flat at the start speed, eased into the middle speed, held, eased out to the end speed.
     private func curve(_ s: Shape, w: CGFloat, h: CGFloat) -> Path {
         let ease = { (u: Double) in u * u * (3 - 2 * u) }
+        let blend = { (a: Double, b: Double, u: Double) in exp(log(a) + (log(b) - log(a)) * ease(min(1, max(0, u)))) }
         let at = { (x: Double) -> Double in
-            if s.a > 0, x < s.a { return exp(log(s.start) + (log(s.mid) - log(s.start)) * ease(x / s.a)) }
-            if s.b > 0, x > 1 - s.b { return exp(log(s.mid) + (log(s.end) - log(s.mid)) * ease((x - (1 - s.b)) / s.b)) }
+            if s.hasIn, x < s.p2 { return x <= s.p1 ? s.start : blend(s.start, s.mid, (x - s.p1) / (s.p2 - s.p1)) }
+            if s.hasOut, x > s.p3 { return x >= s.p4 ? s.end : blend(s.mid, s.end, (x - s.p3) / (s.p4 - s.p3)) }
             return s.mid
         }
         var path = Path()
-        let n = 96
+        let n = 160
         for i in 0...n {
             let x = Double(i) / Double(n)
             let pt = CGPoint(x: CGFloat(x) * w, y: y(at(x), h))
@@ -1294,15 +1332,30 @@ private struct SpeedRampGraph: View {
         return path
     }
 
+    /// The nearest dot within reach (an inner dot when they sit together), else the flat middle.
     private func hit(_ p: CGPoint, s: Shape, w: CGFloat, h: CGFloat) -> Part? {
-        let midY = y(s.mid, h), ax = max(5, CGFloat(s.a) * w), bx = min(w - 5, w - CGFloat(s.b) * w)
-        func near(_ x: CGFloat, _ yy: CGFloat) -> Bool { hypot(p.x - x, p.y - yy) < 9 }
-        if s.a > 0, p.x < 8, abs(p.y - y(s.start, h)) < 10 { return .startBar }
-        if s.b > 0, p.x > w - 8, abs(p.y - y(s.end, h)) < 10 { return .endBar }
-        if near(ax, midY) && near(bx, midY) { return p.x < (ax + bx) / 2 ? .inDot : .outDot }
-        if near(ax, midY) { return .inDot }
-        if near(bx, midY) { return .outDot }
-        if p.x > ax, p.x < bx, abs(p.y - midY) < 8 { return .line }
+        var near: (part: Part, d: CGFloat)?
+        for (part, at) in points(s, w: w, h: h) {
+            let d: CGFloat = hypot(p.x - at.x, p.y - at.y)
+            guard d < 10 else { continue }
+            let inner = part == Part.inEnd || part == Part.outStart
+            if let n = near {
+                // Two dots together: the inner one, which makes or shapes the ramp.
+                if abs(n.d - d) < 2 { if inner { near = (part, d) } } else if d < n.d { near = (part, d) }
+            } else {
+                near = (part, d)
+            }
+        }
+        if let near {
+            // Inner dots on top of each other: whichever side the drag is toward.
+            if near.part == Part.inEnd || near.part == Part.outStart {
+                let x2 = CGFloat(s.p2) * w, x3 = CGFloat(s.p3) * w
+                if abs(x2 - x3) < 10 { return p.x < (x2 + x3) / 2 ? .inEnd : .outStart }
+            }
+            return near.part
+        }
+        let midY = y(s.mid, h)
+        if p.x > CGFloat(s.p2) * w, p.x < CGFloat(s.p3) * w, abs(p.y - midY) < 8 { return .line }
         return nil
     }
 
@@ -1310,13 +1363,6 @@ private struct SpeedRampGraph: View {
         Circle().fill(Theme.text).frame(width: 10, height: 10)
             .overlay(Circle().strokeBorder(Theme.field, lineWidth: 2.5).padding(-2.5))
             .position(p)
-            .allowsHitTesting(false)
-    }
-
-    private func bar(at x: CGFloat, y: CGFloat) -> some View {
-        Capsule().fill(Theme.text).frame(width: 5, height: 14)
-            .overlay(Capsule().strokeBorder(Theme.field, lineWidth: 2).padding(-2))
-            .position(x: x, y: y)
             .allowsHitTesting(false)
     }
 }

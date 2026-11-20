@@ -105,15 +105,18 @@ struct SpeedRamp: Codable, Hashable {
                   startSpeed: endSpeed, endSpeed: startSpeed)
     }
 
-    /// A ramp drawn over a clip's footage `s0...s1`, as the inspector's graph sets it: the first `a` and
-    /// last `b` of it (fractions) ease from `start` and to `end`. Nil when there's no ramp at either end.
-    static func drawn(s0: Double, s1: Double, a: Double, b: Double, start: Double, end: Double, mid: Double) -> SpeedRamp? {
+    /// A ramp drawn over a clip's footage `s0...s1`, as the inspector's graph sets it, with each point a
+    /// fraction of the way across: `start` speed up to `points.0`, easing to `mid` by `points.1`, holding
+    /// until `points.2`, then easing to `end` by `points.3`. Nil when there's no ramp at either end.
+    static func drawn(s0: Double, s1: Double, points: (Double, Double, Double, Double), start: Double, end: Double, mid: Double) -> SpeedRamp? {
         let L = s1 - s0
-        let hasIn = a > 0.001, hasOut = b > 0.001
+        let (p1, p2, p3, p4) = points
+        let hasIn = p2 - p1 > 0.001, hasOut = p4 - p3 > 0.001
         guard hasIn || hasOut, L > 0 else { return nil }
-        let inTo = s0 + L * (hasIn ? a : 0)
-        let outFrom = s1 - L * (hasOut ? b : 0)
-        return SpeedRamp(inFrom: s0, inTo: inTo, outFrom: max(inTo, outFrom), outTo: s1,
+        let at = { (f: Double) in s0 + L * min(1, max(0, f)) }
+        let inFrom = hasIn ? at(p1) : s0, inTo = hasIn ? at(p2) : s0
+        let outFrom = hasOut ? max(inTo, at(p3)) : s1, outTo = hasOut ? max(inTo, at(p4)) : s1
+        return SpeedRamp(inFrom: inFrom, inTo: inTo, outFrom: outFrom, outTo: outTo,
                          startSpeed: hasIn ? start : mid, endSpeed: hasOut ? end : mid)
     }
 }
