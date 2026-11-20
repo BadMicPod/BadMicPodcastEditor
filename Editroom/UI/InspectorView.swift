@@ -155,7 +155,7 @@ struct InspectorView: View {
                                  }
                              },
                              onChange: { applySpeed($0 / 100, ids: ids) },
-                             trailing: AnyView(RampButton(on: ramped) { toggleRamp(first, ids: ids) }))
+                             inside: AnyView(RampButton(on: ramped) { toggleRamp(first, ids: ids) }))
                     // The ramp, while the clip has one (kept up mid-drag, even if a dot is pulled back out).
                     if ramped || rampOrigin != nil {
                         SpeedRampGraph(clip: first, onEditing: { began in
@@ -667,6 +667,8 @@ private struct ParamRow: View {
     let onEditing: (Bool) -> Void
     let onChange: (Double) -> Void
     var trailing: AnyView?
+    /// A small button inside the value field, on its right (the speed ramp).
+    var inside: AnyView?
 
     @State private var text = ""
     @State private var cancelled = false
@@ -695,36 +697,41 @@ private struct ParamRow: View {
             ThinSlider(value: normalised, onEditing: onEditing) { onChange(denormalise($0)) }
             // Always a text field, so Tab moves to the next row's value like any form. Return or leaving the
             // field applies what was typed; Esc puts the value back.
-            TextField("", text: $text)
-                .textFieldStyle(.plain)
-                .multilineTextAlignment(.trailing)
-                .focused($focused)
-                .onSubmit { focused = false }
-                .onExitCommand {
-                    cancelled = true
-                    focused = false
-                }
-                .onChange(of: focused) { _, isFocused in
-                    if isFocused {
-                        cancelled = false
-                    } else {
-                        if !cancelled { commit() }
-                        text = format(value)
+            HStack(spacing: 2) {
+                TextField("", text: $text)
+                    .textFieldStyle(.plain)
+                    .multilineTextAlignment(.trailing)
+                    .focused($focused)
+                    .onSubmit { focused = false }
+                    .onExitCommand {
+                        cancelled = true
+                        focused = false
                     }
-                }
-                .onChange(of: value) { _, v in
-                    if !focused { text = format(v) }
-                }
-                .onAppear { text = format(value) }
-            .font(Theme.mono(11.5))
-            .foregroundStyle(Theme.text)
-            .padding(.horizontal, 6)
+                    .onChange(of: focused) { _, isFocused in
+                        if isFocused {
+                            cancelled = false
+                        } else {
+                            if !cancelled { commit() }
+                            text = format(value)
+                        }
+                    }
+                    .onChange(of: value) { _, v in
+                        if !focused { text = format(v) }
+                    }
+                    .onAppear { text = format(value) }
+                    .font(Theme.mono(11.5))
+                    .foregroundStyle(Theme.text)
+                    .padding(.leading, 6)
+                    .padding(.trailing, inside == nil ? 6 : 0)
+                    .frame(maxHeight: .infinity)
+                    // The whole number part is the click target, not just the digits.
+                    .contentShape(Rectangle())
+                    .simultaneousGesture(TapGesture().onEnded { focused = true })
+                if let inside { inside.padding(.trailing, 4) }
+            }
             .frame(width: 68, height: 26)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
             .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Theme.text.opacity(focused ? 0.85 : 0)))
-            // The whole box is the click target, not just the digits.
-            .contentShape(Rectangle())
-            .simultaneousGesture(TapGesture().onEnded { focused = true })
             if let trailing { trailing }
         }
         .frame(height: 28)
@@ -1155,10 +1162,11 @@ private struct RampButton: View {
     var body: some View {
         Button(action: action) {
             RampGlyph()
-                .stroke(on ? Theme.accent : Theme.textDim, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-                .frame(width: 17, height: 10)
-                .frame(width: 30, height: 26)
-                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hovering ? Theme.hover : Theme.field))
+                .stroke(on ? Theme.accent : Theme.textDim, style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+                .frame(width: 13, height: 8)
+                .frame(width: 22, height: 18)
+                .background(RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(on ? Theme.accent.opacity(0.16) : Theme.ink.opacity(hovering ? 0.12 : 0.06)))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
