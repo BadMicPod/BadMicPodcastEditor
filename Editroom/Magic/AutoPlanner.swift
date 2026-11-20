@@ -177,6 +177,25 @@ enum AutoPlanner {
             }
             if added == 0 { break }
             round += 1
+            // Every clip asked for: once each, no repeats; the shots grow to fill the length below.
+            if recipe.every { break }
+        }
+        // Every clip, once each, short of the length: shots grow a beat (or a quarter second) at a time,
+        // in turn, as far as their clips allow.
+        if recipe.every, let limit = recipe.seconds {
+            let unit = period ?? 0.25
+            var grew = true
+            while total + unit <= limit + 0.05, grew {
+                grew = false
+                for i in shots.indices where total + unit <= limit + 0.05 {
+                    let s = shots[i]
+                    guard s.asset.kind == .video, s.source + s.duration + unit <= min(s.asset.duration, sources.first { $0.asset.id == s.asset.id }?.analysis.duration ?? s.asset.duration) - 0.05 else { continue }
+                    shots[i].duration += unit
+                    shotBeats[i] += 1
+                    total += unit
+                    grew = true
+                }
+            }
         }
         // Every clip in a length they gave: past it, extra shots come off the end, then the last shot is
         // cut down (a beat at a time with music), so it fits.

@@ -433,10 +433,14 @@ private struct IdeasMenu: View {
 private struct HistoryMenu: View {
     let use: (String) -> Void
 
+    /// The button's own view, so the menu opens under it (as Ideas does).
+    @State private var anchor = MenuAnchor()
+
     var body: some View {
         Button(action: open) { MenuIcon(symbol: "clock.arrow.circlepath") }
             .buttonStyle(.plain)
             .fixedSize()
+            .background(AnchorView(anchor: anchor))
             .help("History")
     }
 
@@ -456,7 +460,14 @@ private struct HistoryMenu: View {
             item.toolTip = e.text
             menu.addItem(item)
         }
-        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        if let view = anchor.view {
+            // Its top-left just under the button's bottom-left, like the Ideas menu.
+            let gap: CGFloat = 4
+            let at = NSPoint(x: 0, y: view.isFlipped ? view.bounds.height + gap : -gap)
+            menu.popUp(positioning: nil, at: at, in: view)
+        } else {
+            menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        }
     }
 
     /// At most two lines of about `width` characters, broken between words, with … if there's more.
@@ -482,6 +493,21 @@ private struct HistoryMenu: View {
         }
         return lines.joined(separator: "\n")
     }
+}
+
+/// Holds the view a hand-made menu opens from.
+private final class MenuAnchor {
+    weak var view: NSView?
+}
+
+private struct AnchorView: NSViewRepresentable {
+    let anchor: MenuAnchor
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        anchor.view = v
+        return v
+    }
+    func updateNSView(_ v: NSView, context: Context) { anchor.view = v }
 }
 
 /// The round icon button Ideas and History open from.
