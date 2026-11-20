@@ -207,12 +207,12 @@ private struct ThemeChoice: View {
     let pick: () -> Void
     @State private var hovering = false
 
-    /// Auto: half Light, half Dark.
+    /// Auto: Light on the left, Dark on the right.
     @ViewBuilder private var preview: some View {
         if theme == .auto {
             ZStack {
                 ThemePreview(palette: AppTheme.light.palette)
-                ThemePreview(palette: AppTheme.dark.palette).mask(Diagonal())
+                ThemePreview(palette: AppTheme.dark.palette).mask(RightHalf())
             }
         } else {
             ThemePreview(palette: theme.palette)
@@ -242,16 +242,10 @@ private struct ThemeChoice: View {
     }
 }
 
-/// The right part of a box, cut on a slant: Auto's Dark half.
-private struct Diagonal: Shape {
+/// The right half of a box: Auto's Dark half.
+private struct RightHalf: Shape {
     func path(in r: CGRect) -> Path {
-        Path { p in
-            p.move(to: CGPoint(x: r.minX + r.width * 0.62, y: r.minY))
-            p.addLine(to: CGPoint(x: r.maxX, y: r.minY))
-            p.addLine(to: CGPoint(x: r.maxX, y: r.maxY))
-            p.addLine(to: CGPoint(x: r.minX + r.width * 0.38, y: r.maxY))
-            p.closeSubpath()
-        }
+        Path(CGRect(x: r.midX, y: r.minY, width: r.width / 2, height: r.height))
     }
 }
 
