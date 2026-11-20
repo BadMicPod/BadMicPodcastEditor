@@ -190,6 +190,34 @@ final class EditorModel: ObservableObject {
                 }
                 if args.contains("--show-export") { self.showExport = true }
                 if args.contains("--show-agents") { self.showAgents = true }
+                // `--import-test <file>` (testing): imports it and times its Media poster and a timeline frame.
+                if let k = args.firstIndex(of: "--import-test"), args.count > k + 1 {
+                    let url = URL(fileURLWithPath: args[k + 1])
+                    let t0 = Date()
+                    self.importFiles([url], offerMatch: false) { assets in
+                        guard let a = assets.first else { return }
+                        FileHandle.standardError.write(String(format: "IMPORT imported %.2fs\n", Date().timeIntervalSince(t0)).data(using: .utf8)!)
+                        if args.contains("--to-timeline") {
+                            let payload = DragPayload.asset(a.id)
+                            self.insert(self.makeClips(payload, at: 0, videoTrack: self.project.videoTracks[0].id, audioTrack: self.project.audioTracks[0].id))
+                        }
+                        Task { @MainActor in
+                            var poster = false, frame = false
+                            while Date().timeIntervalSince(t0) < 120, !(poster && frame) {
+                                if !poster, self.media.posters[a.id] != nil {
+                                    poster = true
+                                    FileHandle.standardError.write(String(format: "IMPORT poster %.2fs\n", Date().timeIntervalSince(t0)).data(using: .utf8)!)
+                                }
+                                if !frame, self.media.thumbnail(asset: a.id, time: a.duration / 2) != nil {
+                                    frame = true
+                                    FileHandle.standardError.write(String(format: "IMPORT frame %.2fs\n", Date().timeIntervalSince(t0)).data(using: .utf8)!)
+                                }
+                                try? await Task.sleep(nanoseconds: 50_000_000)
+                            }
+                            if !poster { FileHandle.standardError.write("IMPORT poster never\n".data(using: .utf8)!) }
+                        }
+                    }
+                }
                 // `--switch-theme light` (testing): change the theme while running, as Settings does.
                 if let k = args.firstIndex(of: "--switch-theme"), args.count > k + 1, let theme = AppTheme(rawValue: args[k + 1]) {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)

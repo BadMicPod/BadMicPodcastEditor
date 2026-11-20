@@ -188,20 +188,29 @@ final class MediaStore: ObservableObject {
             let gen = rt.makeGenerator(maximumSize: CGSize(width: 320, height: 120))
             rt.generator = gen
             makePoster(asset, rt)
-            // What it shows, for Media search and Magic: once, in the background.
             tagURLs[asset.id] = rt.asset.url
-            SceneTagStore.shared.make(rt.asset.url, isVideo: true, duration: asset.duration)
-            // Its best moments, as Magic scores them: ready before Magic needs them.
-            AnalysisWarmer.shared.warm(asset.url, kind: asset.kind, song: false)
-            strips.make(asset.id, rt, duration: asset.duration)
+            // The background work (all of it reading the file) waits a moment, so the poster and the
+            // timeline's frames, which someone is looking at, come first.
+            later { [weak self] in
+                // What it shows, for Media search and Magic: once, in the background.
+                SceneTagStore.shared.make(rt.asset.url, isVideo: true, duration: asset.duration)
+                // Its best moments, as Magic scores them: ready before Magic needs them.
+                AnalysisWarmer.shared.warm(asset.url, kind: asset.kind, song: false)
+                self?.strips.make(asset.id, rt, duration: asset.duration)
+            }
         }
         if rt.audioTrack != nil {
             makeWaveform(asset.id, rt)
             // A song (sound only, 8 seconds or more): its tempo and beats, ready for Magic.
             if rt.videoTrack == nil, asset.duration >= 8 { AnalysisWarmer.shared.warm(asset.url, kind: asset.kind, song: true) }
             // What's said in it, for Magic and Media search: made once, in the background.
-            Transcripts.shared.make(rt.asset.url)
+            later { Transcripts.shared.make(rt.asset.url) }
         }
+    }
+
+    /// Background work on a newly opened file, a few seconds on.
+    private func later(_ work: @escaping @MainActor () -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { MainActor.assumeIsolated { work() } }
     }
 
     struct ProbeInfo {
@@ -251,14 +260,21 @@ final class MediaStore: ObservableObject {
 
     // MARK: Posters & stills
 
-    private func makePoster(_ asset: MediaAsset, _ rt: MediaRuntime) {
+    /// The Media tile's picture. A frame that doesn't come (the file busy, a slow drive) is asked for
+    /// again a few times, a little later each time, rather than leaving the tile blank.
+    private func makePoster(_ asset: MediaAsset, _ rt: MediaRuntime, attempt: Int = 0) {
         let gen = rt.makeGenerator(maximumSize: CGSize(width: 480, height: 480))
         let t = CMTime(seconds: min(1, asset.duration * 0.1), preferredTimescale: 600)
         let id = asset.id
         gen.generateCGImageAsynchronously(for: t) { [weak self] cg, _, _ in
-            guard let cg else { return }
             Task { @MainActor in
-                self?.posters[id] = NSImage(cgImage: cg, size: .zero)
+                guard let self, self.runtimes[id] === rt else { return }
+                if let cg {
+                    self.posters[id] = NSImage(cgImage: cg, size: .zero)
+                } else if attempt < 5 {
+                    try? await Task.sleep(nanoseconds: UInt64(0.5 * pow(2, Double(attempt)) * 1e9))
+                    self.makePoster(asset, rt, attempt: attempt + 1)
+                }
             }
         }
     }
