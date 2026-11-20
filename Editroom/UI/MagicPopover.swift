@@ -499,11 +499,12 @@ private struct HistoryMenu: View {
     }
 }
 
-/// Holds the view a hand-made menu opens from, and opens it there: its top-left just under the
-/// button's bottom-left (Ideas and History alike).
+/// Holds the view a hand-made menu opens from, and opens it there: its top level with the top of the
+/// prompt box below the button (Ideas and History alike).
 private final class MenuAnchor {
     weak var view: NSView?
-    static let gap: CGFloat = 4
+    /// The box is 8pt under the buttons; macOS draws a menu about 3.5pt above where it's put.
+    static let gap: CGFloat = 12
 
     @MainActor func popUp(_ menu: NSMenu) {
         guard let view, let window = view.window else {
