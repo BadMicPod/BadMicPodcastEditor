@@ -448,6 +448,9 @@ final class MagicShow: NSObject {
     private let status = CALayer()
     private let statusText = CATextLayer()
     private var link: CADisplayLink?
+    /// The show's clock when its window can't be seen (behind another app, minimised, on another
+    /// Space): the display stops calling `step` then, but the show carries on and finishes.
+    private var unseen: Timer?
     private var monitor: Any?
     private var t0 = CACurrentMediaTime()
     private var skip = 0.0
@@ -589,6 +592,14 @@ final class MagicShow: NSObject {
         let link = overlay.contentView!.displayLink(target: self, selector: #selector(step))
         link.add(to: .main, forMode: .common)
         self.link = link
+        let unseen = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.window.occlusionState.contains(.visible) || self.window.isMiniaturized else { return }
+                self.step()
+            }
+        }
+        RunLoop.main.add(unseen, forMode: .common)
+        self.unseen = unseen
         step()
     }
 
@@ -1519,6 +1530,8 @@ final class MagicShow: NSObject {
         done = true
         link?.invalidate()
         link = nil
+        unseen?.invalidate()
+        unseen = nil
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
         onFinish = nil
@@ -1542,6 +1555,8 @@ final class MagicShow: NSObject {
         done = true
         link?.invalidate()
         link = nil
+        unseen?.invalidate()
+        unseen = nil
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
         var p = plan.base

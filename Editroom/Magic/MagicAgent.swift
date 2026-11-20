@@ -44,7 +44,6 @@ final class MagicAgent: ObservableObject {
     @Published var asking = false
     /// Finished while the person was in another app: shown on the button until they come back.
     @Published private(set) var ready: String?
-    private var whenBack: NSObjectProtocol?
     /// The popover's tab, remembered.
     /// The prompt being typed in the Magic box, kept while it's closed and cleared when it's sent.
     @Published var prompt = ""
@@ -624,7 +623,7 @@ final class MagicAgent: ObservableObject {
         let stderr = String(data: errorText, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         log(String(format: "MAGIC AI finished code %d in %.0fs, %d tool calls, %d edits; said: %@", code, seconds,
                    draft?.calls ?? 0, edits.count, lastMessage))
-        if edits.isEmpty || !NSApp.isActive { MagicThinking.current?.end() }
+        if edits.isEmpty { MagicThinking.current?.end() }
         if let failure, edits.isEmpty {
             log("MAGIC AI failure: \(failure) \(stderr.suffix(400))")
             return alert("\(kind.name) couldn't make the edit", String(failure.prefix(600)))
@@ -634,20 +633,9 @@ final class MagicAgent: ObservableObject {
             return alert("\(kind.name) couldn't make the edit", String((stderr.isEmpty ? "It stopped (code \(code))." : stderr).suffix(600)))
         }
         let said = lastMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Played where the person can see it: now, or when they come back to Editroom.
-        guard !NSApp.isActive else { return reveal(kind, edits, said) }
-        ready = "\(kind.name) is done"
-        NSApp.requestUserAttention(.informationalRequest)
-        whenBack = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated {
-                if let w = self.whenBack { NotificationCenter.default.removeObserver(w) }
-                self.whenBack = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                    self.ready = nil
-                    self.reveal(kind, edits, said)
-                }
-            }
-        }
+        // Played now, even from another app: it doesn't wait to be watched (the Dock icon bounces to say so).
+        if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
+        reveal(kind, edits, said)
     }
 
     /// Plays the AI's edits onto the timeline with the swarm, then shows what it said.
