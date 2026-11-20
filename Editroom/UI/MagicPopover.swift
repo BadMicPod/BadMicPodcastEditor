@@ -20,26 +20,14 @@ struct MagicPopover: View {
     @State private var justConnected: MagicAgent.Kind?
     /// Connecting started from here (so finishing it shows "connected").
     @State private var connecting: MagicAgent.Kind?
-    /// The list of past prompts, shown in place of the prompt.
-    @State private var showingHistory = false
 
     private var hasEdit: Bool { model.project.clips.contains { $0.kind != .audio } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             AITabs(selection: $ai.tab)
-            Group {
-                if showingHistory {
-                    HistoryList(back: { showingHistory = false }) { entry in
-                        request = entry.text
-                        showingHistory = false
-                    }
-                } else {
-                    content
-                }
-            }
-            .padding(.top, 12)
-            footer
+            content
+                .padding(.top, 12)
         }
         .padding(14)
         .frame(width: 380)
@@ -86,7 +74,10 @@ struct MagicPopover: View {
                 Centered(logo: AppLogo(kind: kind, size: 36), title: "Connect \(kind.name)",
                          text: kind == .claude ? "Let Claude edit for you, with your Claude plan. Nothing is shared until you ask it to make an edit."
                                                : "Let ChatGPT edit for you, with your ChatGPT plan. It works through Codex in the ChatGPT app.") {
-                    PillButton(title: "Connect \(kind.name)", prominent: true) { connect(kind) }
+                    VStack(spacing: 7) {
+                        PillButton(title: "Connect \(kind.name)", prominent: true) { connect(kind) }
+                        Text("No API key needed").font(.system(size: 10.5)).foregroundStyle(Theme.textFaint)
+                    }
                 }
                 if case .failed(let why) = connections.states[app(for: kind)] {
                     Text(why).font(.system(size: 11)).foregroundStyle(Color(hex: 0xE5735C)).frame(maxWidth: .infinity).padding(.top, 6)
@@ -115,8 +106,11 @@ struct MagicPopover: View {
                         .foregroundStyle(Theme.text)
                     Spacer()
                     if LocalBrain.available {
-                        IdeasMenu(sections: LocalIdeas.sections(hasEdit: hasEdit)) { idea in
-                            request = idea
+                        HStack(spacing: 5) {
+                            IdeasMenu(sections: LocalIdeas.sections(hasEdit: hasEdit)) { idea in
+                                request = idea
+                            }
+                            HistoryMenu { request = $0 }
                         }
                     }
                 }
@@ -136,15 +130,18 @@ struct MagicPopover: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.bottom, 11)
                 }
-                HStack(spacing: 5) {
+                HStack(alignment: .center, spacing: 5) {
                     // Where the AI tabs pick a model: Local always uses Apple's, so plain text, not a chip.
                     if LocalBrain.available {
-                        HStack(spacing: 4) {
-                            Image(systemName: "apple.logo").font(.system(size: 10, weight: .semibold))
-                            Text("Apple Intelligence").font(.system(size: 11, weight: .medium))
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "apple.logo").font(.system(size: 10, weight: .semibold))
+                                Text("Apple Intelligence").font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundStyle(Theme.textDim)
+                            .padding(.leading, 2)
+                            PlanNote(text: "On this Mac")
                         }
-                        .foregroundStyle(Theme.textDim)
-                        .padding(.leading, 2)
                     }
                     Spacer()
                     PillButton(title: "Make it", prominent: true, action: goLocal)
@@ -152,30 +149,6 @@ struct MagicPopover: View {
                 }
             }
         }
-    }
-
-    /// Whose plan it uses on the left; AI Agents settings on the right.
-    private var footer: some View {
-        HStack {
-            Text(footerText)
-            Spacer()
-            // Past prompts. (AI Agents, which this used to open, is in Settings, on the Magic tab.)
-            Button("History") { showingHistory.toggle() }
-                .buttonStyle(.plain)
-        }
-        .font(.system(size: 10.5))
-        .foregroundStyle(Theme.textFaint)
-        .padding(.top, 10)
-        .overlay(alignment: .top) { Rectangle().fill(Theme.ink.opacity(0.07)).frame(height: 0.5) }
-        .padding(.top, 11)
-    }
-
-    private var footerText: String {
-        guard let kind = ai.tab.kind else { return "On this Mac" }
-        if !ai.installed(kind) { return "Free to download" }
-        if kind == .claude, connections.states[.claude] == .waiting { return "Waiting for Claude…" }
-        if !ai.connected(kind) { return "No API key needed" }
-        return "Uses your \(kind.name) plan"
     }
 
     // MARK: Actions
@@ -373,15 +346,24 @@ private struct PromptForm: View {
                     .foregroundStyle(Theme.text)
                 Spacer()
                 // Ideas fill the box, to send as they are or change first.
-                IdeasMenu(sections: (hasEdit ? [("Improve", Self.improve)] : []) + [("Create", Self.make), ("Sound", Self.sound)],
-                          use: use)
+                HStack(spacing: 5) {
+                    IdeasMenu(sections: (hasEdit ? [("Improve", Self.improve)] : []) + [("Create", Self.make), ("Sound", Self.sound)],
+                              use: use)
+                    HistoryMenu(use: use)
+                }
             }
             .padding(.bottom, 8)
             PromptBox(model: model, text: $request, placeholder: placeholder, submit: go)
                 .padding(.bottom, 11)
-            HStack(spacing: 5) {
-                ModelChip(ai: ai, kind: kind, manage: manage)
-                EffortChip(ai: ai, kind: kind)
+            HStack(alignment: .center, spacing: 5) {
+                // The model, and whose plan it uses, under it.
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 5) {
+                        ModelChip(ai: ai, kind: kind, manage: manage)
+                        EffortChip(ai: ai, kind: kind)
+                    }
+                    PlanNote(text: "Uses your \(kind.name) plan")
+                }
                 Spacer()
                 PillButton(title: "Make it", prominent: true, action: go)
                     // Return in the box sends (it's the box's, so the @ list can use it).
@@ -436,21 +418,74 @@ private struct IdeasMenu: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "lightbulb").font(.system(size: 10, weight: .semibold))
-                Text("Ideas").font(.system(size: 11, weight: .medium))
-                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).opacity(0.7)
-            }
-            .foregroundStyle(Theme.textDim)
-            .padding(.horizontal, 8)
-            .frame(height: 22)
-            .contentShape(Capsule())
+            MenuIcon(symbol: "lightbulb")
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Ideas to start from")
+        .help("Ideas")
+    }
+}
+
+/// Prompts sent before (newest first, the AI each went to on the right): one fills the box.
+private struct HistoryMenu: View {
+    let use: (String) -> Void
+
+    var body: some View {
+        Menu {
+            let entries = MagicHistory.entries
+            Section("History") {
+                if entries.isEmpty {
+                    Text("Prompts you send show up here.")
+                }
+                ForEach(entries) { e in
+                    Button { use(e.text) } label: { Text(Self.short(e.text)) }
+                        .badge(Text(MagicAgent.Tab(rawValue: e.tab)?.name ?? ""))
+                }
+            }
+        } label: {
+            MenuIcon(symbol: "clock.arrow.circlepath")
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("History")
+    }
+
+    /// One line, kept to a menu's width.
+    static func short(_ text: String) -> String {
+        let one = text.replacingOccurrences(of: "\n", with: " ")
+        return one.count > 60 ? String(one.prefix(58)).trimmingCharacters(in: .whitespaces) + "…" : one
+    }
+}
+
+/// The round icon button Ideas and History open from.
+private struct MenuIcon: View {
+    let symbol: String
+    @State private var hovering = false
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(hovering ? Theme.text : Theme.chip)
+            .frame(width: 24, height: 24)
+            .background(Circle().fill(Theme.ink.opacity(hovering ? 0.12 : 0.07)))
+            .contentShape(Circle())
+            .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+}
+
+/// Small grey line under the model: whose plan it uses, or that it's on this Mac.
+private struct PlanNote: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10.5))
+            .foregroundStyle(Theme.textFaint)
+            .padding(.leading, 4)
     }
 }
 
@@ -1129,66 +1164,5 @@ enum LocalMagic {
         }
         MagicAgent.shared.note = MagicAgent.Note(agent: nil, text: said, changed: changed,
                                                 detail: detail.filter { !$0.isEmpty }.joined(separator: " · "))
-    }
-}
-
-/// Past prompts, newest first, in place of the prompt: pick one to put it back in the box.
-private struct HistoryList: View {
-    let back: () -> Void
-    let pick: (MagicHistory.Entry) -> Void
-    @State private var hovered: String?
-
-    var body: some View {
-        let entries = MagicHistory.entries
-        VStack(alignment: .leading, spacing: 6) {
-            Button(action: back) {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.left").font(.system(size: 9, weight: .semibold))
-                    Text("History").font(.system(size: 11.5, weight: .medium))
-                }
-                .foregroundStyle(Theme.textDim)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            // esc goes back to the prompt rather than closing Magic.
-            .keyboardShortcut(.cancelAction)
-            if entries.isEmpty {
-                Text("Prompts you send show up here.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.textFaint)
-                    .frame(maxWidth: .infinity, minHeight: 90)
-            } else {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(entries) { e in
-                            Button { pick(e) } label: {
-                                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                    Text(e.text)
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(Theme.text)
-                                        .lineLimit(1)
-                                        .truncationMode(.tail)
-                                    Spacer(minLength: 6)
-                                    Text(MagicAgent.Tab(rawValue: e.tab)?.name ?? "")
-                                        .font(.system(size: 10.5))
-                                        .foregroundStyle(Theme.textFaint)
-                                        .fixedSize()
-                                }
-                                .padding(.horizontal, 8)
-                                .frame(height: 28)
-                                .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(hovered == e.id ? Theme.hover : .clear))
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .onHover { hovered = $0 ? e.id : (hovered == e.id ? nil : hovered) }
-                            .help(e.text)
-                        }
-                    }
-                }
-                .frame(maxHeight: 220)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-        }
     }
 }
