@@ -216,6 +216,17 @@ final class EditorModel: ObservableObject {
                         DispatchQueue.main.async { w.sendEvent(e) }
                     }
                 }
+                // `--toggle-time` (testing): switch Show time as a few times, as clicking it would.
+                if args.contains("--toggle-time") {
+                    for _ in 0..<4 {
+                        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                        let before = self.playhead
+                        ThemeStore.shared.timeStyle = ThemeStore.shared.timeStyle == .simple ? .timecode : .simple
+                        var seen: [Double] = []
+                        for _ in 0..<6 { try? await Task.sleep(nanoseconds: 50_000_000); seen.append(self.playhead) }
+                        FileHandle.standardError.write("TOGGLE TIME \(ThemeStore.shared.timeStyle) playhead \(before) -> \(seen)\n".data(using: .utf8)!)
+                    }
+                }
                 if args.contains("--play") { self.play() }
                 if args.contains("--magic") {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)

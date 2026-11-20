@@ -183,6 +183,8 @@ struct PreviewView: View {
 struct TransportBar: View {
     @ObservedObject var model: EditorModel
     @ObservedObject var clock: Clock
+    /// Redraws the times when Show time as changes.
+    @ObservedObject private var themes = ThemeStore.shared
     let meters: MeterState
     @Binding var zoom: Double?
 
@@ -251,6 +253,7 @@ struct TransportBar: View {
 /// A library item's frame filling the viewer, with its name and source time in the corner.
 private struct SourceFrame: View {
     let current: SourcePreviewState.Current
+    @ObservedObject private var themes = ThemeStore.shared
 
     var body: some View {
         let a = current.asset
@@ -334,6 +337,7 @@ private struct TimecodeField: View {
     let time: Double
     let fps: Double
     let onJump: (Double) -> Void
+    @ObservedObject private var themes = ThemeStore.shared
     @State private var editing = false
     @State private var text = ""
     @State private var hovering = false

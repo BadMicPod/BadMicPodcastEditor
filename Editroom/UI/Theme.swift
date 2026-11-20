@@ -235,8 +235,9 @@ final class ThemeStore: ObservableObject {
             TimelineCanvas.current?.needsDisplay = true
         }
     }
-    /// Everything that changes how the views draw, for rebuilding them.
-    var look: String { "\(resolved.rawValue)-\(timeStyle.rawValue)" }
+    /// What rebuilds the views when it changes: the theme. (Times just redraw: the views that show one
+    /// watch `timeStyle`, so the timeline and playhead don't jump.)
+    var look: String { resolved.rawValue }
     private var observer: NSObjectProtocol?
 
     private init() {

@@ -68,6 +68,7 @@ struct TimelineToolbar: View {
 /// The in/out range: click In or Out to go there, ✕ to clear it.
 struct RangeReadout: View {
     @ObservedObject var model: EditorModel
+    @ObservedObject private var themes = ThemeStore.shared
     @State private var hoveringClear = false
 
     var body: some View {
