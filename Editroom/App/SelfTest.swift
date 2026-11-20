@@ -1417,10 +1417,28 @@ enum SelfTest {
                     && abs((before.map { $0.speed(atSource: $0.sourceStart + $0.sourceLength - 1e-3) } ?? 0) - 4) < 0.05
                     && abs((after.map { $0.speed(atSource: $0.sourceStart) } ?? 0) - 4) < 1e-6
                     && abs((after.map { $0.speed(atSource: $0.sourceStart + $0.sourceLength * 0.5) } ?? 0) - 1) < 1e-6
-                let countOK = LocalBrain.shotCount("create 7 second montage with at least 10 clips") == 10
+                // Every clip in a short montage: 20 clips in 10s at 120 bpm (a beat is 0.5s) needs half-beat cuts.
+                let many = (0..<20).map { i in
+                    (MediaAsset(path: "/tmp/m\(i).mov", name: "m\(i)", kind: .video, duration: 6, width: 1920, height: 1080, fps: 30, hasAudio: false),
+                     ClipAnalysis(duration: 6, created: Date(timeIntervalSince1970: Double(i) * 100),
+                                  samples: (0..<12).map { k in .init(time: Double(k) * 0.5, luma: 0.4 + Double(i % 3) * 0.1, sharpness: 50 + Double(k), motion: 0.01 * Double(k % 4), color: 0.3, faces: 0) }))
+                }
+                let song = MediaAsset(path: "/tmp/song.m4a", name: "song", kind: .audio, duration: 60, width: 0, height: 0, fps: 0, hasAudio: true)
+                let beat = MusicAnalysis(duration: 60, bpm: 120, beats: (0..<120).map { Double($0) * 0.5 }, barPhase: 0, energy: Array(repeating: 0.5, count: 120))
+                var everyRecipe = LocalRecipe()
+                everyRecipe.seconds = 10
+                everyRecipe.pace = .fast
+                everyRecipe.every = true
+                everyRecipe.wholeLibrary = true
+                let montage = AutoPlanner.decide(project: Project(), clips: many, music: (song, beat), recipe: everyRecipe)
+                let montageLength = montage.map { $0.shots.reduce(0) { $0 + $1.duration } } ?? 0
+                let everyOK = LocalBrain.wantsEvery("fit all the videos within 10s") && LocalBrain.wantsEvery("use every clip")
+                    && LocalBrain.wantsEvery("all of my clips") && !LocalBrain.wantsEvery("make it 10 seconds")
+                    && Set(montage?.shots.map(\.asset.id) ?? []).count == 20 && montageLength <= 10.2 && montageLength > 8
+                let countOK = everyOK && LocalBrain.shotCount("create 7 second montage with at least 10 clips") == 10
                     && LocalBrain.shotCount("twelve quick cuts") == 12 && LocalBrain.shotCount("make it 7 seconds") == nil
                 let mOK = rampOK && countOK && tagOK && speechOK && cutOK && timeOK && typedOK && clipOK && moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
-                log("MENTIONS \(mOK ? "OK" : "FAIL") ramp=\(rampOK) \(moment.said) / \(cutsPlan.said) count=\(countOK) tags=\(tagOK) speech=\(speechOK) cut=\(cutOK) \(cutPlan.said) time=\(timeOK) typed=\(typedOK) clip=\(clipOK) \(labels) move=\(moveOK) keep=\(keepOK) find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
+                log("MENTIONS \(mOK ? "OK" : "FAIL") every=\(everyOK) (\(Set(montage?.shots.map(\.asset.id) ?? []).count) clips, \(String(format: "%.1f", montageLength))s) ramp=\(rampOK) \(moment.said) / \(cutsPlan.said) count=\(countOK) tags=\(tagOK) speech=\(speechOK) cut=\(cutOK) \(cutPlan.said) time=\(timeOK) typed=\(typedOK) clip=\(clipOK) \(labels) move=\(moveOK) keep=\(keepOK) find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
                 good = good && mOK
             }
             log("LOCAL IMPROVE \(good ? "OK" : "FAIL") \(detail)")

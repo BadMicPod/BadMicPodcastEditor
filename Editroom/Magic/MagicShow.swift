@@ -254,6 +254,16 @@ final class MagicShow: NSObject {
                     said = String(format: "Made a %.0f-second cut from %d shots%@.", length, decision.shots.count,
                                   decision.music == nil ? "" : ", cut to the beat")
                     if let s = recipe.seconds, length < s - 1 { notes.append("your Media only had enough good footage for about \(Int(length.rounded())) seconds") }
+                    if recipe.every {
+                        let used = Set(decision.shots.map(\.asset.id)).count
+                        if used < found.clips.count { notes.append("\(found.clips.count - used) of your clips were too short to use") }
+                        if let s = recipe.seconds, length > s + 0.5 {
+                            notes.append(String(format: "fitting every clip in made it %.0f seconds", length))
+                        }
+                    }
+                    if CommandLine.arguments.contains("--magic-local") {
+                        FileHandle.standardError.write("MAGIC PLAN \(decision.shots.count) shots from \(Set(decision.shots.map(\.asset.id)).count) of \(found.clips.count) clips, \(String(format: "%.1f", length))s, every=\(recipe.every)\n".data(using: .utf8)!)
+                    }
                 }
                 // The frame shape they asked for, from the start.
                 let size: (Int, Int)? = switch recipe.frame {

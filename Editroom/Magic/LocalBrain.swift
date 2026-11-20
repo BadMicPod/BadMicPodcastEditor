@@ -36,6 +36,8 @@ struct LocalRecipe: Equatable {
     var wholeLibrary = false
     /// How many shots they asked for, at least ("at least 10 clips", "12 shots").
     var shots: Int?
+    /// Every clip in the library, each at least once ("fit all the videos", "use every clip").
+    var every = false
     /// Asks only for the audio levels to match (and maybe a look): nothing about the picture's cut.
     var onlyLevels: Bool {
         levelAudio && seconds == nil && pace == .unchanged && music == .unchanged && frame == .unchanged
@@ -138,6 +140,14 @@ enum LocalBrain {
                               options: .regularExpression),
               let n = Int(t[r].prefix { $0.isNumber }), (2...200).contains(n) else { return nil }
         return n
+    }
+
+    /// Every clip, each in it at least once: "all the videos", "every clip", "each shot".
+    static func wantsEvery(_ request: String) -> Bool {
+        let t = request.lowercased()
+        let things = "(clips|videos|shots|footage|media|files)"
+        return t.range(of: #"\b(all|every one of|each of)\s+(of\s+)?(the\s+|my\s+|our\s+)?"# + things, options: .regularExpression) != nil
+            || t.range(of: #"\b(every|each)\s+(single\s+)?(clip|video|shot|file)\b"#, options: .regularExpression) != nil
     }
 
     /// Asks for footage beyond what's in the edit: most or all of the clips, more or other shots, a new video.

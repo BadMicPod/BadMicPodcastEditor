@@ -1013,6 +1013,8 @@ enum LocalMagic {
                 recipe.title = LocalBrain.titleAsked(request)
                 recipe.wholeLibrary = LocalBrain.wantsLibrary(request)
                 recipe.shots = LocalBrain.shotCount(request)
+                recipe.every = LocalBrain.wantsEvery(request)
+                if recipe.every { recipe.wholeLibrary = true }
                 if recipe.title != nil {
                     // A title is handled now, so it isn't something it couldn't do.
                     recipe.cannotDo = recipe.cannotDo.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }

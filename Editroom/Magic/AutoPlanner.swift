@@ -70,7 +70,11 @@ enum AutoPlanner {
         let floor = pct(allScores, 0.3)
 
         // Shot lengths: whole beats with music, a natural rhythm without.
-        let period = music.map { $0.1.period }
+        var period = music.map { $0.1.period }
+        // Every clip asked for: at least one shot from each. When that many won't fit the length on
+        // whole beats, shots go to half beats.
+        let wanted = recipe.every ? max(recipe.shots ?? 0, sources.count) : recipe.shots
+        var sub = 1
         // Pace they asked for: shorter or longer shots.
         let pace = recipe.pace == .fast ? 0.55 : recipe.pace == .calm ? 1.7 : 1
         var longBeats = 4, shortBeats = 2
@@ -81,9 +85,13 @@ enum AutoPlanner {
         // A number of shots they asked for sets the shot length: about the length over the count (whole beats
         // with music, rounded down), so there are at least that many.
         var perShot: Double?
-        if let n = recipe.shots {
+        if let n = wanted {
             let length = recipe.seconds ?? Double(n) * (recipe.pace == .calm ? 2.5 : recipe.pace == .fast ? 0.9 : 1.5)
-            perShot = max(0.35, length / Double(n))
+            perShot = max(recipe.every ? 0.2 : 0.35, length / Double(n))
+            if recipe.every, let p = period, perShot! < p * 0.9 {
+                sub = 2
+                period = p / 2
+            }
             if let p = period {
                 let b = max(1, Int((perShot! / p).rounded(.down)))
                 longBeats = b
@@ -103,7 +111,7 @@ enum AutoPlanner {
             let step = s.analysis.samples.count > 1 ? s.analysis.duration / Double(s.analysis.samples.count) : 2.5
             return sum + Double(s.scores.filter { $0 >= floor }.count) * step
         }
-        var target = recipe.seconds ?? perShot.map { $0 * Double(recipe.shots ?? 1) } ?? min(40, max(12, good * 0.5))
+        var target = recipe.seconds ?? perShot.map { $0 * Double(wanted ?? 1) } ?? min(40, max(12, good * 0.5))
         if let m = music?.1 { target = min(target, m.duration - 2) }
 
         /// The best window of `length` in a source that doesn't overlap what's already been taken from it.
@@ -140,7 +148,8 @@ enum AutoPlanner {
         var round = 0
         while total < target {
             var added = 0
-            for i in sources.indices where total < target {
+            // Every clip asked for: the first round goes through them all, whatever the length so far.
+            for i in sources.indices where total < target || (recipe.every && round == 0) {
                 // A short clip that can't give a long shot can still give a short one.
                 var length = lengthFor(shots.count)
                 var beats = beatsFor(shots.count)
@@ -153,7 +162,7 @@ enum AutoPlanner {
                 guard let w = found else { continue }
                 // Everything gets a shot in the first round if it has anything decent; after that, only
                 // good moments, unless the cut would be too short to be worth watching.
-                guard w.score >= (round == 0 || total < 18 ? pct(allScores, 0.12) : floor) else { continue }
+                guard (recipe.every && round == 0) || w.score >= (round == 0 || total < 18 ? pct(allScores, 0.12) : floor) else { continue }
                 // Not two shots from one clip in a row.
                 if shots.last?.asset.id == sources[i].asset.id, sources.count > 1 { continue }
                 sources[i].picked.append((w.start, w.start + length))
@@ -169,6 +178,27 @@ enum AutoPlanner {
             if added == 0 { break }
             round += 1
         }
+        // Every clip in a length they gave: past it, extra shots come off the end, then the last shot is
+        // cut down (a beat at a time with music), so it fits.
+        if recipe.every, let limit = recipe.seconds {
+            while total > limit + 0.15, shots.count > sources.count {
+                total -= shots.removeLast().duration
+                shotBeats.removeLast()
+            }
+            if total > limit + 0.15, let last = shots.indices.last {
+                if let p = period {
+                    while total > limit + 0.15, shotBeats[last] > 1 {
+                        shotBeats[last] -= 1
+                        shots[last].duration -= p
+                        total -= p
+                    }
+                } else {
+                    let cut = min(total - limit, shots[last].duration - 0.3)
+                    shots[last].duration -= max(0, cut)
+                    total -= max(0, cut)
+                }
+            }
+        }
         guard !shots.isEmpty else { return nil }
 
         // A title only when they asked for one: their words, or when it was filmed.
@@ -178,12 +208,21 @@ enum AutoPlanner {
 
         if let (asset, m) = music, !m.beats.isEmpty {
             decision.bpm = m.bpm
+            // The beats cut on: the song's own, or with half beats between them.
+            var grid = m.beats, energy = m.energy
+            if sub == 2 {
+                grid = m.beats.indices.flatMap { i in i + 1 < m.beats.count ? [m.beats[i], (m.beats[i] + m.beats[i + 1]) / 2] : [m.beats[i]] }
+                energy = m.energy.flatMap { [$0, $0] }
+            }
+            let bar = 4 * sub, phase = m.barPhase * sub
+            let step = m.period / Double(sub)
             // End on a bar: lengthen the last shot to the bar line if its clip allows.
             let count = shotBeats.reduce(0, +)
-            let extra = (4 - count % 4) % 4
+            // (Not when every clip has to fit a length they gave: the length comes first.)
+            let extra = recipe.every && recipe.seconds != nil ? 0 : (bar - count % bar) % bar
             if extra > 0, let last = shots.indices.last {
                 let s = shots[last]
-                let needed = s.duration + Double(extra) * m.period
+                let needed = s.duration + Double(extra) * step
                 // Longer at either end, as long as it stays in the file and clear of the clip's other shots.
                 func fits(_ start: Double) -> Bool {
                     guard s.asset.kind == .video else { return true }
@@ -196,9 +235,9 @@ enum AutoPlanner {
                 if let start = [s.source, s.source - (needed - s.duration)].first(where: fits) {
                     shotBeats[last] += extra
                     decision.shots[last].source = start
-                } else if shotBeats[last] > 4 - extra {
-                    shotBeats[last] -= 4 - extra
-                } else if shotBeats[last] == 4 - extra, last > 0 {
+                } else if shotBeats[last] > bar - extra {
+                    shotBeats[last] -= bar - extra
+                } else if shotBeats[last] == bar - extra, last > 0, !recipe.every {
                     // Exactly the overhang: leave it out.
                     shotBeats.removeLast()
                     decision.shots.removeLast()
@@ -206,35 +245,36 @@ enum AutoPlanner {
             }
             var totalBeats = shotBeats.reduce(0, +)
             // Drop shots from the end until the song is long enough.
-            while totalBeats + 2 >= m.beats.count, shotBeats.count > 1 {
+            while totalBeats + 2 >= grid.count, shotBeats.count > 1 {
                 totalBeats -= shotBeats.removeLast()
                 decision.shots.removeLast()
             }
             // Start the song on a bar where it's lively and lifting.
-            var best = (beat: m.barPhase, score: -Double.infinity)
-            var b = m.barPhase
-            while b + totalBeats + 1 < m.beats.count {
-                let window = m.energy[b..<(b + totalBeats)]
-                let mean = Double(window.reduce(0, +)) / Double(window.count)
-                let before = b >= 8 ? Double(m.energy[(b - 8)..<b].reduce(0, +)) / 8 : mean
-                let after = Double(m.energy[b..<min(m.energy.count, b + 8)].reduce(0, +)) / Double(min(8, m.energy.count - b))
-                let s = mean + 0.5 * max(0, after - before) - (b == m.barPhase && b < 4 ? 0.05 : 0)
+            var best = (beat: phase, score: -Double.infinity)
+            var b = phase
+            let look = 8 * sub
+            while b + totalBeats + 1 < grid.count, b + totalBeats <= energy.count {
+                let window = energy[b..<(b + totalBeats)]
+                let mean = Double(window.reduce(0, +)) / Double(max(1, window.count))
+                let before = b >= look ? Double(energy[(b - look)..<b].reduce(0, +)) / Double(look) : mean
+                let after = Double(energy[b..<min(energy.count, b + look)].reduce(0, +)) / Double(max(1, min(look, energy.count - b)))
+                let s = mean + 0.5 * max(0, after - before) - (b == phase && b < bar ? 0.05 : 0)
                 if s > best.score { best = (b, s) }
-                b += 4
+                b += bar
             }
             let b0 = best.beat
             // Cut exactly on the song's beats (they drift a little from a strict grid).
             var at = b0
             for i in decision.shots.indices {
                 let next = at + shotBeats[i]
-                decision.shots[i].duration = m.beats[next] - m.beats[at]
-                // On the first beat of each four-bar phrase, dissolve rather than cut.
-                decision.shots[i].dissolve = i > 0 && (at - b0) % 16 == 0
+                decision.shots[i].duration = grid[next] - grid[at]
+                // On the first beat of each four-bar phrase, dissolve rather than cut (not in a half-beat montage).
+                decision.shots[i].dissolve = sub == 1 && i > 0 && (at - b0) % 16 == 0
                 at = next
             }
-            let length = m.beats[at] - m.beats[b0]
-            let tail = min(1.2, max(0, m.duration - m.beats[at]))
-            decision.music = EditDecision.Music(asset: asset, source: m.beats[b0], duration: length + tail, fadeOut: tail + 0.6)
+            let length = grid[at] - grid[b0]
+            let tail = min(1.2, max(0, m.duration - grid[at]))
+            decision.music = EditDecision.Music(asset: asset, source: grid[b0], duration: length + tail, fadeOut: tail + 0.6)
             for i in decision.shots.indices where decision.shots[i].asset.hasAudio { decision.shots[i].gainDB = -16 }
         } else {
             for i in decision.shots.indices { decision.shots[i].dissolve = i > 0 && i % 4 == 0 }
