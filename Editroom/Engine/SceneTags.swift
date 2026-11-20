@@ -21,16 +21,47 @@ struct SceneTags: Codable, Equatable {
     func top(_ n: Int) -> [String] { tags.sorted { $0.confidence > $1.confidence }.prefix(n).map(\.name) }
 
     /// Whether one of its tags is this word, or starts with it while it's being typed ("po" for "pool").
+    /// Vision's own words count with the everyday ones people search for ("portal" is a door).
     func shows(_ word: String, typing: Bool = false) -> Bool {
         let w = Self.singular(word.lowercased())
         guard w.count >= 2 else { return false }
         return tags.contains { tag in
-            tag.name.split(separator: " ").contains { part in
-                let p = String(part)
-                return p == w || Self.singular(p) == w || (typing && p.hasPrefix(w))
+            (tag.name.split(separator: " ").map(String.init) + (Self.aliases[tag.name] ?? [])).contains { p in
+                p == w || Self.singular(p) == w || (typing && p.hasPrefix(w))
             }
         }
     }
+
+    /// Everyday words for Vision's labels, so a search for "door" finds a "portal".
+    static let aliases: [String: [String]] = [
+        "portal": ["door", "doorway", "entrance", "gate"],
+        "conveyance": ["vehicle", "transport"],
+        "people": ["person", "man", "woman", "guy", "girl", "friends", "crowd"],
+        "adult": ["person", "man", "woman", "guy", "girl"],
+        "child": ["kid", "kids", "boy", "girl", "baby"],
+        "structure": ["building", "architecture"],
+        "housing": ["house", "home", "building"],
+        "building": ["house"],
+        "sky": ["clouds"],
+        "water body": ["water", "lake", "sea", "ocean"],
+        "swimming pool": ["pool", "swim"],
+        "automobile": ["car"],
+        "vehicle": ["car"],
+        "aircraft": ["plane", "airplane", "helicopter"],
+        "rotorcraft": ["helicopter"],
+        "foliage": ["plants", "leaves", "trees"],
+        "plant": ["plants", "greenery"],
+        "food": ["meal", "eating", "dinner", "lunch", "breakfast"],
+        "drink": ["drinks", "cocktail", "bar"],
+        "nightclub": ["club", "party"],
+        "concert": ["gig", "show", "music", "festival"],
+        "selfie": ["vlog", "talking"],
+        "sunset sunrise": ["sunset", "sunrise", "golden hour"],
+        "snow": ["winter"],
+        "beach": ["sand", "ocean", "sea"],
+        "dog": ["puppy"],
+        "cat": ["kitten"],
+    ]
 
     static func singular(_ w: String) -> String {
         w.count > 3 && w.hasSuffix("s") && !w.hasSuffix("ss") ? String(w.dropLast()) : w
@@ -84,7 +115,8 @@ final class SceneTagStore: ObservableObject {
         return dir
     }
 
-    private func file(for url: URL) -> URL { Self.folder.appendingPathComponent(ReverseAudio.cacheName(for: url) + ".json") }
+    /// Named with the version of how tags are chosen, so a change makes them again.
+    private func file(for url: URL) -> URL { Self.folder.appendingPathComponent(ReverseAudio.cacheName(for: url) + "-2.json") }
 
     private func load(_ url: URL) -> SceneTags? {
         guard let data = try? Data(contentsOf: file(for: url)), let t = try? JSONDecoder().decode(SceneTags.self, from: data) else { return nil }
@@ -99,16 +131,14 @@ final class SceneTagStore: ObservableObject {
     // MARK: Looking
 
     /// Kept: tags Vision is fairly sure of somewhere in the clip.
-    nonisolated static let sure = 0.45
+    nonisolated static let sure = 0.35
 
     nonisolated static func seeVideo(_ url: URL, duration: Double) async -> SceneTags? {
         let asset = AVURLAsset(url: url)
         let gen = AVAssetImageGenerator(asset: asset)
         gen.appliesPreferredTrackTransform = true
         gen.maximumSize = CGSize(width: 640, height: 640)
-        gen.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 4)
-        gen.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 4)
-        let n = min(20, max(3, Int(duration / 2)))
+        let n = min(20, max(8, Int(duration.rounded())))
         var seen: [(Double, [(String, Double)])] = []
         for i in 0..<n {
             let t = duration * (Double(i) + 0.5) / Double(n)
@@ -117,6 +147,20 @@ final class SceneTagStore: ObservableObject {
         }
         guard !seen.isEmpty else { return nil }
         return gather(seen)
+    }
+
+    /// Every label Vision gives anywhere in a video at 0.2 or more, surest first (for testing).
+    nonisolated static func allLabels(_ url: URL, duration: Double) async -> String {
+        let gen = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        gen.appliesPreferredTrackTransform = true
+        gen.maximumSize = CGSize(width: 640, height: 640)
+        var best: [String: Double] = [:]
+        let n = min(20, max(8, Int(duration.rounded())))
+        for i in 0..<n {
+            guard let image = try? await gen.image(at: CMTime(seconds: duration * (Double(i) + 0.5) / Double(n), preferredTimescale: 600)).image else { continue }
+            for (name, c) in classify(image) { best[name] = max(best[name] ?? 0, c) }
+        }
+        return best.sorted { $0.value > $1.value }.map { String(format: "%@ %.2f", $0.key, $0.value) }.joined(separator: ", ")
     }
 
     nonisolated static func seePhoto(_ url: URL) -> SceneTags? {

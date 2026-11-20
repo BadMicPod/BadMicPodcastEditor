@@ -227,6 +227,14 @@ final class EditorModel: ObservableObject {
                         FileHandle.standardError.write("TOGGLE TIME \(ThemeStore.shared.timeStyle) playhead \(before) -> \(seen)\n".data(using: .utf8)!)
                     }
                 }
+                // `--scenes <file>` (testing): what Vision sees in a video, every label it gives at 0.2 or more.
+                if let k = args.firstIndex(of: "--scenes"), args.count > k + 1 {
+                    let url = URL(fileURLWithPath: args[k + 1])
+                    let d = (try? await AVURLAsset(url: url).load(.duration).seconds) ?? 5
+                    let tags = await SceneTagStore.seeVideo(url, duration: d)
+                    let all = await SceneTagStore.allLabels(url, duration: d)
+                    FileHandle.standardError.write("SCENES kept: \(tags?.tags.map { "\($0.name) \($0.confidence)" }.joined(separator: ", ") ?? "-")\nSCENES all: \(all)\n".data(using: .utf8)!)
+                }
                 // `--transcribe <file>` (testing): hear a file and log its words with their times.
                 if let k = args.firstIndex(of: "--transcribe"), args.count > k + 1 {
                     let url = URL(fileURLWithPath: args[k + 1])

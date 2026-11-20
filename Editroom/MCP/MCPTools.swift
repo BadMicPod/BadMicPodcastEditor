@@ -108,7 +108,12 @@ enum MCPTools {
             return json(projectJSON(p, title: model.title, playhead: draft?.playhead ?? model.playhead))
 
         case "list_media":
-            return json(p.assets.map { assetJSON($0, media: model.media) })
+            // Labels most of the library shares ("structure", "people" in a vlog) don't tell clips apart: left out.
+            let tagged = p.assets.compactMap { model.media.sceneTags($0.id) }
+            var counts: [String: Int] = [:]
+            for t in tagged { for name in Set(t.tags.map(\.name)) { counts[name, default: 0] += 1 } }
+            let common = tagged.count >= 4 ? Set(counts.filter { Double($0.value) >= Double(tagged.count) * 0.6 }.keys) : []
+            return json(p.assets.map { assetJSON($0, media: model.media, common: common) })
 
         case "list_looks":
             return json(BuiltInLook.all.map(\.name))
@@ -596,9 +601,12 @@ enum MCPTools {
     }
 
     /// A library item with whether people talk in it (once it's been heard), for list_media.
-    @MainActor private static func assetJSON(_ a: MediaAsset, media: MediaStore) -> [String: Any] {
+    @MainActor private static func assetJSON(_ a: MediaAsset, media: MediaStore, common: Set<String> = []) -> [String: Any] {
         var d = assetJSON(a)
-        if let s = media.sceneTags(a.id), !s.tags.isEmpty { d["shows"] = s.top(8) }
+        if let s = media.sceneTags(a.id) {
+            let shows = s.top(20).filter { !common.contains($0) }.prefix(8)
+            if !shows.isEmpty { d["shows"] = Array(shows) }
+        }
         if let t = media.transcript(a.id) {
             d["speech"] = !t.isEmpty
             if !t.isEmpty { d["says"] = String(t.text.prefix(120)) + (t.text.count > 120 ? "…" : "") }

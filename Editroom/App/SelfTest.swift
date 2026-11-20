@@ -1331,6 +1331,8 @@ enum SelfTest {
                 // Scene tags: a word matches a tag (plural or not), and as it's typed.
                 let tags = SceneTags(tags: [.init(name: "swimming pool", confidence: 0.8, times: [1]), .init(name: "chair", confidence: 0.6, times: [2])])
                 let tagOK = tags.shows("pool") && tags.shows("chairs") && tags.shows("po", typing: true) && !tags.shows("po") && !tags.shows("beach")
+                    && SceneTags(tags: [.init(name: "portal", confidence: 0.7, times: [])]).shows("door")
+                    && SceneTags(tags: [.init(name: "adult", confidence: 0.7, times: [])]).shows("wom", typing: true)
                 let mOK = tagOK && speechOK && cutOK && timeOK && typedOK && clipOK && moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
                 log("MENTIONS \(mOK ? "OK" : "FAIL") tags=\(tagOK) speech=\(speechOK) cut=\(cutOK) \(cutPlan.said) time=\(timeOK) typed=\(typedOK) clip=\(clipOK) \(labels) move=\(moveOK) keep=\(keepOK) find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
                 good = good && mOK
