@@ -314,6 +314,11 @@ final class MediaStore: ObservableObject {
         return nil
     }
 
+    /// A timeline thumbnail only if it's already made (asks for nothing).
+    func cachedThumbnail(asset id: UUID, time: Double) -> CGImage? {
+        thumbs[ThumbKey(asset: id, ms: Int((time * 1000).rounded()))]
+    }
+
     private var scrubFrames: [ThumbKey: CGImage] = [:]
 
     /// A hover-scrub frame made ahead, at once: the nearest to a point across the item (0 to 1). Nil

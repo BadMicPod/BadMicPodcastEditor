@@ -1686,17 +1686,32 @@ final class TimelineCanvas: NSView {
         let tileW = max(24, r.height * aspect)
         if c.isRamped {
             // Speed changes across it: evenly spaced frames from the clip's start, each showing the
-            // footage playing at that moment.
+            // footage playing at that moment, taken from a fixed grid of times in the file (so while a
+            // ramp is dragged the same frames are reused rather than new ones asked for each moment).
+            // Until a frame is made, a neighbour on the grid stands in, so nothing blinks.
+            let average = max(0.01, c.sourceLength / max(1e-6, c.duration))
+            var grid = 1.0 / 16
+            while CGFloat(grid / average) * pps < tileW, grid < 16384 { grid *= 2 }
+            func frame(_ ts: Double) -> CGImage? {
+                let k = (ts / grid).rounded()
+                let at = { (k: Double) -> Double in
+                    let s = k * grid
+                    let shown = c.playsBackwards ? asset.duration - s : s
+                    return min(max(0, shown), max(0, asset.duration - 0.05))
+                }
+                if let img = model.media.thumbnail(asset: asset.id, time: at(k)) { return img }
+                for d in [1.0, -1, 2, -2] {
+                    if let img = model.media.cachedThumbnail(asset: asset.id, time: at(k + d)) { return img }
+                }
+                return nil
+            }
             var x = r.minX + floor(max(0, visible.minX - r.minX) / tileW) * tileW
             var drawn = 0
             ctx.saveGState()
             ctx.setAlpha(0.88)
             while x < min(r.maxX, visible.maxX), drawn < 240 {
                 let t = c.start + Double((x + tileW / 2 - r.minX) / pps)
-                let ts = c.sourceTime(at: min(t, c.end))
-                let shown = c.playsBackwards ? asset.duration - ts : ts
-                let sample = min(max(0, shown), max(0, asset.duration - 0.05))
-                if let img = model.media.thumbnail(asset: asset.id, time: sample).map({ graded($0, c.grade) }) {
+                if let img = frame(c.sourceTime(at: min(t, c.end))).map({ graded($0, c.grade) }) {
                     drawImage(img, fill: CGRect(x: x, y: r.minY, width: max(1, tileW - 1), height: r.height), ctx: ctx)
                 }
                 x += tileW
