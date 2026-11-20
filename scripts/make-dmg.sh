@@ -40,7 +40,7 @@ create-dmg \
   --window-size 600 412 \
   --icon-size 148 \
   --text-size 13 \
-  --icon "Editroom.app" 161 180 \
+  --icon "Editroom.app" 166 180 \
   --app-drop-link 440 180 \
   --hide-extension "Editroom.app" \
   --no-internet-enable \
