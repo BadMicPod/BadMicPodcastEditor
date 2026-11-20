@@ -22,23 +22,25 @@ fi
 
 # Background: one TIFF holding the 600×380 and 1200×760 images, so Retina screens get the sharp one.
 work="$(mktemp -d)"
-tiffutil -cathidpicheck "$art/background.png" "$art/background@2x.png" -out "$work/background.tiff" 2>/dev/null
+sips -s dpiWidth 72 -s dpiHeight 72 "$art/background.png" --out "$work/background.png" >/dev/null
+sips -s dpiWidth 144 -s dpiHeight 144 "$art/background@2x.png" --out "$work/background@2x.png" >/dev/null
+tiffutil -cathidpicheck "$work/background.png" "$work/background@2x.png" -out "$work/background.tiff" >/dev/null
 mkdir "$work/src"
 cp -R "$app" "$work/src/"
 
 mkdir -p "${out:h}"
 rm -f "$out"
 # Window is 600×412 points: the 380pt background plus the 32pt title bar. Icons sit in the usual
-# spots, side by side across the middle.
+# spots, side by side across the middle, at 128pt like Compositor's DMG.
 create-dmg \
   --volname "Editroom" \
   --background "$work/background.tiff" \
   --window-pos 200 120 \
   --window-size 600 412 \
-  --icon-size 72 \
-  --text-size 12 \
-  --icon "Editroom.app" 150 190 \
-  --app-drop-link 450 190 \
+  --icon-size 128 \
+  --text-size 13 \
+  --icon "Editroom.app" 160 180 \
+  --app-drop-link 440 180 \
   --hide-extension "Editroom.app" \
   --no-internet-enable \
   "$out" "$work/src" >/dev/null
