@@ -64,6 +64,26 @@ struct Transcript: Codable, Equatable {
         return false
     }
 
+    /// A few words either side of where they say this, for showing why a clip matched:
+    /// ("okay", "guys,", "we're on the way…").
+    func snippet(_ phrase: String, typing: Bool = false) -> (before: String, match: String, after: String)? {
+        let want = Self.tokens(phrase)
+        guard !want.isEmpty, words.count >= want.count else { return nil }
+        let have = words.map { Self.tokens($0.text).first ?? "" }
+        for i in 0...(words.count - want.count) {
+            let run = have[i..<(i + want.count)]
+            let whole = zip(run.dropLast(), want.dropLast()).allSatisfy { $0 == $1 }
+            let last = typing ? run.last!.hasPrefix(want.last!) : run.last! == want.last!
+            guard whole && last else { continue }
+            let from = max(0, i - 3), to = min(words.count, i + want.count + 4)
+            let before = words[from..<i].map(\.text).joined(separator: " ")
+            let match = words[i..<(i + want.count)].map(\.text).joined(separator: " ")
+            let after = words[(i + want.count)..<to].map(\.text).joined(separator: " ")
+            return ((from > 0 ? "…" : "") + before, match, after + (to < words.count ? "…" : ""))
+        }
+        return nil
+    }
+
     static func tokens(_ s: String) -> [String] {
         s.lowercased().split { !$0.isLetter && !$0.isNumber && $0 != "'" }.map(String.init)
     }

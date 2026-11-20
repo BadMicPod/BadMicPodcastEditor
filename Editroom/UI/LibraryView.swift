@@ -18,6 +18,21 @@ struct LibraryView: View {
     @ObservedObject private var transcripts = Transcripts.shared
     @ObservedObject private var scenes = SceneTagStore.shared
 
+    /// Words typed in "quotes": what's said.
+    private var phrases: [String] {
+        let q = search.trimmingCharacters(in: .whitespaces)
+        guard let re = try? NSRegularExpression(pattern: #"["“”]([^"“”]*)["“”]?"#) else { return [] }
+        let ns = q as NSString
+        return re.matches(in: q, range: NSRange(location: 0, length: ns.length))
+            .map { ns.substring(with: $0.range(at: 1)).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    /// Where a clip says the first quoted phrase, to show under it.
+    private func snippet(_ a: MediaAsset) -> (before: String, match: String, after: String)? {
+        guard let phrase = phrases.first else { return nil }
+        return media.transcript(a.id)?.snippet(phrase, typing: true)
+    }
+
     /// The search: words in "quotes" are what's said in a clip; anything else is in its name.
     private var shown: [MediaAsset] {
         let q = search.trimmingCharacters(in: .whitespaces)
@@ -86,7 +101,7 @@ struct LibraryView: View {
                         if layout == .thumbnails {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8, alignment: .top)], spacing: 10) {
                                 ForEach(shown) { asset in
-                                    AssetTile(model: model, media: media, asset: asset, offline: media.isOffline(asset), selected: inSelection.contains(asset.id),
+                                    AssetTile(model: model, media: media, asset: asset, snippet: snippet(asset), offline: media.isOffline(asset), selected: inSelection.contains(asset.id),
                                               picked: model.mediaSelection.contains(asset.id), pickedCount: model.mediaSelection.count,
                                               matchesSequence: model.sequenceMatches(asset))
                                         .simultaneousGesture(TapGesture().onEnded { model.clickMedia(asset.id, in: order) })
@@ -95,7 +110,7 @@ struct LibraryView: View {
                         } else {
                             VStack(spacing: 3) {
                                 ForEach(shown) { asset in
-                                    AssetRow(model: model, media: media, asset: asset, thumbWidth: thumbWidth, offline: media.isOffline(asset), selected: inSelection.contains(asset.id),
+                                    AssetRow(model: model, media: media, asset: asset, snippet: snippet(asset), thumbWidth: thumbWidth, offline: media.isOffline(asset), selected: inSelection.contains(asset.id),
                                              picked: model.mediaSelection.contains(asset.id), pickedCount: model.mediaSelection.count,
                                              matchesSequence: model.sequenceMatches(asset))
                                         // A click picks it (⇧ for a range, ⌘ to add or take away); a double-click adds it.
@@ -159,7 +174,12 @@ private struct SearchField: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textFaint)
+            // A quote searches what's said: the icon says so as soon as it's typed.
+            let saying = text.contains("\"") || text.contains("“")
+            Image(systemName: saying ? "text.bubble" : "magnifyingglass")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(saying ? Theme.text : Theme.textFaint)
+                .help(saying ? "Searching what's said in your clips" : "")
             TextField("Search", text: $text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 11.5))
@@ -336,6 +356,8 @@ private struct AssetRow: View {
     let model: EditorModel
     let media: MediaStore
     let asset: MediaAsset
+    /// Where it says what's being searched for.
+    var snippet: (before: String, match: String, after: String)?
     var thumbWidth: CGFloat = 64
     let offline: Bool
     /// Used by a clip selected on the timeline.
@@ -383,6 +405,7 @@ private struct AssetRow: View {
                     .font(Theme.mono(10))
                     .foregroundStyle(Theme.textFaint)
                     .lineLimit(1)
+                if let snippet { SaidLine(snippet: snippet) }
             }
             Spacer(minLength: 0)
         }
@@ -412,6 +435,7 @@ private struct AssetTile: View {
     let model: EditorModel
     let media: MediaStore
     let asset: MediaAsset
+    var snippet: (before: String, match: String, after: String)?
     let offline: Bool
     let selected: Bool
     let picked: Bool
@@ -445,6 +469,7 @@ private struct AssetTile: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .padding(.horizontal, 2)
+            if let snippet { SaidLine(snippet: snippet).padding(.horizontal, 2) }
         }
         .padding(3)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(picked ? Theme.ink.opacity(0.12) : hovering ? Theme.hover : .clear))
@@ -453,5 +478,20 @@ private struct AssetTile: View {
         .animation(.easeOut(duration: 0.12), value: hovering)
         .modifier(AssetActions(model: model, asset: asset, offline: offline, picked: picked, pickedCount: pickedCount,
                                matchesSequence: matchesSequence))
+    }
+}
+
+/// What a clip says around the words being searched for, those words in bold.
+private struct SaidLine: View {
+    let snippet: (before: String, match: String, after: String)
+
+    var body: some View {
+        (Text("“" + (snippet.before.isEmpty ? "" : snippet.before + " "))
+            + Text(snippet.match).bold().foregroundColor(Theme.text)
+            + Text((snippet.after.isEmpty ? "" : " " + snippet.after) + "”"))
+            .font(.system(size: 10))
+            .foregroundStyle(Theme.textDim)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }

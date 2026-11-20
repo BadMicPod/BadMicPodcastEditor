@@ -1308,6 +1308,7 @@ enum SelfTest {
                                               .init(start: 5, end: 5.5, text: "It's"), .init(start: 5.5, end: 6, text: "raining.")], language: "en_US")
                 let speechOK = said.speech().count == 2 && said.sentences().map(\.text) == ["Welcome back.", "It's raining."]
                     && said.says("it's RAINING") && !said.says("raining it's")
+                    && said.snippet("rai", typing: true).map { $0.match == "raining." && $0.before == "Welcome back. It's" } == true
                     && said.says("it's rai", typing: true) && !said.says("it's rai") && !said.says("welc raining", typing: true)
                 var sp = Project()
                 let talk = MediaAsset(path: "/tmp/talk.mov", name: "talk", kind: .video, duration: 10, width: 1920, height: 1080, fps: 30, hasAudio: true)
