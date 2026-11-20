@@ -407,24 +407,29 @@ private enum LocalIdeas {
 private struct IdeasMenu: View {
     let sections: [(String, [Idea])]
     let use: (String) -> Void
+    @State private var anchor = MenuAnchor()
 
     var body: some View {
-        Menu {
-            ForEach(sections, id: \.0) { title, ideas in
-                Section(title) {
-                    ForEach(ideas, id: \.name) { idea in
-                        Button { use(idea.prompt) } label: { Label(idea.name, systemImage: idea.symbol) }
-                    }
-                }
+        Button(action: open) { MenuIcon(symbol: "lightbulb") }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .background(AnchorView(anchor: anchor))
+            .help("Ideas")
+    }
+
+    /// Made by hand like History's, so the two open in exactly the same place.
+    private func open() {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for (title, ideas) in sections {
+            menu.addItem(NSMenuItem.sectionHeader(title: title))
+            for idea in ideas {
+                let item = ActionItem(idea.name) { use(idea.prompt) }
+                item.image = NSImage(systemSymbolName: idea.symbol, accessibilityDescription: nil)
+                menu.addItem(item)
             }
-        } label: {
-            MenuIcon(symbol: "lightbulb")
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Ideas")
+        anchor.popUp(menu)
     }
 }
 
@@ -442,6 +447,12 @@ private struct HistoryMenu: View {
             .fixedSize()
             .background(AnchorView(anchor: anchor))
             .help("History")
+            .onAppear {
+                // `--magic-history-menu` (testing): opens the menu by itself.
+                if CommandLine.arguments.contains("--magic-history-menu") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { open() }
+                }
+            }
     }
 
     private func open() {
@@ -460,14 +471,7 @@ private struct HistoryMenu: View {
             item.toolTip = e.text
             menu.addItem(item)
         }
-        if let view = anchor.view {
-            // Its top-left just under the button's bottom-left, like the Ideas menu.
-            let gap: CGFloat = 4
-            let at = NSPoint(x: 0, y: view.isFlipped ? view.bounds.height + gap : -gap)
-            menu.popUp(positioning: nil, at: at, in: view)
-        } else {
-            menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
-        }
+        anchor.popUp(menu)
     }
 
     /// At most two lines of about `width` characters, broken between words, with … if there's more.
@@ -495,9 +499,20 @@ private struct HistoryMenu: View {
     }
 }
 
-/// Holds the view a hand-made menu opens from.
+/// Holds the view a hand-made menu opens from, and opens it there: its top-left just under the
+/// button's bottom-left (Ideas and History alike).
 private final class MenuAnchor {
     weak var view: NSView?
+    static let gap: CGFloat = 4
+
+    @MainActor func popUp(_ menu: NSMenu) {
+        guard let view, let window = view.window else {
+            menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+            return
+        }
+        let rect = window.convertToScreen(view.convert(view.bounds, to: nil))
+        menu.popUp(positioning: nil, at: NSPoint(x: rect.minX, y: rect.minY - Self.gap), in: nil)
+    }
 }
 
 private struct AnchorView: NSViewRepresentable {
