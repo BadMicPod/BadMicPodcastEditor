@@ -24,6 +24,13 @@ struct ContentView: View {
                 HStack(spacing: 0) {
                     LibraryView(model: model, media: model.media)
                         .frame(width: libraryWidth)
+                        // `--library-width N` (testing): the Media panel that wide.
+                        .onAppear {
+                            let args = CommandLine.arguments
+                            if let k = args.firstIndex(of: "--library-width"), args.count > k + 1, let w = Double(args[k + 1]) {
+                                libraryWidth = min(440, max(190, w))
+                            }
+                        }
                         .background(MagicAnchor(key: "library"))
                     Splitter(vertical: true) { x in
                         libraryWidth = min(440, max(190, x - frame.minX))

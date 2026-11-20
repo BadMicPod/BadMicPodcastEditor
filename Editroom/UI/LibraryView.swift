@@ -8,6 +8,11 @@ struct LibraryView: View {
     @State private var search = ""
     /// List (the default) or larger thumbnails, from Settings > Appearance.
     @AppStorage(MediaLayout.key) private var layout = MediaLayout.list
+    /// How wide the panel is, so a list's pictures can grow a little when it's widened.
+    @State private var panelWidth: CGFloat = 252
+
+    /// 64 points wide at the usual width, up to 104 as the panel is widened.
+    private var thumbWidth: CGFloat { min(104, max(64, 64 + (panelWidth - 252) * 0.21)) }
 
     private var shown: [MediaAsset] {
         let q = search.trimmingCharacters(in: .whitespaces)
@@ -64,7 +69,7 @@ struct LibraryView: View {
                         } else {
                             VStack(spacing: 3) {
                                 ForEach(shown) { asset in
-                                    AssetRow(model: model, media: media, asset: asset, offline: media.isOffline(asset), selected: inSelection.contains(asset.id),
+                                    AssetRow(model: model, media: media, asset: asset, thumbWidth: thumbWidth, offline: media.isOffline(asset), selected: inSelection.contains(asset.id),
                                              picked: model.mediaSelection.contains(asset.id), pickedCount: model.mediaSelection.count,
                                              matchesSequence: model.sequenceMatches(asset))
                                         // A click picks it (⇧ for a range, ⌘ to add or take away); a double-click adds it.
@@ -90,6 +95,11 @@ struct LibraryView: View {
             .contextMenu { panelMenu }
         }
         .background(Theme.panel).panelTopLight()
+        .background(GeometryReader { g in
+            Color.clear
+                .onAppear { panelWidth = g.size.width }
+                .onChange(of: g.size.width) { _, w in panelWidth = w }
+        })
         .overlay(
             RoundedRectangle(cornerRadius: 0)
                 .strokeBorder(Theme.accent.opacity(dropTargeted ? 0.9 : 0), lineWidth: 2)
@@ -300,6 +310,7 @@ private struct AssetRow: View {
     let model: EditorModel
     let media: MediaStore
     let asset: MediaAsset
+    var thumbWidth: CGFloat = 64
     let offline: Bool
     /// Used by a clip selected on the timeline.
     let selected: Bool
@@ -311,18 +322,29 @@ private struct AssetRow: View {
     let matchesSequence: Bool
     @State private var hovering = false
 
+    /// Under the name: just how long it is (the frame size is on hover).
     private var detail: String {
-        var parts: [String] = []
+        switch asset.kind {
+        case .video: Timecode.short(asset.duration)
+        case .audio: Timecode.short(asset.duration) + "  ·  Audio"
+        case .image: "Photo"
+        }
+    }
+
+    /// On hover: everything about the file.
+    private var details: String {
+        var parts = [asset.name]
         if asset.kind != .image { parts.append(Timecode.short(asset.duration)) }
         if asset.width > 0 { parts.append("\(asset.width)×\(asset.height)") }
+        if asset.kind == .video, asset.fps > 0 { parts.append(String(format: "%g fps", (asset.fps * 100).rounded() / 100)) }
         if asset.kind == .audio { parts.append("Audio") }
-        return parts.joined(separator: "  ·  ")
+        return parts.joined(separator: " · ")
     }
 
     var body: some View {
         HStack(spacing: 9) {
             MediaThumb(media: media, preview: model.sourcePreview, asset: asset, offline: offline, compact: true)
-                .frame(width: 64, height: 36)
+                .frame(width: thumbWidth, height: (thumbWidth * 9 / 16).rounded())
                 .background(MagicAnchor(key: asset.id.uuidString))
                 .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
@@ -345,6 +367,7 @@ private struct AssetRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
+        .help(details)
         .modifier(AssetActions(model: model, asset: asset, offline: offline, picked: picked, pickedCount: pickedCount,
                                matchesSequence: matchesSequence))
     }
