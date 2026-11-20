@@ -888,6 +888,27 @@ enum LocalMagic {
         MagicThinking.begin(model: model, name: "Local", color: NSColor(white: 0.95, alpha: 1))
         let run = MagicShow.runID
         Task {
+            // Pauses in the talking: from what's said (heard on this Mac), not from Apple's reading of the request.
+            if LocalSpeech.asks(request) {
+                state.status = "Listening"
+                let p = model.project
+                let found = MagicMention.find(in: typed, media: p.assets, clips: MagicMention.clipLabels(p))
+                var only = Set(found.compactMap { m -> UUID? in if case .clip(let id) = m.mention { return id } else { return nil } })
+                if found.contains(where: { $0.mention == .selected }) || typed.lowercased().contains("selected") { only.formUnion(pointers.selected) }
+                // Hear the clips in the edit that aren't heard yet.
+                for id in Set(p.clips.filter { $0.kind == .video }.compactMap(\.assetID)) {
+                    if let url = model.media.soundURL(id) { _ = await Transcripts.shared.ready(url, limit: 60) }
+                    guard run == MagicShow.runID else { return }
+                }
+                state.busy = false
+                state.status = nil
+                let outcome = LocalSpeech.plan(project: model.project, only: only.isEmpty ? nil : only) { model.media.transcript($0) }
+                if CommandLine.arguments.contains("--magic-local") {
+                    FileHandle.standardError.write("MAGIC LOCAL speech: \(outcome.said) (\(outcome.plan?.tasks.count ?? 0) edits)\n".data(using: .utf8)!)
+                }
+                await perform(outcome, model: model, run: run)
+                return
+            }
             var recipe: LocalRecipe
             do {
                 recipe = try await LocalBrain.recipe(for: request, media: media, pointed: pointed,
@@ -1008,6 +1029,37 @@ enum LocalMagic {
                 }
                 note(said, changed: changed, detail: ["On this Mac", recipe.summary, "\(Int(Date().timeIntervalSince(started).rounded()))s"])
             }
+        }
+    }
+
+    /// Plays a ready-made Local edit with the thinking show's sketch and the swarm, then its note; or just
+    /// the note, when there's nothing to change.
+    private static func perform(_ outcome: LocalPointed.Outcome, model: EditorModel, run: Int) async {
+        guard let plan = outcome.plan, !plan.tasks.isEmpty else {
+            MagicThinking.current?.end()
+            MagicAgent.shared.note = MagicAgent.Note(agent: nil, text: outcome.said, changed: false, detail: "On this Mac")
+            return
+        }
+        let started = Date()
+        if let thinking = MagicThinking.current {
+            MagicShow.fit(model: model, plan: plan)
+            var final = plan.base
+            for task in plan.tasks { task.edit.apply(&final, 1) }
+            thinking.plan(final)
+            let hold = min(2.0, max(0.8, thinking.secondsUntilDrawn + 0.35))
+            try? await Task.sleep(nanoseconds: UInt64(hold * 1e9))
+            guard run == MagicShow.runID else { return }
+            thinking.handOver()
+        }
+        let played = MagicShow.play(model: model, plan: plan) {
+            if CommandLine.arguments.contains("--magic-local") {
+                FileHandle.standardError.write("MAGIC LOCAL said: \(outcome.said)\n".data(using: .utf8)!)
+            }
+            note(outcome.said, changed: true, detail: ["On this Mac", "\(Int(Date().timeIntervalSince(started).rounded()))s"])
+        }
+        if !played {
+            model.mutate { q in for task in plan.tasks { task.edit.apply(&q, 1) } }
+            note(outcome.said, changed: true, detail: ["On this Mac"])
         }
     }
 

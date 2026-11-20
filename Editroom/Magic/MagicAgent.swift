@@ -232,7 +232,9 @@ final class MagicAgent: ObservableObject {
 
         How to work:
         1. get_project and list_media.
-        2. Look at the footage with look_at_media to see what's in each shot. analyze_media finds a clip's best \
+        2. Look at the footage with look_at_media to see what's in each shot. If people talk in it (list_media \
+        says "speech"), get_transcript gives what's said with times: cut pauses, retakes and filler between \
+        sentences, keep sentences whole, and put other shots over the talking where it helps. analyze_media finds a clip's best \
         moments, or a song's tempo and bar starts.
         3. Choose. Leave out shots that are blurry, dark, shaky, accidental, near-duplicates of a better one, or \
         screenshots. Find an order that tells something: an opening that sets the scene, a build, the best moments, \
@@ -600,6 +602,7 @@ final class MagicAgent: ObservableObject {
         case "list_media", "get_project", "list_looks": "reading"
         case "look_at_media": "watching"
         case "analyze_media": "studying"
+        case "get_transcript": "listening"
         case "add_clip", "trim_clip", "move_clip", "split_clip", "delete_clips", "set_sequence", "add_track": "cutting"
         case "set_grade": "grading"
         case "add_title": "titling"

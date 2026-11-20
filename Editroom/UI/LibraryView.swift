@@ -14,10 +14,30 @@ struct LibraryView: View {
     /// 64 points wide at the usual width, up to 104 as the panel is widened.
     private var thumbWidth: CGFloat { min(104, max(64, 64 + (panelWidth - 252) * 0.21)) }
 
+    /// What's said in clips, for searching it (and to update as clips are heard).
+    @ObservedObject private var transcripts = Transcripts.shared
+
+    /// The search: words in "quotes" are what's said in a clip; anything else is in its name.
     private var shown: [MediaAsset] {
         let q = search.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return model.project.assets }
-        return model.project.assets.filter { $0.name.localizedCaseInsensitiveContains(q) }
+        var phrases: [String] = []
+        var rest = q
+        if let re = try? NSRegularExpression(pattern: #"["“”]([^"“”]*)["“”]?"#) {
+            let ns = q as NSString
+            for m in re.matches(in: q, range: NSRange(location: 0, length: ns.length)) {
+                let phrase = ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
+                if !phrase.isEmpty { phrases.append(phrase) }
+            }
+            rest = re.stringByReplacingMatches(in: q, range: NSRange(location: 0, length: ns.length), withTemplate: "")
+                .trimmingCharacters(in: .whitespaces)
+        }
+        return model.project.assets.filter { a in
+            if !rest.isEmpty, !a.name.localizedCaseInsensitiveContains(rest) { return false }
+            guard !phrases.isEmpty else { return true }
+            guard let t = media.transcript(a.id) else { return false }
+            return phrases.allSatisfy { t.says($0) }
+        }
     }
 
     var body: some View {
@@ -78,7 +98,7 @@ struct LibraryView: View {
                             }
                         }
                         if shown.isEmpty {
-                            Text("No media matches “\(search)”")
+                            Text(search.contains("\"") || search.contains("“") ? "Nothing says \(search)" : "No media matches “\(search)”")
                                 .font(.system(size: 11.5))
                                 .foregroundStyle(Theme.textFaint)
                                 .frame(maxWidth: .infinity)

@@ -161,6 +161,12 @@ final class MediaStore: ObservableObject {
         asset.kind == .image ? stills[asset.id] == nil : runtimes[asset.id] == nil
     }
 
+    /// The file a library item's sound is read from (its converted copy, if it has one).
+    func soundURL(_ id: UUID) -> URL? { runtimes[id]?.audioTrack != nil ? runtimes[id]?.asset.url : nil }
+
+    /// What's said in a library item, if it's been heard yet.
+    func transcript(_ id: UUID) -> Transcript? { soundURL(id).flatMap { Transcripts.shared.transcript(for: $0) } }
+
     func forget(_ id: UUID) {
         runtimes[id] = nil
         posters[id] = nil
@@ -179,7 +185,11 @@ final class MediaStore: ObservableObject {
             makePoster(asset, rt)
             strips.make(asset.id, rt, duration: asset.duration)
         }
-        if rt.audioTrack != nil { makeWaveform(asset.id, rt) }
+        if rt.audioTrack != nil {
+            makeWaveform(asset.id, rt)
+            // What's said in it, for Magic and Media search: made once, in the background.
+            Transcripts.shared.make(rt.asset.url)
+        }
     }
 
     struct ProbeInfo {

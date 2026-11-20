@@ -50,6 +50,8 @@ enum MCPTools {
                  required: ["url", "source_page", "licence"]),
             tool("analyze_media", "Analyze media", "For a video or photo: its best moments, scored for focus, exposure, colour, faces and steadiness. For music: tempo, beats and where bars start. Done on this Mac; cached.",
                  ["asset_id": str("A library item's id."), "moment_length": num("Length of moments to look for, in seconds (default 2).")], required: ["asset_id"], readOnly: true),
+            tool("get_transcript", "Get transcript", "What's said in a video or sound file, heard on this Mac: its sentences and pauses with their times in the file (and each word's time if you ask). Use it for anything with people talking: to cut pauses, retakes and filler, keep sentences whole, find a moment by what's said, or put pictures over the talking. Made in the background after import; cached.",
+                 ["asset_id": str("A library item's id."), "words": ["type": "boolean", "description": "Also every word with its start and end (default false)."]], required: ["asset_id"], readOnly: true),
             tool("look_at_media", "Look at media", "Shows you a library item: a photo, or frames from across a video in a grid, each marked with its time in the file. Use it to see what's in each shot before choosing.",
                  ["asset_id": str("A library item's id."), "frames": ["type": "integer", "description": "How many frames from across a video (default 6, at most 12)."],
                   "times": ["type": "array", "items": ["type": "number"], "description": "Or exactly which times in the file to show, in seconds (at most 12)."]],
@@ -106,7 +108,7 @@ enum MCPTools {
             return json(projectJSON(p, title: model.title, playhead: draft?.playhead ?? model.playhead))
 
         case "list_media":
-            return json(p.assets.map(assetJSON))
+            return json(p.assets.map { assetJSON($0, media: model.media) })
 
         case "list_looks":
             return json(BuiltInLook.all.map(\.name))
@@ -165,6 +167,19 @@ enum MCPTools {
             if let created = a.created { out["filmed"] = ISO8601DateFormatter().string(from: created) }
             if a.samples.contains(where: { $0.utility == true }) { out["looks_like_a_screenshot_or_document"] = true }
             return json(out)
+
+        case "get_transcript":
+            let asset = try assetArg(args, p)
+            guard asset.kind != .image, let url = model.media.soundURL(asset.id) else {
+                return json(["asset_id": asset.id.uuidString, "status": "no_sound", "note": "\(asset.name) has no sound."])
+            }
+            guard Transcripts.available else {
+                return json(["asset_id": asset.id.uuidString, "status": "unavailable", "note": "Hearing speech needs macOS 26 on this Mac."])
+            }
+            guard let t = await Transcripts.shared.ready(url) else {
+                return json(["asset_id": asset.id.uuidString, "status": "failed", "note": "Couldn't hear what's said in \(asset.name)."])
+            }
+            return json(transcriptJSON(t, asset: asset, words: args["words"] as? Bool ?? false))
 
         case "look_at_media":
             let asset = try assetArg(args, p)
@@ -544,11 +559,49 @@ enum MCPTools {
         return "?"
     }
 
+    /// A transcript in file seconds: sentences, the pauses between talking (and before and after it), and
+    /// words if asked for.
+    private static func transcriptJSON(_ t: Transcript, asset a: MediaAsset, words: Bool) -> [String: Any] {
+        var d: [String: Any] = ["asset_id": a.id.uuidString, "name": a.name, "duration": round3(a.duration)]
+        guard !t.isEmpty else {
+            d["status"] = "no_speech"
+            d["note"] = "Nobody talks in it (or only music or noise)."
+            return d
+        }
+        d["status"] = "ready"
+        d["language"] = t.language
+        d["times"] = "Seconds in the file. A clip plays the file from its source_start."
+        d["sentences"] = t.sentences().map { ["start": round3($0.start), "end": round3($0.end), "text": $0.text] }
+        // Silence of half a second or more, which is where cuts can go (filler like "um" isn't written
+        // out, so it shows as a pause).
+        let talk = t.speech()
+        var pauses: [[String: Any]] = []
+        var at = 0.0
+        for s in talk {
+            if s.start - at >= 0.5 { pauses.append(["start": round3(at), "end": round3(s.start)]) }
+            at = s.end
+        }
+        if a.duration - at >= 0.5 { pauses.append(["start": round3(at), "end": round3(a.duration)]) }
+        d["pauses"] = pauses
+        if words { d["words"] = t.words.map { [round3($0.start), round3($0.end), $0.text] as [Any] } }
+        return d
+    }
+
     private static func assetJSON(_ a: MediaAsset) -> [String: Any] {
         var d: [String: Any] = ["id": a.id.uuidString, "name": a.name, "kind": a.kind.rawValue, "path": a.path]
         if a.kind != .image { d["duration"] = round3(a.duration) }
         if a.kind != .audio { d["width"] = a.width; d["height"] = a.height }
         if a.kind == .video { d["fps"] = round3(a.fps); d["has_audio"] = a.hasAudio }
+        return d
+    }
+
+    /// A library item with whether people talk in it (once it's been heard), for list_media.
+    @MainActor private static func assetJSON(_ a: MediaAsset, media: MediaStore) -> [String: Any] {
+        var d = assetJSON(a)
+        if let t = media.transcript(a.id) {
+            d["speech"] = !t.isEmpty
+            if !t.isEmpty { d["says"] = String(t.text.prefix(120)) + (t.text.count > 120 ? "…" : "") }
+        }
         return d
     }
 

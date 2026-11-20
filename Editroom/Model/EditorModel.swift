@@ -227,6 +227,14 @@ final class EditorModel: ObservableObject {
                         FileHandle.standardError.write("TOGGLE TIME \(ThemeStore.shared.timeStyle) playhead \(before) -> \(seen)\n".data(using: .utf8)!)
                     }
                 }
+                // `--transcribe <file>` (testing): hear a file and log its words with their times.
+                if let k = args.firstIndex(of: "--transcribe"), args.count > k + 1 {
+                    let url = URL(fileURLWithPath: args[k + 1])
+                    let t0 = Date()
+                    let t = await Transcripts.transcribe(url)
+                    let words = t?.words.map { String(format: "%.2f-%.2f %@", $0.start, $0.end, $0.text) }.joined(separator: " | ") ?? "nil"
+                    FileHandle.standardError.write("TRANSCRIBE \(String(format: "%.1f", Date().timeIntervalSince(t0)))s [\(t?.language ?? "-")] \(words)\n".data(using: .utf8)!)
+                }
                 if args.contains("--play") { self.play() }
                 if args.contains("--magic") {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)

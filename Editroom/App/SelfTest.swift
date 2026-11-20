@@ -1302,8 +1302,32 @@ enum SelfTest {
                 let typedCut = run("remove between 0:02 and 0:04").map(shots) ?? []
                 let typedOK = typedCut.count == 5 && abs((typedCut.last?.end ?? 0) - 15) < 1e-6
                     && MagicAgent.brief(request: "between 0:05 and 0:06 find a better clip", project: p, pointers: ptr).contains("is 5.00s to 6.00s on the timeline")
-                let mOK = timeOK && typedOK && clipOK && moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
-                log("MENTIONS \(mOK ? "OK" : "FAIL") time=\(timeOK) typed=\(typedOK) clip=\(clipOK) \(labels) move=\(moveOK) keep=\(keepOK) find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
+                // Speech: sentences, pauses and phrases from a transcript; Local cuts the pauses out of the
+                // talking shots, the shot's own sound with it, and leaves the rest in sync.
+                let said = Transcript(words: [.init(start: 1, end: 1.4, text: "Welcome"), .init(start: 1.4, end: 2, text: "back."),
+                                              .init(start: 5, end: 5.5, text: "It's"), .init(start: 5.5, end: 6, text: "raining.")], language: "en_US")
+                let speechOK = said.speech().count == 2 && said.sentences().map(\.text) == ["Welcome back.", "It's raining."]
+                    && said.says("it's RAINING") && !said.says("raining it's")
+                var sp = Project()
+                let talk = MediaAsset(path: "/tmp/talk.mov", name: "talk", kind: .video, duration: 10, width: 1920, height: 1080, fps: 30, hasAudio: true)
+                sp.assets = [talk]
+                let sv1 = sp.videoTracks[0].id, sa1 = sp.audioTracks[0].id, link = UUID()
+                var tv = Clip(trackID: sv1, kind: .video, assetID: talk.id, start: 0, duration: 10); tv.linkID = link
+                var ta = Clip(trackID: sa1, kind: .audio, assetID: talk.id, start: 0, duration: 10); ta.linkID = link
+                var broll = Clip(trackID: sv1, kind: .video, assetID: a.id, start: 10, duration: 3); broll.linkID = UUID()
+                sp.clips = [tv, ta, broll]
+                let cutPlan = LocalSpeech.plan(project: sp, only: nil) { $0 == talk.id ? said : Transcript(words: [], language: "") }
+                var sq = cutPlan.plan?.base ?? sp
+                for task in cutPlan.plan?.tasks ?? [] { task.edit.apply(&sq, 1) }
+                let vids = sq.clips.filter { $0.trackID == sv1 }.sorted { $0.start < $1.start }
+                let auds = sq.clips.filter { $0.trackID == sa1 }.sorted { $0.start < $1.start }
+                // Kept: 0.88-2.2 and 4.88-6.2 of the talk (1.32s each), then the 3s b-roll untouched.
+                let cutOK = vids.count == 3 && abs(vids[0].start) < 1e-6 && abs(vids[0].duration - 1.32) < 1e-6
+                    && abs(vids[1].sourceStart - 4.88) < 1e-6 && abs(vids[2].start - 2.64) < 1e-6 && vids[2].assetID == a.id
+                    && auds.count == 2 && zip(auds, vids).allSatisfy { abs($0.start - $1.start) < 1e-6 && abs($0.duration - $1.duration) < 1e-6 }
+                    && LocalSpeech.asks("cut out all the dead space") && !LocalSpeech.asks("make it fast")
+                let mOK = speechOK && cutOK && timeOK && typedOK && clipOK && moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
+                log("MENTIONS \(mOK ? "OK" : "FAIL") speech=\(speechOK) cut=\(cutOK) \(cutPlan.said) time=\(timeOK) typed=\(typedOK) clip=\(clipOK) \(labels) move=\(moveOK) keep=\(keepOK) find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
                 good = good && mOK
             }
             log("LOCAL IMPROVE \(good ? "OK" : "FAIL") \(detail)")
