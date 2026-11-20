@@ -99,6 +99,8 @@ final class MagicThinking: NSObject {
     static func begin(model: EditorModel, name: String, color: NSColor) -> MagicThinking? {
         current?.cancel()
         leaving?.cancel()
+        // Not shown at work (Settings > Magic): no scans or sketch; the button still says what it's doing.
+        guard MagicShow.animated else { return nil }
         guard let window = TimelineCanvas.current?.window, window.isVisible else { return nil }
         let t = MagicThinking(window: window, model: model, name: name, color: color)
         current = t

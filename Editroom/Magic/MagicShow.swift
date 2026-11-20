@@ -79,6 +79,18 @@ final class MagicShow: NSObject {
     /// Goes up each time Magic is stopped, so work started before then knows to drop what it found.
     static private(set) var runID = 0
 
+    /// Whether Magic is shown at work (the cursors, scans and sketch), from Settings > Magic.
+    static var animated: Bool { UserDefaults.standard.object(forKey: "magicShowWork") as? Bool ?? true }
+
+    /// The edit made at once, without the show: one undo step, the timeline fitted to it.
+    static func applyAtOnce(model: EditorModel, plan: MagicPlan) {
+        model.mutate { q in
+            q = plan.base
+            for task in plan.tasks { task.edit.apply(&q, 1) }
+        }
+        model.zoomToFit()
+    }
+
     /// Stop (the Magic button) or esc: whatever Magic is doing stops. While it's still working out the
     /// edit nothing has changed; mid-edit, everything the swarm has done so far is put back.
     static func stopAll() {
@@ -271,6 +283,14 @@ final class MagicShow: NSObject {
             let fromClick = CACurrentMediaTime() - started < 1.5 && MagicThinking.current == nil ? click : nil
             let launch = {
                 guard run == runID else { return }
+                // Not shown at work (Settings > Magic): the edit at once.
+                guard animated else {
+                    applyAtOnce(model: model, plan: plan)
+                    state.busy = false
+                    state.status = nil
+                    done?(said, true)
+                    return
+                }
                 let show = MagicShow(model: model, plan: plan, window: window, canvas: canvas, click: fromClick, performer: nil)
                 if let done { show.onFinish = { done(said, true) } }
                 current = show
@@ -304,6 +324,11 @@ final class MagicShow: NSObject {
     /// `done` when the show is over. Returns false if there's no timeline to play it on.
     @discardableResult
     static func play(model: EditorModel, plan: MagicPlan, done: (() -> Void)? = nil) -> Bool {
+        if !animated, !plan.tasks.isEmpty, current == nil {
+            applyAtOnce(model: model, plan: plan)
+            done?()
+            return true
+        }
         guard current == nil, !plan.tasks.isEmpty, let canvas = TimelineCanvas.current, let window = canvas.window, window.isVisible else {
             return false
         }

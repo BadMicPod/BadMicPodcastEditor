@@ -489,6 +489,7 @@ private struct MagicSettings: View {
     @ObservedObject var server = MCPServer.shared
     @ObservedObject var connect = AgentConnect.shared
     @AppStorage("magicEnabled") private var magicEnabled = true
+    @AppStorage("magicShowWork") private var showWork = true
 
     /// Claude Code only when it's on this Mac.
     private var apps: [AgentApp] {
@@ -499,10 +500,19 @@ private struct MagicSettings: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 8) {
-                    SectionLabel(text: "Magic button")
-                    ToggleRow(title: "Show the Magic button",
-                              note: "Magic makes an edit for you: a quick cut on this Mac, or one Claude or ChatGPT works out from what you ask. Turn it off to hide the button.",
-                              isOn: $magicEnabled)
+                    SectionLabel(text: "Magic")
+                    VStack(spacing: 0) {
+                        ToggleRow(title: "Enable Magic",
+                                  note: "Magic makes an edit for you: a quick cut on this Mac, or one Claude or ChatGPT works out from what you ask. Off hides the Magic button.",
+                                  isOn: $magicEnabled, boxed: false)
+                        Divider().overlay(Theme.stroke)
+                        ToggleRow(title: "Show Magic at work",
+                                  note: "Watch the cursors make the edit. Off, the edit appears at once, as one step you can undo.",
+                                  isOn: $showWork, boxed: false)
+                            .disabled(!magicEnabled)
+                            .opacity(magicEnabled ? 1 : 0.4)
+                    }
+                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.field))
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -562,6 +572,8 @@ private struct ToggleRow: View {
     let title: String
     let note: String
     @Binding var isOn: Bool
+    /// In its own box; false when it shares one with other rows.
+    var boxed = true
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
@@ -579,7 +591,7 @@ private struct ToggleRow: View {
                 .tint(Theme.accent)
         }
         .padding(14)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.field))
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(boxed ? Theme.field : .clear))
     }
 }
 
