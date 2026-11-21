@@ -220,7 +220,10 @@ private struct AITab: View {
                 if let kind = tab.kind {
                     AppLogo(kind: kind, size: 15).opacity(on ? 1 : 0.8)
                 } else {
-                    Image(systemName: "laptopcomputer").font(.system(size: 11, weight: .semibold))
+                    // Local runs on Apple Intelligence: Apple's mark, as the other tabs show their maker's.
+                    Image(systemName: "apple.logo").font(.system(size: 12.5, weight: .semibold))
+                        .frame(width: 15, height: 15)
+                        .offset(y: -0.5)
                 }
                 Text(tab.name).font(.system(size: 11.5, weight: .semibold))
             }
