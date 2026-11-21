@@ -1,8 +1,9 @@
 import Foundation
 
-/// The prompts sent with Magic, newest first: the last 20, each once, kept on this Mac only.
+/// The prompts sent with Magic, newest first: the last 20, each once. Kept in the project file, so each
+/// project has its own list.
 enum MagicHistory {
-    struct Entry: Codable, Equatable, Identifiable {
+    struct Entry: Codable, Equatable, Hashable, Identifiable {
         var text: String
         /// The Magic tab it was sent from (claude, chatgpt, local).
         var tab: String
@@ -10,22 +11,14 @@ enum MagicHistory {
         var id: String { text }
     }
 
-    static let key = "magicHistory"
     static let limit = 20
 
-    static var entries: [Entry] {
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let list = try? JSONDecoder().decode([Entry].self, from: data) else { return [] }
-        return list
-    }
-
-    /// A prompt just sent goes to the top (moved there if it was sent before).
-    static func add(_ text: String, tab: MagicAgent.Tab) {
+    /// The list with a just-sent prompt at the top (moved there if it was sent before).
+    static func adding(_ text: String, tab: MagicAgent.Tab, to list: [Entry]) -> [Entry]? {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { return }
-        var list = entries.filter { $0.text != t }
+        guard !t.isEmpty else { return nil }
+        var list = list.filter { $0.text != t }
         list.insert(Entry(text: t, tab: tab.rawValue, date: Date()), at: 0)
-        if let data = try? JSONEncoder().encode(Array(list.prefix(limit))) { UserDefaults.standard.set(data, forKey: key) }
+        return Array(list.prefix(limit))
     }
-
 }

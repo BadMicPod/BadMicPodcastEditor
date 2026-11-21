@@ -486,6 +486,8 @@ final class EditorModel: ObservableObject {
         redoKnown.append(Set(prev.assets.map(\.id)))
         // The library isn't undone (imports and relinks stay), except that items a step deleted come back.
         prev.assets = Self.restoring(prev.assets, into: project.assets)
+        // Magic's prompt history isn't undone either.
+        prev.magicHistory = project.magicHistory
         project = prev
         didChange()
     }
@@ -505,6 +507,7 @@ final class EditorModel: ObservableObject {
         // Items the step deleted go again; everything else in the library stays as it is now.
         let deleted = known.subtracting(next.assets.map(\.id))
         next.assets = project.assets.filter { !deleted.contains($0.id) }
+        next.magicHistory = project.magicHistory
         project = next
         didChange()
     }
@@ -924,6 +927,16 @@ final class EditorModel: ObservableObject {
             p.height = asset.height
             p.fps = fps
         }
+    }
+
+    /// Prompts sent with Magic in this project, newest first.
+    var magicHistory: [MagicHistory.Entry] { project.magicHistory ?? [] }
+
+    /// Keeps a prompt just sent with Magic in the project. Not an undoable edit.
+    func addMagicPrompt(_ text: String, tab: MagicAgent.Tab) {
+        guard let list = MagicHistory.adding(text, tab: tab, to: magicHistory) else { return }
+        project.magicHistory = list
+        isDirty = true
     }
 
     /// Remembers where exports go. Not an undoable edit.

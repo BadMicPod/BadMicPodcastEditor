@@ -296,6 +296,8 @@ struct Project: Codable, Equatable {
     /// The in/out range, set with I and O. Either can be set alone.
     var inPoint: Double?
     var outPoint: Double?
+    /// Prompts sent with Magic in this project, newest first (optional so older projects open).
+    var magicHistory: [MagicHistory.Entry]?
 }
 
 struct Marker: Codable, Hashable, Identifiable {

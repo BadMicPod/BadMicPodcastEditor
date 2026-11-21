@@ -110,7 +110,7 @@ struct MagicPopover: View {
                             IdeasMenu(sections: LocalIdeas.sections(hasEdit: hasEdit)) { idea in
                                 request = idea
                             }
-                            HistoryMenu { request = $0 }
+                            HistoryMenu(model: model) { request = $0 }
                         }
                     }
                 }
@@ -179,13 +179,13 @@ struct MagicPopover: View {
         close()
         let text = request.trimmingCharacters(in: .whitespacesAndNewlines)
         request = ""
-        MagicHistory.add(text, tab: .local)
+        model.addMagicPrompt(text, tab: .local)
         LocalMagic.run(text, model: model)
     }
 
     private func go(_ kind: MagicAgent.Kind) {
         close()
-        MagicHistory.add(request, tab: kind == .claude ? .claude : .chatgpt)
+        model.addMagicPrompt(request, tab: kind == .claude ? .claude : .chatgpt)
         ai.start(request: request, with: kind, model: model)
         request = ""
     }
@@ -349,7 +349,7 @@ private struct PromptForm: View {
                 HStack(spacing: 5) {
                     IdeasMenu(sections: (hasEdit ? [("Improve", Self.improve)] : []) + [("Create", Self.make), ("Sound", Self.sound)],
                               use: use)
-                    HistoryMenu(use: use)
+                    HistoryMenu(model: model, use: use)
                 }
             }
             .padding(.bottom, 8)
@@ -436,6 +436,7 @@ private struct IdeasMenu: View {
 /// Prompts sent before (newest first, the AI each went to on the right): one fills the box. A menu
 /// made by hand, so each prompt can wrap to two lines and keep the menu narrow.
 private struct HistoryMenu: View {
+    let model: EditorModel
     let use: (String) -> Void
 
     /// The button's own view, so the menu opens under it (as Ideas does).
@@ -459,7 +460,7 @@ private struct HistoryMenu: View {
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.addItem(NSMenuItem.sectionHeader(title: "History"))
-        let entries = MagicHistory.entries
+        let entries = model.magicHistory
         if entries.isEmpty {
             menu.addItem(ActionItem("Prompts you send show up here.", enabled: false) {})
         }
@@ -685,7 +686,7 @@ private struct PromptBox: View {
     }
 
     private func recall(back: Bool) -> Bool {
-        let past = MagicHistory.entries.map(\.text)
+        let past = model.magicHistory.map(\.text)
         guard !past.isEmpty else { return false }
         let now = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if now.isEmpty {

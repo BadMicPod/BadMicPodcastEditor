@@ -486,6 +486,25 @@ enum SelfTest {
             log("TRACKS \(decoded && solo && lock ? "OK" : "FAIL") decode=\(decoded) solo=\(solo) lock=\(lock)")
             ok = ok && decoded && solo && lock
         }
+        // Magic history: kept in the project file, newest first and each once, and undo leaves it alone.
+        do {
+            let m = EditorModel()
+            m.addMagicPrompt("make a quick cut", tab: .local)
+            m.mutate { $0.width = 1280 }
+            m.addMagicPrompt("slow-mo moment", tab: .chatgpt)
+            m.addMagicPrompt(" make a quick cut ", tab: .claude)
+            m.undo()
+            let order = m.magicHistory.map(\.text) == ["make a quick cut", "slow-mo moment"] && m.magicHistory[0].tab == "claude"
+            let saved = (try? JSONEncoder().encode(m.project)).flatMap { try? JSONDecoder().decode(Project.self, from: $0) }
+            let file = saved?.magicHistory?.map(\.text) == m.magicHistory.map(\.text)
+            let old = (try? JSONEncoder().encode(Project())).flatMap { try? JSONDecoder().decode(Project.self, from: $0) }
+            let opensOld = old != nil && old?.magicHistory == nil && EditorModel().magicHistory.isEmpty
+            for i in 0..<25 { m.addMagicPrompt("prompt \(i)", tab: .local) }
+            let capped = m.magicHistory.count == MagicHistory.limit && m.magicHistory[0].text == "prompt 24"
+            let good = order && file && opensOld && capped
+            log("HISTORY \(good ? "OK" : "FAIL") order=\(order) file=\(file) opensOld=\(opensOld) capped=\(capped)")
+            ok = ok && good
+        }
         // Typed timecodes.
         do {
             let cases: [(String, Double?)] = [("1000", 10), ("1:02:03", 62.1), ("00:00:02:15", 2.5), ("12", 0.4), ("abc", nil)]
