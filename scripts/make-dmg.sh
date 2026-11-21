@@ -32,7 +32,7 @@ cp -R "$app" "$work/src/"
 mkdir -p "${out:h}"
 rm -f "$out"
 # Window is 600×412 points: the 380pt background plus the 32pt title bar. 148pt icons sit
-# side by side, 166 and 440 across, 180 down. Keep these when swapping backgrounds.
+# side by side, 160 and 440 across (even about the 300pt middle), 180 down. Keep these when swapping backgrounds.
 create-dmg \
   --volname "Editroom" \
   --background "$work/background.tiff" \
@@ -40,7 +40,7 @@ create-dmg \
   --window-size 600 412 \
   --icon-size 148 \
   --text-size 13 \
-  --icon "Editroom.app" 166 180 \
+  --icon "Editroom.app" 160 180 \
   --app-drop-link 440 180 \
   --hide-extension "Editroom.app" \
   --no-internet-enable \
