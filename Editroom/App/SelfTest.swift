@@ -516,7 +516,7 @@ enum SelfTest {
                 return q.clips.first { $0.kind == .text }
             }
             let end = titled("add vlog title screen at the end")
-            let endOK = end.map { abs($0.end - 10) < 0.05 && $0.text.string == "Thanks for watching" && $0.trackID == p.videoTracks[1].id } ?? false
+            let endOK = end.map { abs($0.end - 10) < 0.05 && $0.text.string == "Title" && $0.trackID == p.videoTracks[1].id } ?? false
             let start = titled("put a title saying \"Day one\" at the start")
             let startOK = start.map { $0.start == 0 && $0.text.string == "Day one" } ?? false
             let newCut = !LocalTitle.asks("make a new montage with a title", project: p)

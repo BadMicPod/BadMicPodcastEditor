@@ -35,16 +35,8 @@ enum LocalTitle {
         case .end: start = max(first, last - length)
         case .playhead: start = min(max(first, playhead), max(first, last - length))
         }
-        let words: String = {
-            if let w = LocalBrain.titleAsked(request), !w.isEmpty { return w }
-            if where_ == .end { return "Thanks for watching" }
-            // When it was filmed, as a new cut's title would be.
-            let dates = Set(edit.compactMap(\.assetID)).compactMap { id -> Date? in
-                guard let a = p.asset(id) else { return nil }
-                return (try? FileManager.default.attributesOfItem(atPath: a.path))?[.creationDate] as? Date
-            }
-            return AutoPlanner.title(for: dates, today: Date())
-        }()
+        // Their words when quoted; otherwise a placeholder to type over.
+        let words = LocalBrain.titleAsked(request).flatMap { $0.isEmpty ? nil : $0 } ?? "Title"
 
         // Above the picture: the first video track (not V1) that's free there, else a new one on top.
         var edits: [MagicEdit] = []
