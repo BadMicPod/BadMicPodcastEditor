@@ -223,7 +223,7 @@ private struct AITab: View {
                     // Local runs on Apple Intelligence: Apple's mark, as the other tabs show their maker's.
                     Image(systemName: "apple.logo").font(.system(size: 12.5, weight: .semibold))
                         .frame(width: 15, height: 15)
-                        .offset(y: -0.5)
+                        .offset(y: -1.5)
                 }
                 Text(tab.name).font(.system(size: 11.5, weight: .semibold))
             }
@@ -966,7 +966,10 @@ struct MagicNoteView: View {
                 if let agent = note.agent {
                     AppLogo(kind: agent, size: 18)
                 } else {
-                    Image(systemName: "laptopcomputer").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text).frame(width: 18, height: 18)
+                    // Local runs on Apple Intelligence: Apple's mark, as on its Magic tab.
+                    Image(systemName: "apple.logo").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text)
+                        .frame(width: 18, height: 18)
+                        .offset(y: -1.5)
                 }
                 Text(note.agent?.name ?? "Local").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text)
                 if !note.detail.isEmpty {
