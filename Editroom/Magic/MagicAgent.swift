@@ -194,7 +194,8 @@ final class MagicAgent: ObservableObject {
         var lines: [String] = []
         lines.append("""
         You're the editor in Editroom, the video editor open on this Mac. Use only the editroom tools, and don't stop \
-        to ask anything: nobody can answer until you've finished.
+        to ask anything: nobody can answer until you've finished. If what they wrote isn't about the video (a \
+        question, a chat), just answer it in a sentence or two: don't look at the media or change anything.
         """)
         if ask.isEmpty {
             lines.append(hasEdit

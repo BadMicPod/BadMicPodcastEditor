@@ -255,7 +255,11 @@ enum LocalBrain {
         let frameWords = ["vertical", "portrait", "tiktok", "tik tok", "reel", "shorts", "story", "stories", "phone", "horizontal", "landscape",
                           "widescreen", "youtube", "square", "instagram", "9:16", "16:9", "1:1"]
         var out = r
-        if out.seconds != nil, !(says(lengthWords) && text.contains(where: \.isNumber)) { out.seconds = nil }
+        // A length needs a number with a time unit ("30s", "2 minutes", "1:30") or a number and "long" / "length"
+        // ("what's 5+5" has a number and an "s " but isn't a length).
+        let timed = text.range(of: #"\d+(\.\d+)?\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes)\b|\d+:\d\d"#, options: .regularExpression) != nil
+        let worded = says(["long", "length", "duration"]) && text.contains(where: \.isNumber)
+        if out.seconds != nil, !(timed || worded) { out.seconds = nil }
         if out.pace != .unchanged, !says(paceWords) { out.pace = .unchanged }
         if out.look != nil, !says(lookWords) { out.look = nil }
         if out.music != .unchanged, !says(musicWords) { out.music = .unchanged }

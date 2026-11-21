@@ -1337,8 +1337,14 @@ enum SelfTest {
             let checked = LocalBrain.checked(noisy, against: "add sound effects and make it 20 seconds")
             let checkOK = checked.seconds == 20 && checked.pace == .unchanged && checked.look == nil && checked.music == .unchanged
                 && checked.frame == .unchanged && checked.cannotDo == "sound effects"
-            good = good && checkOK
-            detail += " | check=\(checkOK)"
+            // A question with numbers in it isn't a length; real lengths in other wordings still are.
+            var asked = LocalRecipe(); asked.seconds = 100
+            let lengths = LocalBrain.checked(asked, against: "what's 5+5?").seconds == nil
+                && LocalBrain.checked(asked, against: "make it 30s").seconds == 100
+                && LocalBrain.checked(asked, against: "1:30 long cut").seconds == 100
+                && LocalBrain.checked(asked, against: "length of 45").seconds == 100
+            good = good && checkOK && lengths
+            detail += " | check=\(checkOK) lengths=\(lengths)"
             // @ mentions: found by name (with or without the extension, any case), not inside an address;
             // in plain words for Apple's model; Local's direct edits on what they point at.
             do {

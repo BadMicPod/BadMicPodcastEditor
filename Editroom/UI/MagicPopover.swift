@@ -1192,7 +1192,11 @@ enum LocalMagic {
             if recipe.isEmpty, !LocalBrain.isGeneral(request) {
                 MagicThinking.current?.end()
                 let what = recipe.cannotDo.isEmpty ? "that" : recipe.cannotDo
-                MagicAgent.shared.note = MagicAgent.Note(agent: nil, text: """
+                // A question (not about the edit): Local only edits, so it says so and leaves the edit alone.
+                let question = request.contains("?") && recipe.cannotDo.isEmpty
+                MagicAgent.shared.note = MagicAgent.Note(agent: nil, text: question ? """
+                    Local only edits your video, so it left it as it was. To ask a question, use Claude or ChatGPT.
+                    """ : """
                     Local can't do \(what). It can change the length, the pace, the look, the music, the frame shape \
                     (vertical, square), and which files to use or take out, by name. For anything that needs \
                     understanding what's in your shots, use Claude or ChatGPT.
