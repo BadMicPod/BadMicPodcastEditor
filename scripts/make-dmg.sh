@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Builds Editroom (Release) and packs it into a drag-to-Applications DMG with the film-strip background
-# (scripts/dmg/background*.png, drawn by scripts/dmg/make-background.swift).
+# (scripts/dmg/background.png at 600×380 and background@2x.png at 1200×760).
 #   scripts/make-dmg.sh            build, then make build/Editroom.dmg
 #   scripts/make-dmg.sh --no-build use the last Release build in /tmp/editroom-dd
 # Needs create-dmg (brew install create-dmg). The first run asks to let Terminal control Finder,
@@ -31,8 +31,8 @@ cp -R "$app" "$work/src/"
 
 mkdir -p "${out:h}"
 rm -f "$out"
-# Window is 600×412 points: the 380pt background plus the 32pt title bar. 128pt icons sit either
-# side of the arrow drawn by scripts/dmg/make-background.swift (rerun it after changing these spots).
+# Window is 600×412 points: the 380pt background plus the 32pt title bar. 128pt icons sit
+# side by side, 160 and 440 across, 220 down.
 create-dmg \
   --volname "Editroom" \
   --background "$work/background.tiff" \
