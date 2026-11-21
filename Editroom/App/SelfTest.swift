@@ -505,6 +505,25 @@ enum SelfTest {
             log("HISTORY \(good ? "OK" : "FAIL") order=\(order) file=\(file) opensOld=\(opensOld) capped=\(capped)")
             ok = ok && good
         }
+        // Local titles on an edit: at the end (default words), and their own words at the start.
+        do {
+            var p = Project()
+            p.clips = [Clip(trackID: p.videoTracks[0].id, kind: .video, start: 0, duration: 10)]
+            func titled(_ request: String) -> Clip? {
+                guard LocalTitle.asks(request, project: p), let plan = LocalTitle.plan(request: request, playhead: 0, project: p).plan else { return nil }
+                var q = plan.base
+                for t in plan.tasks { t.edit.apply(&q, 1) }
+                return q.clips.first { $0.kind == .text }
+            }
+            let end = titled("add vlog title screen at the end")
+            let endOK = end.map { abs($0.end - 10) < 0.05 && $0.text.string == "Thanks for watching" && $0.trackID == p.videoTracks[1].id } ?? false
+            let start = titled("put a title saying \"Day one\" at the start")
+            let startOK = start.map { $0.start == 0 && $0.text.string == "Day one" } ?? false
+            let newCut = !LocalTitle.asks("make a new montage with a title", project: p)
+            let good = endOK && startOK && newCut
+            log("LOCAL TITLE \(good ? "OK" : "FAIL") end=\(endOK) start=\(startOK) newCut=\(newCut)")
+            ok = ok && good
+        }
         // Typed timecodes.
         do {
             let cases: [(String, Double?)] = [("1000", 10), ("1:02:03", 62.1), ("00:00:02:15", 2.5), ("12", 0.4), ("abc", nil)]

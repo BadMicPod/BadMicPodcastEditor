@@ -553,7 +553,8 @@ enum LocalImprover {
         }
         if edits.isEmpty, judgedNone || !notes.isEmpty {
             let text = notes.map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: ". ")
-            return Outcome(plan: MagicPlan(base: p, tasks: []), summary: "", notes: notes, focused: true, message: text + ".")
+            return Outcome(plan: MagicPlan(base: p, tasks: []), summary: "", notes: notes, focused: true,
+                           message: text.isEmpty ? "Your edit already looks good; nothing to change." : text + ".")
         }
         guard !edits.isEmpty else { return nil }
         // The length only when it was part of the job: a focused request ("only IMG_1607") just says what it did.

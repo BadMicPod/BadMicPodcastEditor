@@ -1062,6 +1062,17 @@ enum LocalMagic {
                 await perform(outcome, model: model, run: run)
                 return
             }
+            // A title on the edit that's there: at the start, the end or the playhead, nothing else changed.
+            if LocalTitle.asks(request, project: model.project) {
+                state.busy = false
+                state.status = nil
+                let outcome = LocalTitle.plan(request: request, playhead: pointers.playhead, project: model.project)
+                if CommandLine.arguments.contains("--magic-local") {
+                    FileHandle.standardError.write("MAGIC LOCAL title: \(outcome.said) (\(outcome.plan?.tasks.count ?? 0) edits)\n".data(using: .utf8)!)
+                }
+                await perform(outcome, model: model, run: run)
+                return
+            }
             // Speed ramps: a slow-motion moment, or ramping into the cuts.
             if LocalRamp.asks(request) {
                 state.busy = false
