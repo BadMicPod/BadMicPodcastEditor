@@ -259,9 +259,10 @@ private struct SourceFrame: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             HStack(spacing: 6) {
-                Text(a.name).font(.system(size: 11.5, weight: .semibold))
-                if let note = current.note { Text(note).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.accent) }
-                Text(Timecode.string(current.time, fps: fps)).font(Theme.mono(11.5, .regular)).foregroundStyle(Color(hex: 0x9A9A96))
+                // Trimming a clip's edge: just the time (the clip is the one being dragged).
+                if current.note == nil { Text(a.name).font(.system(size: 11.5, weight: .semibold)) }
+                Text(Timecode.string(current.time, fps: fps)).font(Theme.mono(11.5, .regular))
+                    .foregroundStyle(Color(hex: current.note == nil ? 0x9A9A96 : 0xF2F2F0))
             }
             // On the picture, so light type in every theme.
             .foregroundStyle(Color(hex: 0xF2F2F0))

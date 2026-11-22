@@ -752,8 +752,10 @@ final class TimelineCanvas: NSView {
         let t = left ? c.start : max(c.start, c.end - 1 / max(1, p.fps))
         let src = c.isFreeze ? c.sourceStart : c.sourceTime(at: t)
         let shown = min(max(0, c.playsBackwards ? asset.duration - src : src), max(0, asset.duration - 0.02))
+        // Sharp at once from the made-ahead frames (as large as the viewer's picture); without them the
+        // last sharp frame stays up until the exact one is decoded, rather than a small blurry one.
         model.sourcePreview.show(asset, at: shown, media: model.media,
-                                 quick: model.media.instantFrame(asset: asset, at: shown / asset.duration), note: left ? "In" : "Out")
+                                 quick: model.media.scrubCache.cgImage(id, at: shown), note: left ? "In" : "Out")
     }
 
     private func updateStickyTrim(grabbed: Clip, left: Bool, startTime: Double, originals: [Clip], p: CGPoint) {

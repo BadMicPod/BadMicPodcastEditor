@@ -37,6 +37,15 @@ final class ScrubCache {
         return CIImage(data: f.data.subdata(in: f.ranges[i]))
     }
 
+    /// The frame nearest a time, decoded now, at full size: for the viewer while a clip's edge is
+    /// dragged, where a frame is wanted at once and sharp.
+    func cgImage(_ id: UUID, at time: Double) -> CGImage? {
+        guard let f = frames[id], !f.ranges.isEmpty else { return nil }
+        let i = min(f.ranges.count - 1, max(0, Int((time * Self.rate).rounded())))
+        guard let src = CGImageSourceCreateWithData(f.data.subdata(in: f.ranges[i]) as CFData, nil) else { return nil }
+        return CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+    }
+
     /// Queues a video's frames (once).
     func make(_ id: UUID, url: URL, duration: Double) {
         guard frames[id] == nil, working != id, duration > 0, !queue.contains(where: { $0.0 == id }) else { return }
