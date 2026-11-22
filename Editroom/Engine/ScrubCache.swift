@@ -107,32 +107,51 @@ final class ScrubCache {
         reader.add(output)
         guard reader.startReading() else { return nil }
         let count = Int((duration * rate).rounded(.up)) + 1
-        var out: [Data] = []
-        while out.count < count, let sample = output.copyNextSampleBuffer() {
+        // Written to disk as they're made (an eleven-minute file is thousands of frames): first room for
+        // how many and where each ends, then the frames; the ends go in once they're all known.
+        let partial = file.appendingPathExtension("part")
+        FileManager.default.createFile(atPath: partial.path, contents: nil)
+        guard let handle = try? FileHandle(forWritingTo: partial) else { return nil }
+        defer { try? handle.close() }
+        let head = 8 + count * 8
+        try? handle.write(contentsOf: Data(count: head))
+        var ends: [UInt64] = []
+        var size = UInt64(0)
+        var last: Data?
+        func put(_ frame: Data) {
+            try? handle.write(contentsOf: frame)
+            size += UInt64(frame.count)
+            ends.append(size)
+            last = frame
+        }
+        while ends.count < count, let sample = output.copyNextSampleBuffer() {
             guard let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
             let t = CMSampleBufferGetPresentationTimeStamp(sample).seconds
-            // This frame stands for every tenth of a second it's the latest one for.
-            while out.count < count, Double(out.count) / rate <= t + 0.5 / rate {
-                guard let jpeg = autoreleasepool(invoking: { encode(buffer) }) else { return nil }
-                out.append(jpeg)
+            // This frame stands for every twelfth of a second it's the latest one for.
+            while ends.count < count, Double(ends.count) / rate <= t + 0.5 / rate {
+                guard let frame = autoreleasepool(invoking: { encode(buffer) }) else {
+                    try? FileManager.default.removeItem(at: partial)
+                    return nil
+                }
+                put(frame)
             }
         }
         reader.cancelReading()
-        guard !out.isEmpty else { return nil }
-        // The end of the file: the last frame stands in.
-        while out.count < count { out.append(out[out.count - 1]) }
-        // One file: how many frames, where each ends, then the frames.
-        var blob = Data()
-        var n = UInt64(out.count)
-        blob.append(Data(bytes: &n, count: 8))
-        var end = UInt64(0)
-        for f in out {
-            end += UInt64(f.count)
-            var e = end
-            blob.append(Data(bytes: &e, count: 8))
+        guard let end = last else {
+            try? FileManager.default.removeItem(at: partial)
+            return nil
         }
-        for f in out { blob.append(f) }
-        guard (try? blob.write(to: file, options: .atomic)) != nil else { return nil }
+        // The end of the file: the last frame stands in.
+        while ends.count < count { put(end) }
+        var header = Data()
+        var n = UInt64(count)
+        header.append(Data(bytes: &n, count: 8))
+        for var e in ends { header.append(Data(bytes: &e, count: 8)) }
+        try? handle.seek(toOffset: 0)
+        try? handle.write(contentsOf: header)
+        try? handle.close()
+        try? FileManager.default.removeItem(at: file)
+        guard (try? FileManager.default.moveItem(at: partial, to: file)) != nil else { return nil }
         trim()
         return load(file)
     }

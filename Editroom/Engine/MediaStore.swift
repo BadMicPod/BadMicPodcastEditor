@@ -377,9 +377,14 @@ final class MediaStore: ObservableObject {
         gen.cancelAllCGImageGeneration()
         gen.generateCGImageAsynchronously(for: CMTime(seconds: time, preferredTimescale: 600)) { cg, _, _ in
             guard let cg else { return }
-            Task { @MainActor in completion(cg) }
+            // Its values are the file's Rec.709 ones, as playback's are, but labelled "CoreMedia 709",
+            // which is shown lighter than playback; labelled Rec.709 it looks as playback does.
+            let shown = (cg.colorSpace?.name as String?) == "kCGColorSpaceCoreMedia709" ? (cg.copy(colorSpace: Self.rec709) ?? cg) : cg
+            Task { @MainActor in completion(shown) }
         }
     }
+
+    nonisolated static let rec709 = CGColorSpace(name: CGColorSpace.itur_709) ?? CGColorSpaceCreateDeviceRGB()
 
     // MARK: Reversed sound
 
