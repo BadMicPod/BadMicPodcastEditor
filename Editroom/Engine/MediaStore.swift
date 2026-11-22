@@ -165,6 +165,50 @@ final class MediaStore: ObservableObject {
 
     private var tagURLs: [UUID: URL] = [:]
 
+    // MARK: Files changed on disk
+
+    /// A file as it was when it was opened: its size and when it was last changed.
+    struct FileStamp: Equatable {
+        let size: Int
+        let date: Date
+        init?(_ path: String) {
+            guard let a = try? FileManager.default.attributesOfItem(atPath: path),
+                  let date = a[.modificationDate] as? Date else { return nil }
+            size = (a[.size] as? NSNumber)?.intValue ?? 0
+            self.date = date
+        }
+    }
+    private var stamps: [UUID: FileStamp] = [:]
+
+    /// Items whose file is different now from when it was opened (saved over, re-exported), with how
+    /// it is now. A file that's gone is offline instead, not changed.
+    func changedOnDisk(_ assets: [MediaAsset]) -> [UUID: FileStamp] {
+        var changed: [UUID: FileStamp] = [:]
+        for a in assets {
+            guard let was = stamps[a.id], let now = FileStamp(a.path), now != was else { continue }
+            changed[a.id] = now
+        }
+        return changed
+    }
+
+    /// Opens an item's file again, as it is on disk now: its picture, sound, length and everything made
+    /// from it (thumbnails, waveform, scrub frames, what's seen and said in it) come from the new file.
+    /// Returns the item as the new file describes it, keeping its identity and name.
+    func reload(_ asset: MediaAsset) async -> MediaAsset? {
+        let original = URL(fileURLWithPath: asset.path)
+        for url in Set([original, asset.url]) {
+            SceneTagStore.shared.forget(url)
+            Transcripts.shared.forget(url)
+            AnalysisWarmer.shared.forget(url)
+        }
+        reverseJobs[asset.id]?.cancel()
+        reverseJobs[asset.id] = nil
+        // A converted copy is made again from the new original (named for it, so it's a new copy).
+        guard let fresh = await importFile(original, replacing: asset) else { return nil }
+        notifyVisual()
+        return fresh
+    }
+
     /// What a library item shows ("pool", "beach"), once it's been seen.
     func sceneTags(_ id: UUID) -> SceneTags? { tagURLs[id].flatMap { SceneTagStore.shared.tags(for: $0) } }
 
@@ -181,12 +225,17 @@ final class MediaStore: ObservableObject {
         reversedWaveforms[id] = nil
         stills[id] = nil
         thumbs = thumbs.filter { $0.key.asset != id }
+        pendingThumbs = pendingThumbs.filter { $0.asset != id }
+        scrubFrames = scrubFrames.filter { $0.key.asset != id }
+        waveformJobs.remove(id)
+        stamps[id] = nil
         strips.forget(id)
         scrubCache.forget(id)
     }
 
     private func adopt(_ rt: MediaRuntime, for asset: MediaAsset) {
         runtimes[asset.id] = rt
+        stamps[asset.id] = FileStamp(asset.path)
         if rt.videoTrack != nil {
             // Within a quarter second of each tile's time: with no tolerance AVFoundation hands back the
             // nearest keyframe, and in a file with few of them every tile showed the same picture.
@@ -288,6 +337,7 @@ final class MediaStore: ObservableObject {
     private func loadStill(_ asset: MediaAsset) {
         let url = asset.url
         let id = asset.id
+        stamps[id] = FileStamp(asset.path)
         tagURLs[id] = url
         SceneTagStore.shared.make(url, isVideo: false, duration: 0)
         AnalysisWarmer.shared.warm(url, kind: .image, song: false)
@@ -321,11 +371,12 @@ final class MediaStore: ObservableObject {
     func thumbnail(asset id: UUID, time: Double) -> CGImage? {
         let key = ThumbKey(asset: id, ms: Int((time * 1000).rounded()))
         if let img = thumbs[key] { return img }
-        guard !pendingThumbs.contains(key), let gen = runtimes[id]?.generator else { return nil }
+        guard !pendingThumbs.contains(key), let rt = runtimes[id], let gen = rt.generator else { return nil }
         pendingThumbs.insert(key)
         gen.generateCGImageAsynchronously(for: CMTime(seconds: time, preferredTimescale: 600)) { [weak self] cg, _, _ in
             Task { @MainActor in
-                guard let self else { return }
+                // (Not from a file that has since been opened again.)
+                guard let self, self.runtimes[id] === rt else { return }
                 self.pendingThumbs.remove(key)
                 guard let cg else { return }
                 if self.thumbs.count > 1500 { self.thumbs.removeAll() }
@@ -362,7 +413,7 @@ final class MediaStore: ObservableObject {
         gen.generateCGImageAsynchronously(for: CMTime(seconds: time, preferredTimescale: 600)) { [weak self] cg, _, _ in
             guard let cg else { return }
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.runtimes[id] === rt else { return }
                 if self.scrubFrames.count > 600 { self.scrubFrames.removeAll() }
                 self.scrubFrames[key] = cg
                 completion(cg)
@@ -459,9 +510,11 @@ final class MediaStore: ObservableObject {
                 if let wf { WaveformReader.save(wf, to: cache) }
             }
             await MainActor.run { [weak self] in
-                self?.waveformJobs.remove(id)
-                if let wf { self?.waveforms[id] = wf; self?.reversedWaveforms[id] = nil }
-                self?.notifyVisual()
+                // (Not from a file that has since been opened again.)
+                guard let self, self.runtimes[id] === rt else { return }
+                self.waveformJobs.remove(id)
+                if let wf { self.waveforms[id] = wf; self.reversedWaveforms[id] = nil }
+                self.notifyVisual()
             }
         }
     }

@@ -25,7 +25,10 @@ final class ScrubCache {
     private var frames: [UUID: Store] = [:]
     private var queue: [(UUID, URL, Double)] = []
     private var working: UUID?
-    /// Recently decoded frames, so going back and forth over the same stretch decodes nothing.
+    /// Being made from a file that has since changed: thrown away when done, and made again from the
+    /// new file if it was asked for meanwhile.
+    private var stale = Set<UUID>()
+    private var again: [UUID: (URL, Double)] = [:]
 
     func has(_ id: UUID) -> Bool { frames[id] != nil }
 
@@ -40,6 +43,7 @@ final class ScrubCache {
 
     /// Queues a video's frames (once).
     func make(_ id: UUID, url: URL, duration: Double) {
+        if working == id, stale.contains(id) { again[id] = (url, duration); return }
         guard frames[id] == nil, working != id, duration > 0, !queue.contains(where: { $0.0 == id }) else { return }
         queue.append((id, url, duration))
         next()
@@ -48,6 +52,7 @@ final class ScrubCache {
     func forget(_ id: UUID) {
         frames[id] = nil
         queue.removeAll { $0.0 == id }
+        if working == id { stale.insert(id) }
     }
 
     private func next() {
@@ -59,7 +64,9 @@ final class ScrubCache {
             await MainActor.run {
                 guard let self else { return }
                 self.working = nil
-                if let made { self.frames[id] = made }
+                if self.stale.remove(id) != nil {
+                    if let (url, d) = self.again.removeValue(forKey: id) { self.queue.append((id, url, d)) }
+                } else if let made { self.frames[id] = made }
                 self.next()
             }
         }

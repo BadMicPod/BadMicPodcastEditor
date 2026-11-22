@@ -117,6 +117,15 @@ final class Transcripts: ObservableObject {
     private var queue: [URL] = []
     private var working: URL?
     private var waiters: [String: [CheckedContinuation<Transcript?, Never>]] = [:]
+    /// Being heard from a file that has since changed: thrown away when done, and heard again.
+    private var stale = Set<String>()
+
+    /// A file changed on disk: what was heard in it goes (its saved transcript is named for the old file).
+    func forget(_ url: URL) {
+        made[url.path] = nil
+        states[url.path] = nil
+        if working == url { stale.insert(url.path) }
+    }
 
     /// Speech recognition on this Mac needs macOS 26.
     static var available: Bool {
@@ -131,6 +140,7 @@ final class Transcripts: ObservableObject {
     /// Queues a file. `soon` puts it first (Magic is asking for it now).
     func make(_ url: URL, soon: Bool = false) {
         guard Self.available, made[url.path] == nil else { return }
+        if working == url, stale.contains(url.path) { states[url.path] = .waiting; return }
         if let t = load(url) {
             made[url.path] = t
             states[url.path] = .ready
@@ -174,7 +184,15 @@ final class Transcripts: ObservableObject {
             await MainActor.run {
                 let t = Transcripts.shared
                 t.working = nil
-                if let result {
+                if t.stale.remove(url.path) != nil {
+                    // Heard from the old file; the new one goes to the back of the line.
+                    if t.states[url.path] == .waiting {
+                        t.queue.append(url)
+                        t.next()
+                        return
+                    }
+                    t.states[url.path] = nil
+                } else if let result {
                     t.made[url.path] = result
                     t.states[url.path] = .ready
                     t.save(result, for: url)

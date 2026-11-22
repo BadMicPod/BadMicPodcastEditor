@@ -217,11 +217,23 @@ final class SceneTagStore: ObservableObject {
     private var made: [String: SceneTags] = [:]
     private var queue: [(URL, Bool, Double)] = []
     private var working: URL?
+    /// Being looked at from a file that has since changed: thrown away when done, and looked at again.
+    private var stale = Set<String>()
+    private var again: [String: (URL, Bool, Double)] = [:]
+
+    /// A file changed on disk: what was seen in it goes (its saved tags are named for the old file).
+    func forget(_ url: URL) {
+        made[url.path] = nil
+        queue.removeAll { $0.0 == url }
+        if working == url { stale.insert(url.path) }
+        version += 1
+    }
 
     func tags(for url: URL) -> SceneTags? { made[url.path] ?? load(url) }
 
     /// Queues a file: a video (`isVideo`, with its length) or a photo.
     func make(_ url: URL, isVideo: Bool, duration: Double) {
+        if working == url, stale.contains(url.path) { again[url.path] = (url, isVideo, duration); return }
         guard made[url.path] == nil, working != url, !queue.contains(where: { $0.0 == url }) else { return }
         if load(url) != nil { return }
         queue.append((url, isVideo, duration))
@@ -237,7 +249,9 @@ final class SceneTagStore: ObservableObject {
             await MainActor.run {
                 let store = SceneTagStore.shared
                 store.working = nil
-                if let result {
+                if store.stale.remove(url.path) != nil {
+                    if let job = store.again.removeValue(forKey: url.path) { store.queue.append(job) }
+                } else if let result {
                     store.made[url.path] = result
                     store.save(result, for: url)
                     store.version += 1

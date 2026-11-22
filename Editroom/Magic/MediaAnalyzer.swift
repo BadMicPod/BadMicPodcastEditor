@@ -432,6 +432,9 @@ final class AnalysisWarmer {
     private var queued = Set<String>()
     private var working = false
 
+    /// A file changed on disk, so it can be looked at again (its saved results are named for the old file).
+    func forget(_ url: URL) { queued.remove(url.path) }
+
     /// Queues a file: a song (`song`) for its beats, anything else for its moments.
     func warm(_ url: URL, kind: MediaKind, song: Bool) {
         guard !queued.contains(url.path) else { return }

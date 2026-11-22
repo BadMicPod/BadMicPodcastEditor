@@ -437,6 +437,51 @@ enum SelfTest {
             ok = ok && relative && swept
             }
         }
+        // Reload: a file saved over with a shorter one is noticed, opened again, and its clip cut to fit
+        // (one undo step); its identity stays.
+        do {
+            let fm = FileManager.default
+            let vids = ((try? fm.contentsOfDirectory(at: mediaDir, includingPropertiesForKeys: nil)) ?? [])
+                .filter { $0.pathExtension.lowercased() == "mp4" }
+            var probed: [(URL, Double)] = []
+            for v in vids { if let a = await media.importFile(v) { probed.append((v, a.duration)) } }
+            probed.sort { $0.1 > $1.1 }
+            if probed.count < 2 || probed[0].1 - probed.last!.1 < 0.5 {
+                log("RELOAD SKIP needs two videos of different lengths in the media folder")
+            } else {
+                let work = outDir.appendingPathComponent("reload")
+                try? fm.removeItem(at: work)
+                try? fm.createDirectory(at: work, withIntermediateDirectories: true)
+                let file = work.appendingPathComponent("r.mp4")
+                try? fm.copyItem(at: probed[0].0, to: file)
+                let m = EditorModel()
+                var p = Project()
+                if let a = await m.media.importFile(file) {
+                    p.assets = [a]
+                    p.clips = [Clip(trackID: p.videoTracks[0].id, kind: .video, assetID: a.id, start: 0, duration: a.duration)]
+                }
+                m.load(p, url: nil)
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                let unchanged = m.media.changedOnDisk(m.project.assets).isEmpty
+                try? await Task.sleep(nanoseconds: 1_100_000_000)   // a later modification date
+                try? fm.removeItem(at: file)
+                try? fm.copyItem(at: probed.last!.0, to: file)
+                try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
+                let noticed = !m.media.changedOnDisk(m.project.assets).isEmpty
+                await m.reloadMedia(Set(m.project.assets.map(\.id)))
+                let short = probed.last!.1
+                let asset = m.project.assets.first
+                let fitted = asset.map { abs($0.duration - short) < 0.05 } == true
+                    && m.project.clips.first.map { abs($0.end - short) < 0.05 } == true
+                    && asset?.id == p.assets.first?.id
+                    && m.media.changedOnDisk(m.project.assets).isEmpty
+                    && asset.map { !m.media.isOffline($0) } == true
+                m.undo()
+                let undone = m.project.clips.first.map { abs($0.end - probed[0].1) < 0.05 } == true
+                log("RELOAD \(unchanged && noticed && fitted && undone ? "OK" : "FAIL") unchanged=\(unchanged) noticed=\(noticed) fitted=\(fitted) undone=\(undone)")
+                ok = ok && unchanged && noticed && fitted && undone
+            }
+        }
         // Sticky edges: three butted clips; shortening the first pulls the other two back, and a
         // linked partner follows its clip.
         do {

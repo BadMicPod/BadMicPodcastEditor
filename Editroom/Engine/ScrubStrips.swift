@@ -16,6 +16,10 @@ final class ScrubStrips {
     private var strips: [UUID: Strip] = [:]
     private var queue: [(UUID, MediaRuntime, Double)] = []
     private var working: UUID?
+    /// Being made from a file that has since changed: thrown away when done, and made again from the
+    /// new file if it was asked for meanwhile.
+    private var stale = Set<UUID>()
+    private var again: [UUID: (MediaRuntime, Double)] = [:]
     /// Frames already decoded for the item being hovered.
     private var decoded: [Int: CGImage] = [:]
     private var decodedFor: UUID?
@@ -39,6 +43,7 @@ final class ScrubStrips {
 
     /// Queues a video's strip. `soon` puts it first (it's being hovered now).
     func make(_ id: UUID, _ rt: MediaRuntime, duration: Double, soon: Bool = false) {
+        if working == id, stale.contains(id) { again[id] = (rt, duration); return }
         guard strips[id] == nil, working != id, rt.videoTrack != nil, duration > 0 else { return }
         if let i = queue.firstIndex(where: { $0.0 == id }) {
             guard soon else { return }
@@ -51,6 +56,7 @@ final class ScrubStrips {
     func forget(_ id: UUID) {
         strips[id] = nil
         queue.removeAll { $0.0 == id }
+        if working == id { stale.insert(id) }
         if decodedFor == id { decoded = [:]; decodedFor = nil }
     }
 
@@ -63,7 +69,9 @@ final class ScrubStrips {
             await MainActor.run {
                 guard let self else { return }
                 self.working = nil
-                if let frames, !frames.isEmpty { self.strips[id] = Strip(frames: frames) }
+                if self.stale.remove(id) != nil {
+                    if let (rt, d) = self.again.removeValue(forKey: id) { self.queue.append((id, rt, d)) }
+                } else if let frames, !frames.isEmpty { self.strips[id] = Strip(frames: frames) }
                 self.next()
             }
         }

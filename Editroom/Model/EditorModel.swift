@@ -158,6 +158,10 @@ final class EditorModel: ObservableObject {
                 }
             }
         }
+        // Back from another app: any media saved over there is opened again.
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reloadChangedMedia() }
+        }
         media.onStillLoaded = { [weak self] in self?.setNeedsRebuild() }
         media.onReverseReady = { [weak self] in self?.setNeedsRebuild() }
         Task {
@@ -1703,6 +1707,64 @@ final class EditorModel: ObservableObject {
         redoKnown.removeAll()
         didChange()
         return true
+    }
+
+    // MARK: Files changed on disk
+
+    private var checkingDisk = false
+
+    /// Opens again any library files that changed on disk since they were opened (saved over,
+    /// re-exported from another app). Run when Editroom comes back to the front. A file still being
+    /// written (its size or date still moving) is waited on, and looked at again a little later.
+    func reloadChangedMedia() {
+        guard !checkingDisk, !media.changedOnDisk(project.assets).isEmpty else { return }
+        checkingDisk = true
+        Task {
+            defer { checkingDisk = false }
+            for _ in 0..<60 {
+                let changed = media.changedOnDisk(project.assets)
+                if changed.isEmpty { return }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                let now = media.changedOnDisk(project.assets)
+                let settled = Set(changed.filter { now[$0.key] == $0.value }.map(\.key))
+                if !settled.isEmpty { await reloadMedia(settled) }
+                if settled.count == changed.count { return }
+            }
+        }
+    }
+
+    /// Opens library items' files again as they are on disk now (Reload from Disk). Clips keep their
+    /// places and trims; a clip past the end of a file that got shorter is cut to fit (one undo step).
+    func reloadMedia(_ ids: Set<UUID>) async {
+        let olds = project.assets.filter { ids.contains($0.id) && FileManager.default.fileExists(atPath: $0.path) }
+        guard !olds.isEmpty else { return }
+        var reloaded = Set<UUID>()
+        var described = false
+        for old in olds {
+            guard let fresh = await media.reload(old),
+                  let i = project.assets.firstIndex(where: { $0.id == old.id }) else { continue }
+            reloaded.insert(old.id)
+            var a = project.assets[i]
+            a.playablePath = fresh.playablePath
+            a.duration = fresh.duration
+            a.width = fresh.width
+            a.height = fresh.height
+            a.fps = fresh.fps
+            a.hasAudio = fresh.hasAudio
+            if a != project.assets[i] {
+                commitLive()
+                project.assets[i] = a
+                described = true
+            }
+        }
+        guard !reloaded.isEmpty else { return }
+        sourcePreview.clear()
+        if described {
+            isDirty = true
+            mutate { $0.fitClips(toMedia: reloaded) }
+        }
+        objectWillChange.send()
+        setNeedsRebuild()
     }
 
     /// Asks where a missing item's file is. With `thenOthers`, keeps asking for whatever is still

@@ -819,6 +819,26 @@ extension Project {
         for i in clips.indices where all.contains(clips[i].id) { clips[i].linkID = nil }
     }
 
+    /// After files got shorter (saved over, re-exported): their clips that reach past the new end
+    /// stop where it does, and any that start past it go.
+    mutating func fitClips(toMedia ids: Set<UUID>) {
+        var gone = Set<UUID>()
+        for i in clips.indices {
+            let c = clips[i]
+            guard let id = c.assetID, ids.contains(id), let limit = sourceLimit(c), limit > 0,
+                  c.sourceStart + c.sourceLength > limit + 1e-4 else { continue }
+            if c.sourceStart >= limit - 1e-3 { gone.insert(c.id); continue }
+            // Where on the timeline the clip reaches the file's end.
+            var lo = c.start, hi = c.end
+            for _ in 0..<40 {
+                let m = (lo + hi) / 2
+                if c.sourceTime(at: m) < limit { lo = m } else { hi = m }
+            }
+            clips[i].trimTail(to: lo)
+        }
+        clips.removeAll { gone.contains($0.id) }
+    }
+
     mutating func sanitize() {
         let trackIDs = Set(videoTracks.map(\.id) + audioTracks.map(\.id))
         clips.removeAll { !trackIDs.contains($0.trackID) || $0.duration <= 1e-6 }

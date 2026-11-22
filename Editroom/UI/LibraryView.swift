@@ -341,6 +341,13 @@ private struct AssetActions: ViewModifier {
                         .disabled(matchesSequence)
                 }
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: asset.path)]) }
+                if !offline {
+                    // Normally automatic (when Editroom comes back to the front); this is for being sure.
+                    let ids = picked && pickedCount > 1 ? model.mediaSelection : [asset.id]
+                    Button(ids.count > 1 ? "Reload \(ids.count) Items from Disk" : "Reload from Disk") {
+                        Task { await model.reloadMedia(ids) }
+                    }
+                }
                 Divider()
                 // The picked items when this is one of them; otherwise just this one.
                 if picked, pickedCount > 1 {
