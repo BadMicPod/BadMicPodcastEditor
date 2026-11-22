@@ -56,6 +56,12 @@ final class SourcePreviewState: ObservableObject {
         }
     }
 
+    /// Just the overlay's time, with no picture of its own: the viewer underneath is showing the frame.
+    func label(_ asset: MediaAsset, at time: Double, note: String) {
+        wanted = nil
+        current = Current(asset: asset, time: time, image: nil, note: note)
+    }
+
     /// Shows a frame that has already been fetched.
     func show(_ asset: MediaAsset, at time: Double, image: CGImage) {
         current = Current(asset: asset, time: time, image: image)

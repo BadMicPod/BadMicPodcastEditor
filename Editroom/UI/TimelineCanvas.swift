@@ -553,7 +553,10 @@ final class TimelineCanvas: NSView {
         let finished = drag
         drag = .none
         // A trim showed its edge's frame in the viewer: back to the edit.
-        if case .trim = finished { model.sourcePreview.clear() }
+        if case .trim = finished {
+            model.sourcePreview.clear()
+            model.engine.endStill()
+        }
         switch finished {
         case .move where duplicating:
             // ⌥-drag: the clips stay where they were and copies land where they were dropped.
@@ -752,10 +755,15 @@ final class TimelineCanvas: NSView {
         let t = left ? c.start : max(c.start, c.end - 1 / max(1, p.fps))
         let src = c.isFreeze ? c.sourceStart : c.sourceTime(at: t)
         let shown = min(max(0, c.playsBackwards ? asset.duration - src : src), max(0, asset.duration - 0.02))
-        // Sharp at once from the made-ahead frames (as large as the viewer's picture); without them the
-        // last sharp frame stays up until the exact one is decoded, rather than a small blurry one.
-        model.sourcePreview.show(asset, at: shown, media: model.media,
-                                 quick: model.media.scrubCache.cgImage(id, at: shown), note: left ? "In" : "Out")
+        // From the made-ahead frames (as sharp as the viewer's picture), drawn on the GPU straight into
+        // the viewer like scrubbing, so it keeps up with the drag; the overlay just says the time. Without
+        // them, frames are decoded one after another and shown as they come.
+        if let still = model.media.scrubCache.image(id, at: shown), let rt = model.media.runtimes[id] {
+            model.engine.showStill(still, orientation: rt.orientation, time: shown)
+            model.sourcePreview.label(asset, at: shown, note: left ? "In" : "Out")
+        } else {
+            model.sourcePreview.show(asset, at: shown, media: model.media, note: left ? "In" : "Out")
+        }
     }
 
     private func updateStickyTrim(grabbed: Clip, left: Bool, startTime: Double, originals: [Clip], p: CGPoint) {

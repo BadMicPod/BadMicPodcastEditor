@@ -144,6 +144,13 @@ final class PlaybackEngine {
             shownTime = ready.time
             return ready.buffer
         }
+        if restorePlayerFrame {
+            restorePlayerFrame = false
+            if let back = lastPlayerFrame {
+                lastFrame = back
+                return back
+            }
+        }
         guard let output = videoOutput else { return nil }
         let t = output.itemTime(forHostTime: CACurrentMediaTime())
         guard output.hasNewPixelBuffer(forItemTime: t) else { return nil }
@@ -151,6 +158,7 @@ final class PlaybackEngine {
         let frame = output.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: &shown)
         if frame != nil {
             lastFrame = frame
+            lastPlayerFrame = frame
             if shown.isNumeric { shownTime = shown.seconds }
         }
         return frame
@@ -164,7 +172,7 @@ final class PlaybackEngine {
     private let scrubQueue = DispatchQueue(label: "editroom.scrub", qos: .userInteractive)
     private var scrubBusy = false
     /// The latest scrub frame asked for, waiting for the one being drawn.
-    private var scrubNext: (time: Double, pictures: [Int: CIImage])?
+    private var scrubNext: (time: Double, pictures: [Int: CIImage], still: CIImage?)?
     /// A drawn scrub frame for the viewer's next refresh.
     private var scrubReady: (buffer: CVPixelBuffer, time: Double)?
     /// Bumped when scrubbing ends, so a frame still being drawn doesn't land over the exact one.
@@ -186,12 +194,41 @@ final class PlaybackEngine {
             default: continue
             }
         }
-        scrubNext = (at, pictures)
+        scrubNext = (at, pictures, nil)
         drawScrubFrame()
         return true
     }
 
     /// The exact frame takes over: nothing drawn from scrub frames lands after this.
+    /// One frame of a file filling the viewer (fitted, as the viewer fits the timeline): the new edge
+    /// of a clip while it's trimmed. Drawn like a scrub frame, on the GPU straight into the viewer.
+    func showStill(_ image: CIImage, orientation: CGImagePropertyOrientation, time: Double) {
+        let src = orientation == .up ? image : image.oriented(orientation)
+        let e = src.extent
+        guard e.width > 0, e.height > 0 else { return }
+        let size = renderSize
+        let s = min(size.width / e.width, size.height / e.height)
+        let fitted = src.transformed(by: CGAffineTransform(a: s, b: 0, c: 0, d: s,
+                                                           tx: (size.width - e.width * s) / 2 - e.minX * s,
+                                                           ty: (size.height - e.height * s) / 2 - e.minY * s))
+        scrubNext = (time, [:], fitted.composited(over: CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: size))))
+        stillShowing = true
+        drawScrubFrame()
+    }
+
+    /// A still went up (a trim's edge): when it ends, the player's last frame comes back, since
+    /// nothing may have changed to make it draw a new one.
+    private var stillShowing = false
+    private var lastPlayerFrame: CVPixelBuffer?
+    private var restorePlayerFrame = false
+
+    func endStill() {
+        guard stillShowing else { return }
+        stillShowing = false
+        endScrubFrames()
+        restorePlayerFrame = true
+    }
+
     func endScrubFrames() {
         scrubGeneration += 1
         scrubNext = nil
@@ -221,7 +258,7 @@ final class PlaybackEngine {
             var buffer: CVPixelBuffer?
             if let pool { CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer) }
             if let buffer {
-                let image = TimelineCompositor.compose(instruction, at: job.time, output: size) { i, _ in job.pictures[i] }
+                let image = job.still ?? TimelineCompositor.compose(instruction, at: job.time, output: size) { i, _ in job.pictures[i] }
                 TimelineCompositor.context.render(image, to: buffer, bounds: CGRect(origin: .zero, size: size), colorSpace: nil)
                 // Tagged as the player's frames are, so the viewer shows them in the same colours.
                 CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
