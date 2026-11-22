@@ -440,13 +440,17 @@ extension View {
 
 struct Hairline: View {
     var vertical = false
-    /// Solid: the line's colour as it looks on a panel, so it's the same weight whatever is under it
-    /// (see-through, it looked lighter over the grey panels than over the near-black viewer). Blending
-    /// solid comes out a little brighter than the see-through line did, hence the 0.72.
+    /// Solid: one colour whatever is under it (see-through, it looked lighter over the grey panels than
+    /// over the near-black viewer): #1F1F1F on the dark theme, to match its other borders; on the others,
+    /// the line's colour as it looks on a panel.
     var solid = false
+    static var solidColor: Color {
+        if Theme.p.panel == 0x111111 { return Color(hex: 0x1F1F1F) }
+        return Color(nsColor: Theme.NS.panel.blended(withFraction: Theme.p.strokeAlpha * 0.72, of: Theme.NS.ink) ?? Theme.NS.panel)
+    }
     var body: some View {
         Rectangle()
-            .fill(solid ? Color(nsColor: Theme.NS.panel.blended(withFraction: Theme.p.strokeAlpha * 0.72, of: Theme.NS.ink) ?? Theme.NS.panel) : Theme.stroke)
+            .fill(solid ? Self.solidColor : Theme.stroke)
             .frame(width: vertical ? 1 : nil, height: vertical ? nil : 1)
     }
 }
