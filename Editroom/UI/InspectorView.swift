@@ -732,6 +732,7 @@ private struct ParamRow: View {
                         if !focused { text = format(v) }
                     }
                     .onAppear { text = format(value) }
+                    .arrowSteps(focused) { up, big in nudge(up: up, big: big) }
                     .font(Theme.mono(11.5))
                     .foregroundStyle(Theme.text)
                     .padding(.leading, 6)
@@ -748,6 +749,24 @@ private struct ParamRow: View {
             if let trailing { trailing }
         }
         .frame(height: 28)
+    }
+
+    /// ↑/↓ while typing: the value up or down a step, by what the field shows (1 for whole numbers,
+    /// 0.1 for decimals; ten times that with Shift). What's been typed counts as the starting point.
+    private func nudge(up: Bool, big: Bool) {
+        let shown = text.replacingOccurrences(of: ",", with: ".").replacingOccurrences(of: "−", with: "-")
+            .filter { "0123456789.-".contains($0) }
+        let start = Double(shown) ?? value
+        let decimals = format(value).contains(".") ? 1 : 0
+        let step = (decimals == 0 ? 1.0 : 0.1) * (big ? 10 : 1)
+        // To the next whole step, so 0.47 goes to 0.5, not 0.57.
+        let n = (start / step).rounded(up ? .down : .up) + (up ? 1 : -1)
+        let v = min(max((n * step * 1e6).rounded() / 1e6, range.lowerBound), range.upperBound)
+        onEditing(true)
+        onChange(v)
+        onEditing(false)
+        text = format(v)
+        cancelled = false
     }
 
     /// Reads the number out of whatever is in the field ("100%", "0.50s", "−18.8 dB" all work).
@@ -1071,6 +1090,13 @@ private struct FrameSizeFields: View {
             .font(Theme.mono(11.5))
             .foregroundStyle(Theme.text)
             .focused($focus, equals: tag)
+            // ↑/↓: two pixels bigger or smaller (twenty with Shift), since sizes are kept even.
+            .arrowSteps(focus == tag) { up, big in
+                let was = Int(text.wrappedValue.filter(\.isNumber)) ?? (tag == 0 ? width : height)
+                let n = max(16, min(8192, was / 2 * 2 + (up ? 2 : -2) * (big ? 10 : 1)))
+                text.wrappedValue = String(n)
+                commit()
+            }
             .onSubmit {
                 commit()
                 focus = nil
@@ -1434,5 +1460,43 @@ private struct SpeedRampGraph: View {
             .overlay(Circle().strokeBorder(Theme.field, lineWidth: 2.5).padding(-2.5))
             .position(p)
             .allowsHitTesting(false)
+    }
+}
+
+/// Up and down arrow keys while a field is being typed in: `step(up, shift)`, and the keys go no
+/// further (a text field would otherwise move the cursor to the start or end).
+private struct ArrowSteps: ViewModifier {
+    let active: Bool
+    let step: (Bool, Bool) -> Void
+    @State private var monitor: Any?
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: active) { _, on in on ? start() : stop() }
+            .onAppear { if active { start() } }
+            .onDisappear(perform: stop)
+    }
+
+    private func start() {
+        stop()
+        let step = step
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
+            guard e.keyCode == 126 || e.keyCode == 125,
+                  e.modifierFlags.intersection([.command, .option, .control]).isEmpty else { return e }
+            step(e.keyCode == 126, e.modifierFlags.contains(.shift))
+            return nil
+        }
+    }
+
+    private func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+}
+
+extension View {
+    /// ↑/↓ step a number field while it's being typed in (see `ArrowSteps`).
+    func arrowSteps(_ active: Bool, step: @escaping (Bool, Bool) -> Void) -> some View {
+        modifier(ArrowSteps(active: active, step: step))
     }
 }
