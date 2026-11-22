@@ -69,6 +69,7 @@ final class AgentConnect: ObservableObject {
     // MARK: Status
 
     func refresh() {
+        followMove()
         for app in AgentApp.allCases {
             if case .working = states[app] { continue }
             states[app] = status(of: app)
@@ -215,6 +216,32 @@ final class AgentConnect: ObservableObject {
         try Self.launcherScript(from: from).write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
         return url
+    }
+
+    private static var followed = false
+
+    /// Editroom moved, or a new copy runs from somewhere else: the launchers the AI apps already have
+    /// are pointed at this copy (once a launch), so they don't go on starting an old one.
+    private func followMove() {
+        guard !Self.followed, !CommandLine.arguments.contains("--selftest") else { return }
+        Self.followed = true
+        let fm = FileManager.default
+        var launchers = [(supportFolder.appendingPathComponent("editroom-mcp"), "codex")]
+        let extensions = claudeSupport.appendingPathComponent("Claude Extensions", isDirectory: true)
+        for item in (try? fm.contentsOfDirectory(at: extensions, includingPropertiesForKeys: nil)) ?? [] {
+            if let data = try? Data(contentsOf: item.appendingPathComponent("manifest.json")),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               json["name"] as? String == "editroom" {
+                launchers.append((item.appendingPathComponent("server/editroom-mcp"), "claude-app"))
+            }
+        }
+        for (url, from) in launchers {
+            guard let now = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            let want = Self.launcherScript(from: from)
+            guard now != want else { continue }
+            try? want.write(to: url, atomically: true, encoding: .utf8)
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        }
     }
 
     // MARK: Claude (an extension)
