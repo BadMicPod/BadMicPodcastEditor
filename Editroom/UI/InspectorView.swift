@@ -266,19 +266,22 @@ struct InspectorView: View {
                      range: 5...1000, logarithmic: true, step: 1, format: Self.percentTenths, onEditing: done,
                      onChange: { v in live { $0.scale = ((v * 10).rounded() / 1000).clamped(to: ClipTransform.scaleRange) } })
             ParamRow(icon: .symbol("arrow.left.and.right"), label: "X", value: tf.x * w, range: -w...w,
-                     format: { "\(Int($0.rounded()))" }, onEditing: done,
-                     onChange: { v in live { $0.x = v.rounded() / w } })
+                     step: 1, format: Self.tenths, onEditing: done,
+                     onChange: { v in live { $0.x = (v * 10).rounded() / 10 / w } })
             ParamRow(icon: .symbol("arrow.up.and.down"), label: "Y", value: tf.y * h, range: -h...h,
-                     format: { "\(Int($0.rounded()))" }, onEditing: done,
-                     onChange: { v in live { $0.y = v.rounded() / h } })
+                     step: 1, format: Self.tenths, onEditing: done,
+                     onChange: { v in live { $0.y = (v * 10).rounded() / 10 / h } })
         }
     }
 
-    /// A percentage to a tenth ("95.3%"), whole numbers without the ".0" ("100%").
-    static func percentTenths(_ v: Double) -> String {
+    /// A number to a tenth ("12.5"), whole numbers without the ".0" ("12").
+    static func tenths(_ v: Double) -> String {
         let t = (v * 10).rounded() / 10
-        return t == t.rounded() ? "\(Int(t))%" : String(format: "%.1f%%", t)
+        return t == t.rounded() ? "\(Int(t))" : String(format: "%.1f", t)
     }
+
+    /// A percentage to a tenth ("95.3%"), whole numbers without the ".0" ("100%").
+    static func percentTenths(_ v: Double) -> String { tenths(v) + "%" }
 
     /// Transitions on the cuts either side of a clip: In blends from the clip before, Out into the clip after.
     @ViewBuilder private func transitionSection(_ c: Clip) -> some View {
