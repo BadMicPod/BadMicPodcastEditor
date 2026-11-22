@@ -273,6 +273,9 @@ private struct SourceFrame: View {
             .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.black.opacity(0.65)))
             .padding(10)
         }
+        // The whole viewer, label in its top-left corner, also when the picture is drawn underneath by the
+        // player (scrub frames) rather than here.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(Color.white.opacity(0.35), lineWidth: 1))
         .allowsHitTesting(false)
