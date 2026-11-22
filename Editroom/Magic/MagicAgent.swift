@@ -662,7 +662,8 @@ final class MagicAgent: ObservableObject {
         let detail = noteDetail
         let play = { [weak self] in
             guard self?.stopped == false else { return }
-            let shown = MagicShow.play(model: model, plan: plan, crew: (kind.name, MCPTools.color(for: kind == .claude ? "Claude" : "ChatGPT"))) { [weak self] in
+            // The same multicolour swarm as Local's: who made it is said before (the thinking show) and after (the note).
+            let shown = MagicShow.play(model: model, plan: plan) { [weak self] in
                 self?.note = Note(agent: kind, text: said, changed: true, detail: detail)
             }
             if !shown {

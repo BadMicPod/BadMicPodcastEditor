@@ -333,7 +333,7 @@ final class MagicShow: NSObject {
     /// Plays a finished plan (an AI agent's Magic edit) with the swarm, as one undo step. Calls
     /// `done` when the show is over. Returns false if there's no timeline to play it on.
     @discardableResult
-    static func play(model: EditorModel, plan: MagicPlan, crew: (name: String, color: NSColor)? = nil, done: (() -> Void)? = nil) -> Bool {
+    static func play(model: EditorModel, plan: MagicPlan, done: (() -> Void)? = nil) -> Bool {
         if !animated, !plan.tasks.isEmpty, current == nil {
             applyAtOnce(model: model, plan: plan)
             done?()
@@ -343,7 +343,6 @@ final class MagicShow: NSObject {
             return false
         }
         let show = MagicShow(model: model, plan: plan, window: window, canvas: canvas, click: nil, performer: nil)
-        show.crew = crew
         show.onFinish = done
         current = show
         show.begin()
@@ -507,8 +506,6 @@ final class MagicShow: NSObject {
     private var agentMode: Bool { performer != nil }
     /// Called once a played plan's show is over.
     private var onFinish: (() -> Void)?
-    /// Whose edit the swarm is playing (an AI's): its cursors are in its colour, their tags say its name.
-    private var crew: (name: String, color: NSColor)?
 
     private init(model: EditorModel, plan: MagicPlan, window: NSWindow, canvas: TimelineCanvas, click: NSPoint?, performer: Performer?) {
         self.performer = performer
@@ -643,13 +640,7 @@ final class MagicShow: NSObject {
         var rng = SeededRandom(seed: UInt64(tasks.count))
         for i in 0..<count {
             let hue = (Double(i) * 0.61803398875).truncatingRemainder(dividingBy: 1)
-            // An AI's swarm: its own colour, a little lighter or darker cursor to cursor.
-            let crewColor = crew.map { c -> NSColor in
-                let b = c.color.usingColorSpace(.deviceRGB) ?? c.color
-                return NSColor(hue: b.hueComponent, saturation: b.saturationComponent * (0.85 + 0.15 * hue),
-                               brightness: min(1, b.brightnessComponent * (0.86 + 0.28 * hue)), alpha: 1)
-            }
-            let a = Agent(color: performer?.color ?? crewColor ?? NSColor(hue: hue, saturation: 0.68, brightness: 0.97, alpha: 1))
+            let a = Agent(color: performer?.color ?? NSColor(hue: hue, saturation: 0.68, brightness: 0.97, alpha: 1))
             // Out of the button one after another, slowly at first, then faster.
             // Out of the button one after another: slowly at first, then faster, never quite evenly.
             a.birth = max(0, 2.4 * pow(Double(i) / Double(count), 0.7) + (rng.next() - 0.5) * 0.12)
@@ -1295,7 +1286,6 @@ final class MagicShow: NSObject {
                 }
             }
             if let performer { label = label.isEmpty ? performer.name : performer.name + " · " + label }
-            else if let crew, !label.isEmpty { label = crew.name + " · " + label }
             if out > 0 {
                 // Back into the button.
                 let ctrl = onScreen(CGPoint(x: (pos.x + spawn.x) / 2 + dir.x * 120, y: (pos.y + spawn.y) / 2 + dir.y * 120))
