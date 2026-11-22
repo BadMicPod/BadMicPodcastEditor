@@ -277,7 +277,6 @@ private struct SourceFrame: View {
         // player (scrub frames) rather than here.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(Color.white.opacity(0.35), lineWidth: 1))
         .allowsHitTesting(false)
     }
 }
