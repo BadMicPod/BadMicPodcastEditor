@@ -505,6 +505,36 @@ enum SelfTest {
             log("HISTORY \(good ? "OK" : "FAIL") order=\(order) file=\(file) opensOld=\(opensOld) capped=\(capped)")
             ok = ok && good
         }
+        // @ markers: by name or @marker:, unnamed ones by colour, read as their times (a span, a title's place),
+        // and a file of the same name wins over a marker.
+        do {
+            var p = Project()
+            p.clips = [Clip(trackID: p.videoTracks[0].id, kind: .video, start: 0, duration: 30)]
+            p.markers = [Marker(time: 12.4, name: "Jump"), Marker(time: 20, name: "", tint: .green), Marker(time: 25, name: "Big drop")]
+            let marks = MagicMention.markerLabels(p)
+            let labels = marks.map(\.name) == ["Jump", "Green marker", "Big drop"]
+            func isMarker(_ text: String) -> Bool {
+                MagicMention.find(in: text, media: p.assets, markers: marks).contains { if case .marker = $0.mention { return true } else { return false } }
+            }
+            let found = isMarker("title at @Jump") && isMarker("at @marker:Green marker") && isMarker("from @big drop on") && !isMarker("email me@Jump")
+            let timed = MagicMention.markersAsTimes("slow-mo from @Jump to @marker:Green marker", project: p)
+            let span = MagicTimes.span(in: timed, fps: p.fps)
+            let spanOK = timed == "slow-mo from 0:12.4 to 0:20" && span.map { abs($0.start - 12.4) < 0.01 && abs($0.end - 20) < 0.01 } ?? false
+            let titleReq = MagicMention.markersAsTimes("add a title at @Big drop", project: p)
+            var titleAt = -1.0
+            if let plan = LocalTitle.plan(request: titleReq, playhead: 0, project: p).plan {
+                var q = plan.base
+                for t in plan.tasks { t.edit.apply(&q, 1) }
+                titleAt = q.clips.first { $0.kind == .text }?.start ?? -1
+            }
+            let titleOK = abs(titleAt - 25) < 0.05
+            var withFile = p
+            withFile.assets = [MediaAsset(path: "/tmp/Jump.mov", name: "Jump.mov", kind: .video, duration: 5, width: 1920, height: 1080, fps: 30, hasAudio: false)]
+            let fileWins = MagicMention.find(in: "use @Jump", media: withFile.assets, markers: marks).first.map { if case .media = $0.mention { return true } else { return false } } ?? false
+            let good = labels && found && spanOK && titleOK && fileWins
+            log("MARKER MENTIONS \(good ? "OK" : "FAIL") labels=\(labels) found=\(found) span=\(spanOK) (\(timed)) title=\(titleOK) at \(titleAt) fileWins=\(fileWins)")
+            ok = ok && good
+        }
         // Local titles on an edit: at the end (default words), and their own words at the start.
         do {
             var p = Project()

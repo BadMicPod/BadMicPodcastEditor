@@ -17,13 +17,16 @@ struct MagicPointers {
     }
 }
 
-/// `@playhead`, `@selected`, `@in-out`, `@` + a library file's name, and `@clip:` + one clip on the
-/// timeline, typed in the Magic box to say exactly what a request is about.
+/// `@playhead`, `@selected`, `@in-out`, `@` + a library file's name, `@clip:` + one clip on the
+/// timeline and `@marker:` + a marker (or a marker's name alone), typed in the Magic box to say exactly
+/// what a request is about.
 enum MagicMention: Hashable {
     case playhead, selected, range
     case media(UUID)
     /// One clip on the timeline (a title, a solid, or one use of a file).
     case clip(UUID)
+    /// A marker on the timeline, by its name (`@marker:Jump`, or just `@Jump`).
+    case marker(UUID)
 
     static let words: [(word: String, mention: MagicMention)] = [("playhead", .playhead), ("selected", .selected), ("in-out", .range)]
 
@@ -36,6 +39,49 @@ enum MagicMention: Hashable {
         let kind: ClipKind
         let track: String
         let start: Double
+    }
+
+    /// A marker as `@marker:` names it: its own name, or its colour ("Yellow marker") when it has none;
+    /// a name used more than once gets ·2, ·3… in time order.
+    struct MarkerLabel {
+        let id: UUID
+        let name: String
+        let time: Double
+        let tint: Marker.Tint
+    }
+
+    static func markerLabels(_ p: Project) -> [MarkerLabel] {
+        var seen: [String: Int] = [:]
+        return p.markerList.map { m in
+            let own = m.name.trimmingCharacters(in: .whitespaces)
+            let b = own.isEmpty ? m.tint.rawValue.capitalized + " marker" : own
+            let n = (seen[b.lowercased()] ?? 0) + 1
+            seen[b.lowercased()] = n
+            return MarkerLabel(id: m.id, name: n == 1 ? b : "\(b)·\(n)", time: m.time, tint: m.tint)
+        }
+    }
+
+    /// A time as a clock ("0:12.4", "1:02:03.5") that `MagicTimes` reads back as the same place.
+    static func clock(_ t: Double) -> String {
+        let t = max(0, (t * 100).rounded() / 100)
+        let h = Int(t) / 3600, m = Int(t) % 3600 / 60
+        var sec = String(format: "%05.2f", t.truncatingRemainder(dividingBy: 60))
+        while sec.hasSuffix("0") { sec.removeLast() }
+        if sec.hasSuffix(".") { sec.removeLast() }
+        return h > 0 ? String(format: "%d:%02d:", h, m) + sec : "\(m):" + sec
+    }
+
+    /// The request with each marker it names written as the marker's time, so everything that reads
+    /// typed times ("from 0:12 to 0:18", "a title at 0:12") reads markers too.
+    static func markersAsTimes(_ text: String, project p: Project) -> String {
+        let marks = markerLabels(p)
+        guard !marks.isEmpty else { return text }
+        var s = text as NSString
+        for (r, m) in find(in: text, media: p.assets, clips: clipLabels(p), markers: marks).reversed() {
+            guard case .marker(let id) = m, let l = marks.first(where: { $0.id == id }) else { continue }
+            s = s.replacingCharacters(in: r, with: clock(l.time)) as NSString
+        }
+        return s as String
     }
 
     static func clipLabels(_ p: Project) -> [ClipLabel] {
@@ -62,7 +108,8 @@ enum MagicMention: Hashable {
 
     /// Every mention in the text, in order, with where it is (UTF-16, for the text view). A file's name
     /// counts with or without its extension; the longest name that fits wins.
-    static func find(in text: String, media: [MediaAsset], clips: [ClipLabel] = []) -> [(range: NSRange, mention: MagicMention)] {
+    static func find(in text: String, media: [MediaAsset], clips: [ClipLabel] = [],
+                     markers: [MarkerLabel] = []) -> [(range: NSRange, mention: MagicMention)] {
         let s = text as NSString
         guard s.range(of: "@").location != NSNotFound else { return [] }
         var names: [(String, MagicMention)] = words.map { ($0.word, $0.mention) }
@@ -71,7 +118,11 @@ enum MagicMention: Hashable {
             let bare = (a.name as NSString).deletingPathExtension
             if !bare.isEmpty, bare != a.name { names.append((bare, .media(a.id))) }
         }
-        names.sort { $0.0.count > $1.0.count }
+        // Markers by name too ("@Jump"); a file of the same name wins.
+        let markerNames = markers.map { ($0.name, MagicMention.marker($0.id)) }
+        names = names.enumerated().sorted { ($0.element.0.count, -$0.offset) > ($1.element.0.count, -$1.offset) }.map(\.element)
+        let withMarkers = (names + markerNames).enumerated()
+            .sorted { ($0.element.0.count, -$0.offset) > ($1.element.0.count, -$1.offset) }.map(\.element)
         let clipNames = clips.map { ($0.name, MagicMention.clip($0.id)) }.sorted { $0.0.count > $1.0.count }
         func isWordChar(_ c: unichar) -> Bool {
             guard let u = Unicode.Scalar(c) else { return false }
@@ -91,8 +142,11 @@ enum MagicMention: Hashable {
             if at.location > 0, isWordChar(s.character(at: at.location - 1)) { continue }
             // "@media:club" is "@club", written the way the list browses to it; "@clip:" names one clip.
             var from = i
-            var pool = names
-            if starts("media:", at: i) {
+            var pool = withMarkers
+            if starts("marker:", at: i) {
+                from += 7
+                pool = markerNames.sorted { $0.0.count > $1.0.count }
+            } else if starts("media:", at: i) {
                 from += 6
                 pool = names.filter { if case .media = $0.1 { return true } else { return false } }
             } else if starts("clip:", at: i) {
@@ -114,15 +168,16 @@ enum MagicMention: Hashable {
 
     /// The request in plain words, for a reader that doesn't know about mentions (Apple's model):
     /// "@selected" reads "the selected clips", "@beach.mov" reads "beach.mov".
-    static func plain(_ text: String, media: [MediaAsset], clips: [ClipLabel] = []) -> String {
+    static func plain(_ text: String, media: [MediaAsset], clips: [ClipLabel] = [], markers: [MarkerLabel] = []) -> String {
         var s = text as NSString
-        for (r, m) in find(in: text, media: media, clips: clips).reversed() {
+        for (r, m) in find(in: text, media: media, clips: clips, markers: markers).reversed() {
             let words: String = switch m {
             case .playhead: "the playhead"
             case .selected: "the selected clips"
             case .range: "the marked range"
             case .media(let id): media.first { $0.id == id }?.name ?? s.substring(with: r)
             case .clip(let id): "the clip " + (clips.first { $0.id == id }?.name ?? "")
+            case .marker(let id): markers.first { $0.id == id }.map { clock($0.time) } ?? s.substring(with: r)
             }
             s = s.replacingCharacters(in: r, with: words) as NSString
         }

@@ -635,7 +635,8 @@ private struct PromptBox: View {
                     .padding(.vertical, 9)
                     .allowsHitTesting(false)
             }
-            MentionField(text: $text, media: model.project.assets, clips: MagicMention.clipLabels(model.project), onQuery: { query = $0 }, onKey: key, controller: controller)
+            MentionField(text: $text, media: model.project.assets, clips: MagicMention.clipLabels(model.project),
+                         markers: MagicMention.markerLabels(model.project), onQuery: { query = $0 }, onKey: key, controller: controller)
                 .padding(.vertical, 9)
         }
         .frame(height: height, alignment: .topLeading)
@@ -724,6 +725,8 @@ private struct MentionOption: Identifiable {
     var enabled = true
     /// `@media:`, which lists every file.
     var opensList = false
+    /// A marker's colour, shown as a dot before its name.
+    var tint: UInt32? = nil
 
     /// Words after `@media:` that pick a kind of file rather than a name.
     private static let kinds: [String: MediaKind] = [
@@ -782,6 +785,18 @@ private struct MentionOption: Identifiable {
             return (starts + inside).map(row)
         }
 
+        // "@marker:" and after: every marker, in time order, narrowed by name.
+        let markers = MagicMention.markerLabels(p)
+        func mark(_ l: MagicMention.MarkerLabel) -> MentionOption {
+            MentionOption(id: l.id.uuidString, name: "marker:" + l.name, detail: "Marker  ·  \(clock(l.time))", tint: l.tint.hex)
+        }
+        if q.hasPrefix("marker:") {
+            let rest = String(q.dropFirst("marker:".count))
+            let starts = markers.filter { $0.name.lowercased().hasPrefix(rest) }
+            let inside = rest.isEmpty || rest.contains(" ") ? [] : markers.filter { !$0.name.lowercased().hasPrefix(rest) && $0.name.lowercased().contains(rest) }
+            return (starts + inside).map(mark)
+        }
+
         // "@media:" and after: every file, narrowed by name, or by kind ("@media:audio").
         if q.hasPrefix("media:") {
             let rest = String(q.dropFirst("media:".count))
@@ -813,9 +828,12 @@ private struct MentionOption: Identifiable {
         if onTimeline > 0 {
             pointers.append(MentionOption(id: "clip", name: "clip:", detail: "\(onTimeline) on the timeline  ›", opensList: true))
         }
+        if !markers.isEmpty {
+            pointers.append(MentionOption(id: "marker", name: "marker:", detail: "\(markers.count) on the timeline  ›", opensList: true))
+        }
         let shown = pointers.filter { $0.name.hasPrefix(q) }
-        // Typed a few letters: files by name straight away too.
-        return q.isEmpty ? shown : shown + files(matching: q, in: p.assets)
+        // Typed a few letters: markers and files by name straight away too.
+        return q.isEmpty ? shown : shown + markers.filter { $0.name.lowercased().hasPrefix(q) }.map(mark) + files(matching: q, in: p.assets)
     }
 }
 
@@ -850,6 +868,9 @@ private struct MentionList: View {
             ForEach(Array(options.enumerated()), id: \.element.id) { i, option in
                 Button { pick(option) } label: {
                     HStack(spacing: 7) {
+                        if let tint = option.tint {
+                            Circle().fill(Color(hex: tint)).frame(width: 7, height: 7)
+                        }
                         Text("@" + option.name)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(!option.enabled ? Theme.textFaint : i == picked ? Theme.text : Theme.textDim)
@@ -1023,7 +1044,9 @@ struct MagicNoteView: View {
 /// then Local's own planner makes the edit. With a request, a note says what it did.
 @MainActor
 enum LocalMagic {
-    static func run(_ typed: String, model: EditorModel) {
+    static func run(_ typedWithMarkers: String, model: EditorModel) {
+        // Markers named with @ are read as their times ("from @Jump to @Landing" is "from 0:12 to 0:18").
+        let typed = MagicMention.markersAsTimes(typedWithMarkers, project: model.project)
         // What they're pointing at, before Magic locks the window and clears the selection; and the
         // request in plain words for Apple's model ("@selected" reads "the selected clips").
         let pointers = MagicPointers.now(model)

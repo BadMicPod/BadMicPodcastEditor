@@ -273,7 +273,8 @@ final class MagicAgent: ObservableObject {
     /// each @ in the request means. Used only when their words point at it.
     static func pointing(_ ptr: MagicPointers, request: String, project p: Project) -> String? {
         let labels = MagicMention.clipLabels(p)
-        let mentions = MagicMention.find(in: request, media: p.assets, clips: labels)
+        let marks = MagicMention.markerLabels(p)
+        let mentions = MagicMention.find(in: request, media: p.assets, clips: labels, markers: marks)
         guard !p.clips.isEmpty || !mentions.isEmpty else { return nil }
         func t(_ s: Double) -> String { String(format: "%.2fs", s) }
         func track(_ c: Clip) -> String {
@@ -304,6 +305,10 @@ final class MagicAgent: ObservableObject {
                 if let c = p.clips.first(where: { $0.id == id }), let l = labels.first(where: { $0.id == id }) {
                     meant.append("@clip:\(l.name) means exactly one clip on the timeline: \(clip(c)).")
                 }
+            case .marker(let id):
+                if let l = marks.first(where: { $0.id == id }) {
+                    meant.append("@\(l.name) (or @marker:\(l.name)) means the marker \"\(l.name)\" at \(t(l.time)) on the timeline.")
+                }
             }
         }
         var out = ""
@@ -315,6 +320,7 @@ final class MagicAgent: ObservableObject {
         }
         // Times they typed, in timeline seconds, with what's there (the viewer's timecode ends in frames).
         var timed: [String] = []
+        let request = MagicMention.markersAsTimes(request, project: p)
         let span = MagicTimes.span(in: request, fps: p.fps)
         if let span {
             let over = p.clips.filter { $0.kind != .audio && $0.start < span.end - 1e-6 && $0.end > span.start + 1e-6 }

@@ -12,10 +12,13 @@ enum LocalTitle {
         return hasEdit && !newCut && LocalBrain.titleAsked(request) != nil
     }
 
-    enum Spot { case start, end, playhead }
+    enum Spot { case start, end, playhead, at(Double) }
 
-    static func spot(_ request: String) -> Spot {
+    static func spot(_ request: String, fps: Double = 30) -> Spot {
         let t = request.lowercased()
+        // A time they typed, or a marker (read as its time): "a title at 0:12", "a title at @Intro".
+        if MagicTimes.span(in: request, fps: fps) == nil,
+           let typed = MagicTimes.times(in: request, fps: fps).first(where: { !$0.unitOnly }) { return .at(typed.seconds) }
         if ["at the end", "the end", "ending", "end screen", "end card", "end title", "outro", "closing", "at the close", "last shot"]
             .contains(where: { t.contains($0) }) { return .end }
         if ["playhead", "here", "right now", "this point"].contains(where: { t.contains($0) }) { return .playhead }
@@ -27,13 +30,14 @@ enum LocalTitle {
         guard let first = edit.map(\.start).min(), let last = edit.map(\.end).max() else {
             return LocalPointed.Outcome(said: "There's no edit on the timeline to put a title on.")
         }
-        let where_ = spot(request)
+        let where_ = spot(request, fps: p.fps)
         let length = min(3, max(1, (last - first) * 0.25))
         let start: Double
         switch where_ {
         case .start: start = first
         case .end: start = max(first, last - length)
         case .playhead: start = min(max(first, playhead), max(first, last - length))
+        case .at(let t): start = min(max(first, t), max(first, last - length))
         }
         // Their words when quoted; otherwise a placeholder to type over.
         let words = LocalBrain.titleAsked(request).flatMap { $0.isEmpty ? nil : $0 } ?? "Title"
@@ -58,7 +62,12 @@ enum LocalTitle {
         clip.text.string = ""
         clip.text.size = 130
         edits += [.place([clip], asset: nil), .type(clip.id, words), .fadeIn(clip.id, to: 0.4), .fadeOut(clip.id, to: 0.5)]
-        let place = where_ == .end ? "over the last \(Int(length.rounded())) seconds" : where_ == .start ? "at the start" : "at the playhead"
+        let place: String = switch where_ {
+        case .end: "over the last \(Int(length.rounded())) seconds"
+        case .start: "at the start"
+        case .playhead: "at the playhead"
+        case .at: "at " + MagicMention.clock(start)
+        }
         return LocalPointed.Outcome(plan: MCPDraft.plan(base: p, edits: edits), said: "Added a title, \u{201C}\(words)\u{201D}, \(place).")
     }
 }
