@@ -651,10 +651,15 @@ final class TimelineCanvas: NSView {
         }
 
         // Linked partners on the other kind of track move the same number of tracks, so a clip
-        // taken from V1 to V2 has its sound go from A1 to A2 (and back).
+        // taken from V1 to V2 has its sound go from A1 to A2 (and back) — but only into space that's
+        // free: with other sound already there (music on A2), the sound stays on its own track rather
+        // than writing over it.
         let movedLinks = Set(originals.filter { $0.kind.trackKind == kind }.compactMap(\.linkID))
         let otherKind: TrackKind = kind == .video ? .audio : .video
         let otherTracks = project.tracks(otherKind)
+        func taken(_ track: UUID, from start: Double, to end: Double) -> Bool {
+            project.clips.contains { $0.trackID == track && !ids.contains($0.id) && $0.start < end - 1e-6 && $0.end > start + 1e-6 }
+        }
 
         var out: [UUID: Clip] = [:]
         for var c in originals {
@@ -667,7 +672,7 @@ final class TimelineCanvas: NSView {
                 let ni = max(0, i + moveTrackDelta)
                 if ni >= otherTracks.count {
                     c.trackID = otherKind == .video ? TrackToken.newVideo : TrackToken.newAudio
-                } else if !otherTracks[ni].locked {
+                } else if ni != i, !otherTracks[ni].locked, !taken(otherTracks[ni].id, from: c.start, to: c.end) {
                     c.trackID = otherTracks[ni].id
                 }
             }
