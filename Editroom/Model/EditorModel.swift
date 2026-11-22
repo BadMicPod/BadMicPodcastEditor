@@ -219,7 +219,14 @@ final class EditorModel: ObservableObject {
                             lastShown = self.engine.shownTime
                             lastChange = now
                         }
-                        if self.playhead < prevPlayhead - 0.5 { wrapTimes.append(now) }
+                        if self.playhead < prevPlayhead - 0.5 {
+                            wrapTimes.append(now)
+                            // What the viewer shows next, and where the playhead is, right after wrapping.
+                            var firstShown = self.engine.shownTime
+                            let ph = self.playhead
+                            for _ in 0..<50 where firstShown > ph + 0.5 { try? await Task.sleep(nanoseconds: 1_000_000); firstShown = self.engine.shownTime }
+                            FileHandle.standardError.write(String(format: "LOOP wrap: playhead %.4f, first frame shown %.4f (loop start %.4f)\n", ph, firstShown, self.loopSpan.start).data(using: .utf8)!)
+                        }
                         prevPlayhead = self.playhead
                     }
                     let typical = gaps.map(\.gap).sorted()[gaps.count / 2]
