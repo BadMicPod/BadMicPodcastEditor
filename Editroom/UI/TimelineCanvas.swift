@@ -552,6 +552,8 @@ final class TimelineCanvas: NSView {
         stopAutoscroll()
         let finished = drag
         drag = .none
+        // A trim showed its edge's frame in the viewer: back to the edit.
+        if case .trim = finished { model.sourcePreview.clear() }
         switch finished {
         case .move where duplicating:
             // ⌥-drag: the clips stay where they were and copies land where they were dropped.
@@ -720,6 +722,7 @@ final class TimelineCanvas: NSView {
         if let g = out[grabbed.id] {
             bubble = (Timecode.string(g.duration, fps: project.fps), CGPoint(x: p.x, y: p.y - 22))
         }
+        showTrimFrame(grabbed, left: left)
         needsDisplay = true
     }
 
@@ -733,6 +736,24 @@ final class TimelineCanvas: NSView {
                 !ids.contains(o.id) && o.trackID == c.trackID && abs(o.end - c.start) <= tolerance
             }
         }
+    }
+
+    /// While an edge is dragged, the viewer shows the frame it lands on: a clip's new first frame
+    /// trimming its start, its new last frame trimming its end (a video's own, also when its sound is
+    /// the edge being dragged).
+    private func showTrimFrame(_ grabbed: Clip, left: Bool) {
+        let p = model.project
+        let video: Clip? = {
+            if let c = overrides[grabbed.id], c.kind == .video { return c }
+            guard let link = grabbed.linkID else { return nil }
+            return overrides.values.first { $0.linkID == link && $0.kind == .video }
+        }()
+        guard let c = video, let id = c.assetID, let asset = p.asset(id), asset.kind == .video, asset.duration > 0 else { return }
+        let t = left ? c.start : max(c.start, c.end - 1 / max(1, p.fps))
+        let src = c.isFreeze ? c.sourceStart : c.sourceTime(at: t)
+        let shown = min(max(0, c.playsBackwards ? asset.duration - src : src), max(0, asset.duration - 0.02))
+        model.sourcePreview.show(asset, at: shown, media: model.media,
+                                 quick: model.media.instantFrame(asset: asset, at: shown / asset.duration), note: left ? "In" : "Out")
     }
 
     private func updateStickyTrim(grabbed: Clip, left: Bool, startTime: Double, originals: [Clip], p: CGPoint) {
@@ -792,6 +813,7 @@ final class TimelineCanvas: NSView {
         if let g = out[grabbed.id] {
             bubble = (Timecode.string(g.duration, fps: project.fps), CGPoint(x: p.x, y: p.y - 22))
         }
+        showTrimFrame(grabbed, left: left)
         needsDisplay = true
     }
 

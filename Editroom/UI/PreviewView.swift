@@ -260,6 +260,7 @@ private struct SourceFrame: View {
             }
             HStack(spacing: 6) {
                 Text(a.name).font(.system(size: 11.5, weight: .semibold))
+                if let note = current.note { Text(note).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.accent) }
                 Text(Timecode.string(current.time, fps: fps)).font(Theme.mono(11.5, .regular)).foregroundStyle(Color(hex: 0x9A9A96))
             }
             // On the picture, so light type in every theme.

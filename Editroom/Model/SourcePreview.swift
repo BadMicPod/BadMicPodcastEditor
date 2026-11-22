@@ -9,17 +9,20 @@ final class SourcePreviewState: ObservableObject {
         let asset: MediaAsset
         var time: Double
         var image: CGImage?
+        /// Said after the name: "In" or "Out" while a clip's edge is being trimmed.
+        var note: String? = nil
     }
 
     @Published private(set) var current: Current?
 
     /// `quick` is a frame already at hand (made ahead, smaller) to show at once; the exact full-size
     /// frame replaces it when it's decoded, unless the mouse has moved on by then.
-    func show(_ asset: MediaAsset, at time: Double, media: MediaStore, quick: CGImage? = nil) {
+    func show(_ asset: MediaAsset, at time: Double, media: MediaStore, quick: CGImage? = nil, note: String? = nil) {
         if current?.asset.id != asset.id {
-            current = Current(asset: asset, time: time, image: quick)
+            current = Current(asset: asset, time: time, image: quick, note: note)
         } else {
             current?.time = time
+            current?.note = note
             if let quick { current?.image = quick }
         }
         media.viewerFrame(asset: asset.id, time: time) { [weak self] img in
