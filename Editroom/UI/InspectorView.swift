@@ -130,11 +130,22 @@ struct InspectorView: View {
         if clips.count == 1, let c = clips.first {
             if c.kind == .text { textSection(c) }
             if c.kind == .solid {
-                InspectorSection("Fill") {
-                    ColorField(color: c.color) { color in
-                        model.live { p in
-                            if let i = p.index(of: c.id) { p.clips[i].color = color }
-                        }
+                // Named for the clip, like Text; Fill is its colour, as a row like the others.
+                InspectorSection("Solid") {
+                    HStack(spacing: 8) {
+                        RowIconView(icon: .symbol("paintbrush"))
+                            .foregroundStyle(Theme.textDim)
+                            .frame(width: 18)
+                        Text("Fill")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.text)
+                        Spacer()
+                        ColorPicker("", selection: Binding(get: { c.color.color }, set: { color in
+                            model.live { p in
+                                if let i = p.index(of: c.id) { p.clips[i].color = RGBA(color) }
+                            }
+                        }), supportsOpacity: false)
+                            .labelsHidden()
                     }
                 }
             }
