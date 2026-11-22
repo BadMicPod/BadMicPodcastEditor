@@ -16,8 +16,10 @@ enum MCPTools {
     linked pair: moving, trimming or deleting either moves both. Placing, moving or trimming a clip \
     over another on the same track overwrites what's underneath, as on the timeline. Start with \
     get_project and list_media; analyze_media finds a clip's best moments or a song's beats; \
-    look_at_media shows you a clip or photo, and get_frame shows you the cut. Each edit is shown to the person with your own cursor and can be \
-    undone with history. auto_edit builds a whole cut on its own.
+    look_at_media shows you a clip or photo, and get_frame shows you the cut; search_media finds shots by what they \
+    show or what's said. Each edit is shown to the person with your own cursor and can be undone with history. \
+    auto_edit builds a whole cut on its own, and export delivers it to a file (vertical, square or portrait too, at a \
+    loudness target).
     """
 
     static func failure(_ message: String) -> [String: Any] {
@@ -82,7 +84,7 @@ enum MCPTools {
                   "look_intensity": num("0...1."), "exposure": num("Stops, -2...2."), "contrast": num("-50...50."), "saturation": num("-100...100."),
                   "temperature": num("-50...50, negative is cooler."), "tint": num("-50...50, positive is toward magenta.")], required: ["clip_ids"]),
             tool("list_looks", "List looks", "The built-in looks for set_grade.", readOnly: true),
-            tool("set_audio", "Set audio", "A clip's level and fades.", ["clip_id": str("A clip's id."), "gain_db": num("Level in dB, -60...12."), "fade_in": num("Seconds."), "fade_out": num("Seconds.")], required: ["clip_id"]),
+            tool("set_audio", "Set level and fades", "A clip's sound level, and its fades: a sound clip's fade its sound, a video, photo, title or solid's fade its picture (in from black, out to black).", ["clip_id": str("A clip's id."), "gain_db": num("Sound level in dB, -60...12."), "fade_in": num("Seconds."), "fade_out": num("Seconds.")], required: ["clip_id"]),
             tool("set_transition", "Set transition", "A transition into a clip from the clip that ends where it starts on the same track.", ["clip_id": str("The later clip's id."), "kind": ["type": "string", "enum": ["dissolve", "dipToBlack", "wipe", "none"]], "duration": num("Seconds (default 0.5).")], required: ["clip_id", "kind"]),
             tool("add_track", "Add track", "Adds an empty track on top of the others of its kind.", ["kind": ["type": "string", "enum": ["video", "audio"]]], required: ["kind"]),
             tool("set_sequence", "Set sequence", "The frame size and frame rate of the cut.", ["width": ["type": "integer"], "height": ["type": "integer"], "fps": num("23.976, 24, 25, 29.97, 30, 50, 59.94, 60, 100, 119.88 or 120.")]),
@@ -90,7 +92,7 @@ enum MCPTools {
             tool("history", "Undo or redo", "Undoes or redoes the last change (each tool call is one change).", ["action": ["type": "string", "enum": ["undo", "redo"]]], required: ["action"]),
             tool("auto_edit", "Auto edit", "Builds a whole cut from the library on its own: best moments, cut to the beat of a song if there is one, titled. Replaces what's on the timeline (one undo brings it back)."),
             tool("save_project", "Save project", "Saves the project to its file. A project that's never been saved has to be saved by the person."),
-        ]
+        ] + moreDefinitions
     }
 
     // MARK: Calls
@@ -496,6 +498,7 @@ enum MCPTools {
             return text("Saved.")
 
         default:
+            if let out = try await callMore(name, args, model: model, who: who, draft: draft) { return out }
             throw MCPToolError("No tool called \(name).")
         }
     }
@@ -671,7 +674,13 @@ enum MCPTools {
         if c.fadeIn > 0 { d["fade_in"] = round3(c.fadeIn) }
         if c.fadeOut > 0 { d["fade_out"] = round3(c.fadeOut) }
         if let t = c.transitionIn { d["transition_in"] = ["kind": t.kind.rawValue, "duration": t.duration] }
-        if c.kind == .text { d["text"] = c.text.string }
+        if c.kind == .text {
+            d["text"] = c.text.string
+            d["style"] = ["font": c.text.fontName.isEmpty ? "System" : c.text.fontName, "size": round3(c.text.size), "bold": c.text.bold,
+                          "color": hex(c.text.color), "x": round3(c.text.x), "y": round3(c.text.y)]
+        }
+        if c.kind == .solid { d["color"] = hex(c.color) }
+        if let tf = c.transform, !tf.isIdentity { d["transform"] = ["scale": round3(tf.scale), "x": round3(tf.x), "y": round3(tf.y)] }
         if let g = c.grade {
             var gd: [String: Any] = [:]
             if let look = g.look { gd["look"] = g.lookLabel; if look != g.lookLabel { gd["look_file"] = look } }
@@ -708,7 +717,425 @@ enum MCPTools {
             "playhead": round3(playhead),
             "tracks": tracks,
             "clips": clips,
-            "markers": p.markerList.map { ["time": round3($0.time), "name": $0.name] },
+            "markers": p.markerList.map { ["id": $0.id.uuidString, "time": round3($0.time), "name": $0.name, "color": $0.tint.rawValue] },
+            "in_out": p.playRange.map { ["in": round3($0.start), "out": round3($0.end)] } ?? NSNull(),
         ]
+    }
+}
+
+// MARK: - Delivering, finding, marking, framing, and the rest
+
+extension MCPTools {
+    static var moreDefinitions: [[String: Any]] {
+        [
+            tool("export", "Export", "Exports the cut to a file, in the background (export_status says how it's going, or set wait). Saved in the folder the person last exported to (else beside the project, else Movies); never over an existing file. Not available while making a Magic edit.",
+                 ["name": str("File name, without extension (default: the project's)."),
+                  "format": ["type": "string", "enum": ["video", "audio"], "description": "An MP4, or a WAV of the sound (default video)."],
+                  "shape": ["type": "string", "enum": ["original", "vertical", "square", "portrait"], "description": "original is the sequence's own shape; vertical 9:16, square 1:1 and portrait 4:5 crop it."],
+                  "height": ["type": "integer", "description": "Output height in pixels (for vertical, square and portrait: the short side), e.g. 720, 1080, 2160. Default: the sequence's."],
+                  "codec": ["type": "string", "enum": ["h264", "hevc"]], "quality": ["type": "string", "enum": ["high", "web"]],
+                  "include_audio": ["type": "boolean", "description": "Default true."],
+                  "loudness": num("Target loudness in LUFS: -14 for YouTube and social, -16 for podcasts, -23 for broadcast. Leave out to keep the levels."),
+                  "range_only": ["type": "boolean", "description": "Just the in/out range (see set_in_out)."],
+                  "reframe_x": num("For a crop: which part to keep, 0 (left) to 1 (right). Default 0.5."),
+                  "reframe_y": num("For a crop: 0 (top) to 1 (bottom). Default 0.5."),
+                  "wait": ["type": "boolean", "description": "Wait until it's done (up to about 4 minutes) instead of returning straight away."]]),
+            tool("export_status", "Export status", "Exports started from Editroom (by anyone): their files and whether they're waiting, running, done or failed.", readOnly: true),
+            tool("search_media", "Search media", "Finds library items by what they show (people, places, things: \"beach\", \"dog\", \"car at night\") and/or what's said in them, with the times in each file. Much quicker than looking at or transcribing each one. Seen and heard on this Mac in the background after import, so a new file may not be searchable yet.",
+                 ["shows": str("Words for what's in the shot; every word has to match."), "said": str("Words someone says, in order.")], readOnly: true),
+            tool("set_marker", "Set marker", "Adds a marker on the timeline, or changes one (give marker_id, from get_project). Use markers when asked to mark moments (beats, highlights, places to cut).",
+                 ["marker_id": str("To change an existing marker."), "time": num("Timeline seconds (needed for a new marker)."), "name": str("What to call it."),
+                  "color": ["type": "string", "enum": Marker.Tint.allCases.map(\.rawValue)]]),
+            tool("delete_markers", "Delete markers", "Removes markers.", ["marker_ids": ["type": "array", "items": ["type": "string"]], "all": ["type": "boolean", "description": "Remove every marker."]]),
+            tool("set_in_out", "Set in and out", "The in/out range: what Loop plays and what export can be limited to (range_only).",
+                 ["in": num("Timeline seconds."), "out": num("Timeline seconds."), "clear": ["type": "boolean", "description": "Remove the range."]]),
+            tool("set_transform", "Position and scale", "Moves and scales a video, photo or solid in the frame, for reframing (keeping a subject in a vertical crop, a picture-in-picture). A title's place is set with set_title_style.",
+                 ["clip_id": str("A clip's id."), "scale": num("1 fits the frame; 2 is twice as big (0.05...10)."),
+                  "x": num("Offset of its centre across, as a fraction of the frame's width (0 is centred, 0.5 is the right edge)."),
+                  "y": num("Offset down, as a fraction of the frame's height (0 is centred, positive is lower)."), "reset": ["type": "boolean", "description": "Back to fitted and centred."]],
+                 required: ["clip_id"]),
+            tool("set_title_style", "Title style", "A title's words and look. Leave out what shouldn't change.",
+                 ["clip_id": str("A title clip's id."), "text": str("The words."), "font": str("A font family installed on this Mac, or \"System\"."),
+                  "size": num("Points, for a 1080-pixel-tall frame (12...600; default 110)."), "bold": ["type": "boolean"],
+                  "color": str("Hex, like #FFFFFF."), "x": num("Its centre across, 0 (left) to 1 (right)."), "y": num("Its centre down, 0 (top) to 1 (bottom).")],
+                 required: ["clip_id"]),
+            tool("freeze_frame", "Freeze frame", "Holds one frame of a video clip: the clip is cut there, the held frame goes in, and what follows on its tracks moves along to make room.",
+                 ["clip_id": str("A video clip's id."), "at": num("Timeline time inside the clip (default: its middle)."), "seconds": num("How long to hold (default 2).")],
+                 required: ["clip_id"]),
+            tool("reverse_clip", "Reverse", "Plays a clip (and its linked sound) backwards; again plays it forwards.", ["clip_id": str("A clip's id.")], required: ["clip_id"]),
+            tool("detach_audio", "Detach audio", "Unlinks a video from its sound, so each can be moved, trimmed or deleted on its own.", ["clip_id": str("The video's or its sound's id.")], required: ["clip_id"]),
+            tool("duplicate_clip", "Duplicate clip", "Copies a clip (and anything linked to it) to another time.",
+                 ["clip_id": str("A clip's id."), "start": num("Where the copy starts (default: straight after the clip).")], required: ["clip_id"]),
+            tool("set_track", "Set track", "A track's switches and level.",
+                 ["track": str("V1, V2… or A1, A2…"), "hidden": ["type": "boolean", "description": "Video tracks."], "muted": ["type": "boolean", "description": "Audio tracks."],
+                  "solo": ["type": "boolean", "description": "Audio tracks."], "locked": ["type": "boolean"], "gain_db": num("Audio tracks, -60...12.")],
+                 required: ["track"]),
+            tool("add_solid", "Add solid", "Adds a solid colour (a background, a flash, a colour card).",
+                 ["color": str("Hex, like #000000 (default black)."), "start": num("Default 0."), "duration": num("Default 3."), "track": str("A video track (default: one that's free there).")]),
+            tool("set_solid_color", "Solid colour", "Changes a solid's colour.", ["clip_id": str("A solid's id."), "color": str("Hex, like #1A1A1A.")], required: ["clip_id", "color"]),
+        ]
+    }
+
+    static func hex(_ c: RGBA) -> String {
+        String(format: "#%02X%02X%02X", Int((c.r * 255).rounded()), Int((c.g * 255).rounded()), Int((c.b * 255).rounded()))
+    }
+
+    private static func colorArg(_ v: Any?) throws -> RGBA? {
+        guard let s = (v as? String)?.trimmingCharacters(in: .whitespaces) else { return nil }
+        let h = s.hasPrefix("#") ? String(s.dropFirst()) : s
+        guard h.count == 6, let n = UInt32(h, radix: 16) else { throw MCPToolError("Colours are hex, like #FF4A1C.") }
+        return RGBA(r: Double(n >> 16 & 255) / 255, g: Double(n >> 8 & 255) / 255, b: Double(n & 255) / 255, a: 1)
+    }
+
+    private static func double(_ v: Any?) -> Double? { (v as? Double) ?? (v as? Int).map(Double.init) }
+
+    /// The tools above; nil for a name that isn't one of them.
+    static func callMore(_ name: String, _ args: [String: Any], model: EditorModel, who: String, draft: MCPDraft?) async throws -> [[String: Any]]? {
+        func now() -> Project { draft?.project ?? model.project }
+        func text(_ s: String) -> [[String: Any]] { [["type": "text", "text": s]] }
+        func json(_ v: Any) -> [[String: Any]] {
+            let d = (try? JSONSerialization.data(withJSONObject: v, options: [.prettyPrinted, .sortedKeys])) ?? Data()
+            return text(String(data: d, encoding: .utf8) ?? "{}")
+        }
+        let p = now()
+
+        switch name {
+        case "export":
+            if draft != nil { throw MCPToolError("export isn't available while making a Magic edit; the person can export it when it's done.") }
+            model.commitLive()
+            let q = model.project
+            guard !q.clips.isEmpty else { throw MCPToolError("The timeline is empty.") }
+            var s = ExportSettings()
+            if (args["format"] as? String) == "audio" { s.format = .wav }
+            if let shape = args["shape"] as? String {
+                guard let v = ExportSettings.Shape(rawValue: shape) else { throw MCPToolError("shape is original, vertical, square or portrait.") }
+                s.shape = v
+            }
+            if let h = args["height"] as? Int {
+                guard (144...4320).contains(h) else { throw MCPToolError("height is 144…4320.") }
+                s.height = h
+            }
+            if (args["codec"] as? String) == "hevc" { s.codec = .hevc }
+            if (args["quality"] as? String) == "web" { s.quality = .web }
+            if let a = args["include_audio"] as? Bool { s.includeAudio = a }
+            if let l = double(args["loudness"]) {
+                guard (-40...(-5)).contains(l) else { throw MCPToolError("loudness is a LUFS target, -40…-5 (like -14).") }
+                s.loudness = l
+            }
+            if args["range_only"] as? Bool == true {
+                guard q.playRange != nil else { throw MCPToolError("There's no in/out range; set_in_out sets one.") }
+                s.rangeOnly = true
+            }
+            s.reframe = CGPoint(x: (double(args["reframe_x"]) ?? 0.5).clamped(to: 0...1), y: (double(args["reframe_y"]) ?? 0.5).clamped(to: 0...1))
+            if s.format == .wav, !q.clips.contains(where: { $0.kind == .audio }) { throw MCPToolError("There's no sound on the timeline.") }
+            // Where the person last exported to, else beside the project, else Movies.
+            let fm = FileManager.default
+            var isDir: ObjCBool = false
+            let folder: URL = {
+                if let d = q.exportDir, fm.fileExists(atPath: d, isDirectory: &isDir), isDir.boolValue { return URL(fileURLWithPath: d) }
+                if let f = model.fileURL?.deletingLastPathComponent() { return f }
+                return fm.urls(for: .moviesDirectory, in: .userDomainMask)[0]
+            }()
+            var base = ((args["name"] as? String) ?? q.exportName ?? model.title).trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+            if base.isEmpty { base = model.title }
+            var url = folder.appendingPathComponent(base + "." + s.fileExtension)
+            var n = 2
+            while fm.fileExists(atPath: url.path) || model.exports.items.contains(where: { $0.url == url }) {
+                url = folder.appendingPathComponent("\(base) \(n).\(s.fileExtension)")
+                n += 1
+            }
+            model.exports.add(project: q, media: model.media, settings: s, url: url)
+            let size = s.renderSize(for: s.output(q))
+            var out: [String: Any] = ["file": url.path, "size": s.format == .wav ? "audio" : "\(Int(size.width))×\(Int(size.height))",
+                                      "status": "started"]
+            if args["wait"] as? Bool == true {
+                let started = Date()
+                while Date().timeIntervalSince(started) < 240 {
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    guard let item = model.exports.items.first(where: { $0.url == url }) else { break }
+                    switch item.status {
+                    case .done: out["status"] = "done"; return json(out)
+                    case .failed(let why): throw MCPToolError("The export failed: \(why)")
+                    case .cancelled: out["status"] = "cancelled"; return json(out)
+                    default: continue
+                    }
+                }
+                out["status"] = "still exporting; export_status says when it's done"
+            }
+            return json(out)
+
+        case "export_status":
+            let items = model.exports.items.map { item -> [String: Any] in
+                let status: String = switch item.status {
+                case .waiting: "waiting"
+                case .running: "running"
+                case .done: "done"
+                case .failed(let why): "failed: \(why)"
+                case .cancelled: "cancelled"
+                }
+                var d: [String: Any] = ["file": item.url.path, "status": status]
+                if item.status == .running { d["progress"] = NSDecimalNumber(string: String(format: "%.2f", model.exports.progress)) }
+                return d
+            }
+            if items.isEmpty { return json(["exports": [Any](), "note": "Nothing exporting, and nothing finished recently."] as [String: Any]) }
+            return json(["exports": items] as [String: Any])
+
+        case "search_media":
+            let shows = (args["shows"] as? String)?.trimmingCharacters(in: .whitespaces).lowercased() ?? ""
+            let said = (args["said"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+            guard !shows.isEmpty || !said.isEmpty else { throw MCPToolError("Give shows and/or said.") }
+            let words = shows.split(separator: " ").map(String.init).filter { !["a", "an", "the", "of", "in", "on", "at", "with"].contains($0) }
+            var found: [[String: Any]] = []
+            var unseen = 0, unheard = 0
+            for a in p.assets {
+                var hit: [String: Any] = ["asset_id": a.id.uuidString, "name": a.name]
+                if !words.isEmpty {
+                    let tags = model.media.sceneTags(a.id)
+                    if tags == nil, a.kind != .audio { unseen += 1 }
+                    guard words.allSatisfy({ w in a.name.lowercased().contains(w) || tags?.shows(w) == true }) else { continue }
+                    let matched = words.flatMap { tags?.matching($0) ?? [] }
+                    if !matched.isEmpty {
+                        hit["shows"] = matched.map { ["tag": $0.name, "times": $0.times.prefix(8).map { round3($0) }] as [String: Any] }
+                    }
+                }
+                if !said.isEmpty {
+                    guard a.kind != .image else { continue }
+                    guard let t = model.media.transcript(a.id) else { unheard += 1; continue }
+                    let places = t.occurrences(said)
+                    guard !places.isEmpty else { continue }
+                    hit["said"] = places.prefix(10).map { ["start": round3($0.start), "end": round3($0.end), "words": $0.context] as [String: Any] }
+                }
+                found.append(hit)
+            }
+            var out: [String: Any] = ["found": found, "times": "Seconds in each file, like source_start."]
+            var notes: [String] = []
+            if unseen > 0 { notes.append("\(unseen) item\(unseen == 1 ? " hasn't" : "s haven't") been looked through yet") }
+            if unheard > 0 { notes.append("\(unheard) haven't been heard yet (get_transcript hears one now)") }
+            if !notes.isEmpty { out["note"] = notes.joined(separator: "; ") + "." }
+            return json(out)
+
+        case "set_marker":
+            let tint = try (args["color"] as? String).map { c -> Marker.Tint in
+                guard let t = Marker.Tint(rawValue: c) else { throw MCPToolError("color is " + Marker.Tint.allCases.map(\.rawValue).joined(separator: ", ") + ".") }
+                return t
+            }
+            let time = double(args["time"]).map { p.snapFrame(max(0, $0)) }
+            let label = args["name"] as? String
+            var id = UUID()
+            if let s = args["marker_id"] as? String {
+                guard let m = p.markerList.first(where: { $0.id.uuidString == s.uppercased() }) else { throw MCPToolError("No marker \(s); get_project lists them.") }
+                id = m.id
+                try await perform([.change(nil, "Marker") { q in
+                    guard let i = q.markers?.firstIndex(where: { $0.id == m.id }) else { return }
+                    if let time { q.markers![i].time = time }
+                    if let label { q.markers![i].name = label }
+                    if let tint { q.markers![i].tint = tint }
+                }], model, who, draft)
+            } else {
+                guard let time else { throw MCPToolError("time is needed for a new marker.") }
+                let m = Marker(id: id, time: time, name: label ?? "Marker \((p.markers?.count ?? 0) + 1)", tint: tint ?? .yellow)
+                try await perform([.change(nil, "Marker") { q in q.markers = (q.markers ?? []) + [m] }], model, who, draft)
+            }
+            guard let m = now().markerList.first(where: { $0.id == id }) else { throw MCPToolError("The marker didn't stick.") }
+            return json(["id": m.id.uuidString, "time": round3(m.time), "name": m.name, "color": m.tint.rawValue])
+
+        case "delete_markers":
+            let ids: Set<UUID> = args["all"] as? Bool == true ? Set(p.markerList.map(\.id))
+                : Set(((args["marker_ids"] as? [String]) ?? []).compactMap { UUID(uuidString: $0) })
+            guard !ids.isEmpty else { throw MCPToolError("Give marker_ids, or all: true.") }
+            try await perform([.change(nil, "Markers") { q in
+                q.markers?.removeAll { ids.contains($0.id) }
+                if q.markers?.isEmpty == true { q.markers = nil }
+            }], model, who, draft)
+            return text("\(now().markerList.count) marker\(now().markerList.count == 1 ? "" : "s") left.")
+
+        case "set_in_out":
+            if args["clear"] as? Bool == true {
+                try await perform([.change(nil, "Clear in/out") { q in q.inPoint = nil; q.outPoint = nil }], model, who, draft)
+                return text("No in/out range.")
+            }
+            let i = double(args["in"]).map { p.snapFrame(max(0, $0)) }
+            let o = double(args["out"]).map { p.snapFrame(max(0, $0)) }
+            guard i != nil || o != nil else { throw MCPToolError("Give in and/or out, or clear: true.") }
+            if let i, let o, o <= i { throw MCPToolError("out has to be after in.") }
+            try await perform([.change(nil, "In/out") { q in
+                if let i { q.inPoint = i; if let out = q.outPoint, out <= i { q.outPoint = nil } }
+                if let o { q.outPoint = o; if let inn = q.inPoint, inn >= o { q.inPoint = nil } }
+            }], model, who, draft)
+            let r = now().playRange
+            return json(["in": r.map { round3($0.start) } ?? NSNull(), "out": r.map { round3($0.end) } ?? NSNull()])
+
+        case "set_transform":
+            let c = try clipArg(args, p)
+            guard c.isTransformable else { throw MCPToolError(c.kind == .text ? "Titles are placed with set_title_style." : "Sound has no picture to move.") }
+            var tf = args["reset"] as? Bool == true ? ClipTransform() : (c.transform ?? ClipTransform())
+            if let s = double(args["scale"]) { tf.scale = s.clamped(to: ClipTransform.scaleRange) }
+            if let x = double(args["x"]) { tf.x = x.clamped(to: -2...2) }
+            if let y = double(args["y"]) { tf.y = y.clamped(to: -2...2) }
+            let set = tf
+            try await perform([.change(c.id, "Transform") { q in if let i = q.index(of: c.id) { q.clips[i].transform = set.isIdentity ? nil : set } }], model, who, draft)
+            return json(clipsJSON([c.id], now()))
+
+        case "set_title_style":
+            let c = try clipArg(args, p)
+            guard c.kind == .text else { throw MCPToolError("That clip isn't a title.") }
+            var font: String?
+            if let f = (args["font"] as? String)?.trimmingCharacters(in: .whitespaces) {
+                if f.lowercased() == "system" || f.isEmpty {
+                    font = ""
+                } else {
+                    guard let family = NSFontManager.shared.availableFontFamilies.first(where: { $0.caseInsensitiveCompare(f) == .orderedSame }) else {
+                        throw MCPToolError("\(f) isn't installed on this Mac. Try System, Helvetica Neue, Futura, Avenir Next, Georgia or Didot.")
+                    }
+                    font = family
+                }
+            }
+            let color = try colorArg(args["color"])
+            let words = args["text"] as? String
+            let size = double(args["size"]).map { $0.clamped(to: 12...600) }
+            let bold = args["bold"] as? Bool
+            let x = double(args["x"]).map { $0.clamped(to: 0...1) }, y = double(args["y"]).map { $0.clamped(to: 0...1) }
+            guard font != nil || color != nil || words != nil || size != nil || bold != nil || x != nil || y != nil else {
+                throw MCPToolError("Give at least one of text, font, size, bold, color, x, y.")
+            }
+            var edits: [MagicEdit] = []
+            if let words { edits.append(.type(c.id, words)) }
+            edits.append(.change(c.id, "Title style") { q in
+                guard let i = q.index(of: c.id) else { return }
+                if let font { q.clips[i].text.fontName = font }
+                if let color { q.clips[i].text.color = color }
+                if let size { q.clips[i].text.size = size }
+                if let bold { q.clips[i].text.bold = bold }
+                if let x { q.clips[i].text.x = x }
+                if let y { q.clips[i].text.y = y }
+            })
+            try await perform(edits, model, who, draft)
+            return json(clipsJSON([c.id], now()))
+
+        case "freeze_frame":
+            let c = try clipArg(args, p)
+            guard c.kind == .video, !c.isFreeze else { throw MCPToolError("Freeze frames are made from a video clip.") }
+            let t = p.snapFrame(double(args["at"]) ?? (c.start + c.duration / 2))
+            guard t > c.start, t < c.end else { throw MCPToolError("at has to be inside the clip (\(round3(c.start))…\(round3(c.end))).") }
+            let hold = max(1 / p.fps, double(args["seconds"]) ?? 2)
+            var source = c.sourceTime(at: t)
+            if c.playsBackwards, let length = p.asset(c.assetID)?.duration { source = max(0, length - source - 0.001) }
+            let made = UUID()
+            try await perform([.change(c.id, "Freeze") { q in
+                let group = q.linked([c.id])
+                _ = q.split(ids: group, at: t)
+                let tracks = Set(q.clips.filter { group.contains($0.id) }.map(\.trackID))
+                var shifting = Set(q.clips.filter { tracks.contains($0.trackID) && $0.start >= t - 1e-6 }.map(\.id))
+                shifting = q.unlocked(q.linked(shifting))
+                for i in q.clips.indices where shifting.contains(q.clips[i].id) { q.clips[i].start += hold }
+                var f = Clip(trackID: c.trackID, kind: .video, assetID: c.assetID, start: t, duration: hold, sourceStart: source)
+                f.id = made
+                f.freeze = true
+                f.grade = c.grade
+                f.transform = c.transform
+                q.clips.append(f)
+                q.resolveOverlaps(keeping: shifting.union([f.id]))
+            }], model, who, draft)
+            return json(clipsJSON([made], now()))
+
+        case "reverse_clip":
+            let c = try clipArg(args, p)
+            guard c.playsSource, c.reversedFrom == nil else { throw MCPToolError("Only video and sound from a file can be reversed.") }
+            let group = p.unlocked(p.linked([c.id]))
+            let backwards = !c.playsBackwards
+            for m in p.clips where group.contains(m.id) && m.kind == .audio && backwards {
+                if let id = m.assetID { model.media.prepareReversedAudio(id) }
+            }
+            try await perform([.change(c.id, backwards ? "Reverse" : "Forwards") { q in
+                for i in q.clips.indices where group.contains(q.clips[i].id) && q.clips[i].playsSource && q.clips[i].reversedFrom == nil {
+                    guard let length = q.asset(q.clips[i].assetID)?.duration else { continue }
+                    let m = q.clips[i]
+                    q.clips[i].sourceStart = max(0, length - (m.sourceStart + m.sourceLength))
+                    q.clips[i].ramp = m.ramp?.mirrored(length: length)
+                    q.clips[i].reversed = backwards ? true : nil
+                }
+            }], model, who, draft)
+            return json(clipsJSON(Array(group), now()))
+
+        case "detach_audio":
+            let c = try clipArg(args, p)
+            guard c.linkID != nil else { throw MCPToolError("That clip isn't linked to anything.") }
+            let group = p.linked([c.id])
+            try await perform([.change(c.id, "Detach") { q in q.unlink(ids: group) }], model, who, draft)
+            return json(clipsJSON(Array(group), now()))
+
+        case "duplicate_clip":
+            let c = try clipArg(args, p)
+            let group = p.clips.filter { p.linked([c.id]).contains($0.id) }
+            let t0 = group.map(\.start).min() ?? c.start
+            let at = p.snapFrame(max(0, double(args["start"]) ?? (group.map(\.end).max() ?? c.end)))
+            var links: [UUID: UUID] = [:]
+            let copies = group.map { original -> Clip in
+                var n = original
+                n.id = UUID()
+                if let l = n.linkID { if links[l] == nil { links[l] = UUID() }; n.linkID = links[l] }
+                n.start = at + (original.start - t0)
+                return n
+            }
+            try await perform([.place(copies, asset: c.assetID)], model, who, draft)
+            return json(clipsJSON(copies.map(\.id), now()))
+
+        case "set_track":
+            guard let tn = args["track"] as? String else { throw MCPToolError("track is needed (V1, A1…).") }
+            let isVideo = tn.uppercased().hasPrefix("V")
+            let kind: TrackKind = isVideo ? .video : .audio
+            let n = tn.uppercased().trimmingCharacters(in: .whitespaces)
+            guard let i = Int(n.dropFirst()), i >= 1, i <= p.tracks(kind).count else { throw MCPToolError("There's no \(tn).") }
+            let id = p.tracks(kind)[i - 1].id
+            let hidden = args["hidden"] as? Bool, muted = args["muted"] as? Bool, solo = args["solo"] as? Bool, locked = args["locked"] as? Bool
+            let gain = double(args["gain_db"]).map { $0.clamped(to: -60...12) }
+            guard hidden != nil || muted != nil || solo != nil || locked != nil || gain != nil else {
+                throw MCPToolError("Give hidden, muted, solo, locked or gain_db.")
+            }
+            try await perform([.change(nil, "Track") { q in
+                func edit(_ t: inout Track) {
+                    if let hidden { t.hidden = hidden }
+                    if let muted { t.muted = muted }
+                    if let solo { t.solo = solo }
+                    if let locked { t.locked = locked }
+                    if let gain { t.gainDB = gain }
+                }
+                if let j = q.videoTracks.firstIndex(where: { $0.id == id }) { edit(&q.videoTracks[j]) }
+                if let j = q.audioTracks.firstIndex(where: { $0.id == id }) { edit(&q.audioTracks[j]) }
+            }], model, who, draft)
+            let t = now().tracks(kind)[i - 1]
+            return json(["track": n, "hidden": t.hidden, "muted": t.muted, "solo": t.solo, "locked": t.locked, "gain_db": round3(t.gainDB)])
+
+        case "add_solid":
+            let color = try colorArg(args["color"]) ?? .black
+            let start = p.snapFrame(max(0, double(args["start"]) ?? 0))
+            let length = p.snapFrame(max(1 / p.fps, double(args["duration"]) ?? 3))
+            var edits: [MagicEdit] = []
+            let track: UUID
+            if let tn = args["track"] as? String {
+                track = try trackArg(tn, p, kind: .video)
+            } else if let free = p.videoTracks.first(where: { t in !t.locked && !p.clips.contains { $0.trackID == t.id && $0.start < start + length && $0.end > start } }) {
+                track = free.id
+            } else {
+                track = UUID()
+                edits.append(addTrackEdit(.video, id: track))
+            }
+            var solid = Clip(trackID: track, kind: .solid, start: start, duration: length)
+            solid.color = color
+            edits.append(.place([solid], asset: nil))
+            try await perform(edits, model, who, draft)
+            return json(clipsJSON([solid.id], now()))
+
+        case "set_solid_color":
+            let c = try clipArg(args, p)
+            guard c.kind == .solid else { throw MCPToolError("That clip isn't a solid.") }
+            guard let color = try colorArg(args["color"]) else { throw MCPToolError("color is needed, like #000000.") }
+            try await perform([.change(c.id, "Colour") { q in if let i = q.index(of: c.id) { q.clips[i].color = color } }], model, who, draft)
+            return json(clipsJSON([c.id], now()))
+
+        default:
+            return nil
+        }
     }
 }

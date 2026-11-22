@@ -84,6 +84,19 @@ struct Transcript: Codable, Equatable {
         return nil
     }
 
+    /// Every place they say these words, with their times in the file and a few words around.
+    func occurrences(_ phrase: String) -> [(start: Double, end: Double, context: String)] {
+        let want = Self.tokens(phrase)
+        guard !want.isEmpty, words.count >= want.count else { return [] }
+        let have = words.map { Self.tokens($0.text).first ?? "" }
+        var out: [(Double, Double, String)] = []
+        for i in 0...(words.count - want.count) where Array(have[i..<(i + want.count)]) == want {
+            let from = max(0, i - 4), to = min(words.count, i + want.count + 5)
+            out.append((words[i].start, words[i + want.count - 1].end, words[from..<to].map(\.text).joined(separator: " ")))
+        }
+        return out.map { (start: $0.0, end: $0.1, context: $0.2) }
+    }
+
     static func tokens(_ s: String) -> [String] {
         s.lowercased().split { !$0.isLetter && !$0.isNumber && $0 != "'" }.map(String.init)
     }

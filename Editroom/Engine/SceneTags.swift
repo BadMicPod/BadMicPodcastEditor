@@ -32,6 +32,15 @@ struct SceneTags: Codable, Equatable {
         }
     }
 
+    /// The tags that match a word (as `shows` does), for saying where in the file it shows.
+    func matching(_ word: String) -> [Tag] {
+        let w = Self.singular(word.lowercased())
+        guard w.count >= 2 else { return [] }
+        return tags.filter { tag in
+            (tag.name.split(separator: " ").map(String.init) + (Self.aliases[tag.name] ?? [])).contains { $0 == w || Self.singular($0) == w }
+        }
+    }
+
     /// Everyday words for Vision's labels, so a search for "door" finds a "portal".
     static let aliases: [String: [String]] = [
         "portal": ["door", "doorway", "entrance", "gate"],

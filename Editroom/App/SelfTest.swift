@@ -1046,6 +1046,93 @@ enum SelfTest {
             log("MCP TOOLS \(good ? "OK" : "FAIL") \(detail)")
             ok = ok && good
         }
+        // The newer MCP tools: markers and in/out, reframing, title style, solids, freeze, reverse, detach,
+        // duplicate, track switches, search and export; each change one undo step; export refused in Magic.
+        do {
+            let m = EditorModel()
+            var p = Project()
+            p.assets = project.assets.filter { $0.kind == .video }
+            m.load(p, url: nil)
+            m.setExportTarget(name: "selftest", directory: outDir.path)
+            func call(_ name: String, _ args: [String: Any], draft: MCPDraft? = nil) async -> (Any?, String?) {
+                do {
+                    let out = try await MCPTools.call(name, args, model: m, client: nil, draft: draft)
+                    let text = out.first?["text"] as? String ?? ""
+                    return (try? JSONSerialization.jsonObject(with: Data(text.utf8)), nil)
+                } catch {
+                    return (nil, (error as? MCPToolError)?.message ?? "\(error)")
+                }
+            }
+            func id(_ r: Any?) -> String {
+                if let d = r as? [String: Any] {
+                    if let added = d["added"] as? [[String: Any]] { return added.first?["id"] as? String ?? "" }
+                    if let added = d["added"] as? [String: Any] { return added["id"] as? String ?? "" }
+                    return d["id"] as? String ?? ""
+                }
+                return (r as? [[String: Any]])?.first?["id"] as? String ?? ""
+            }
+            var checks: [String: Bool] = [:]
+            if let asset = p.assets.first(where: { $0.hasAudio && $0.duration >= 4 }) {
+                let a = id(await call("add_clip", ["asset_id": asset.id.uuidString, "duration": 3.0]).0)
+                let aID = UUID(uuidString: a)
+                // Markers and in/out.
+                let mk = id(await call("set_marker", ["time": 1.0, "name": "Beat", "color": "red"]).0)
+                _ = await call("set_marker", ["marker_id": mk, "name": "Drop"])
+                _ = await call("set_marker", ["time": 2.0])
+                checks["markers"] = m.project.markerList.map(\.name) == ["Drop", "Marker 2"] && m.project.markerList.first?.tint == .red
+                _ = await call("delete_markers", ["marker_ids": [mk]])
+                checks["delete"] = m.project.markerList.count == 1
+                _ = await call("set_in_out", ["in": 0.5, "out": 2.5])
+                checks["in_out"] = m.project.playRange.map { abs($0.start - 0.5) < 0.02 && abs($0.end - 2.5) < 0.02 } ?? false
+                // Reframing, a styled title, a solid.
+                _ = await call("set_transform", ["clip_id": a, "scale": 1.5, "x": 0.1])
+                checks["transform"] = m.project.clip(aID ?? UUID())?.transform.map { $0.scale == 1.5 && $0.x == 0.1 } ?? false
+                let t = id(await call("add_title", ["text": "Hi", "start": 0.0, "duration": 1.0]).0)
+                let (_, badFont) = await call("set_title_style", ["clip_id": t, "font": "No Such Font Anywhere"])
+                _ = await call("set_title_style", ["clip_id": t, "text": "Hello", "size": 80.0, "color": "#FF0000", "x": 0.3, "bold": false])
+                let title = UUID(uuidString: t).flatMap { m.project.clip($0) }
+                checks["title"] = title.map { $0.text.string == "Hello" && $0.text.size == 80 && $0.text.color.r == 1 && $0.text.color.g == 0 && $0.text.x == 0.3 && !$0.text.bold } ?? false
+                checks["bad_font"] = badFont != nil
+                if checks["title"] != true, let tt = title { log("MCP MORE title: \(tt.text.string) size \(tt.text.size) colour \(MCPTools.hex(tt.text.color)) x \(tt.text.x) bold \(tt.text.bold)") }
+                let s = id(await call("add_solid", ["color": "#112233", "start": 5.0, "duration": 1.0]).0)
+                _ = await call("set_solid_color", ["clip_id": s, "color": "#445566"])
+                checks["solid"] = UUID(uuidString: s).flatMap { m.project.clip($0) }.map { $0.kind == .solid && MCPTools.hex($0.color) == "#445566" } ?? false
+                // Freeze, reverse, detach, duplicate.
+                let videoBefore = m.project.clips.filter { $0.kind == .video }.map(\.end).max() ?? 0
+                _ = await call("freeze_frame", ["clip_id": a, "at": 1.0, "seconds": 1.0])
+                let videoAfter = m.project.clips.filter { $0.kind == .video }.map(\.end).max() ?? 0
+                checks["freeze"] = m.project.clips.contains { $0.isFreeze } && abs(videoAfter - videoBefore - 1) < 0.05
+                _ = await call("reverse_clip", ["clip_id": a])
+                checks["reverse"] = m.project.clip(aID ?? UUID())?.playsBackwards == true
+                _ = await call("detach_audio", ["clip_id": a])
+                checks["detach"] = m.project.clip(aID ?? UUID())?.linkID == nil
+                _ = await call("duplicate_clip", ["clip_id": a, "start": 12.0])
+                checks["duplicate"] = m.project.clips.contains { $0.kind == .video && abs($0.start - 12) < 0.02 }
+                // Track switches.
+                _ = await call("set_track", ["track": "A1", "muted": true, "gain_db": -3.0])
+                checks["track"] = m.project.audioTracks.first.map { $0.muted && $0.gainDB == -3 } ?? false
+                // Search: nothing shows a made-up word; asking for nothing is an error.
+                let (found, _) = await call("search_media", ["shows": "zzqqxx"])
+                let (_, empty) = await call("search_media", [:])
+                checks["search"] = ((found as? [String: Any])?["found"] as? [Any])?.isEmpty == true && empty != nil
+                // Export: a small file, waited for, in the folder set for it; refused during Magic.
+                let draft = MCPDraft.open(m.project)
+                let (_, refused) = await call("export", ["name": "mcp-export"], draft: draft)
+                draft.close()
+                let (made, exportError) = await call("export", ["name": "mcp-export", "height": 360, "wait": true])
+                let file = (made as? [String: Any])?["file"] as? String ?? ""
+                checks["export"] = exportError == nil && (made as? [String: Any])?["status"] as? String == "done" && FileManager.default.fileExists(atPath: file)
+                    && file.hasPrefix(outDir.path)
+                checks["export_refused_in_magic"] = refused != nil
+                try? FileManager.default.removeItem(atPath: file)
+                // Every change undoes: back to an empty timeline with no markers or range.
+                for _ in 0..<40 where m.canUndo { m.undo() }
+                checks["undo"] = m.project.clips.isEmpty && m.project.markers == nil && m.project.playRange == nil
+            }
+            let good = !checks.isEmpty && checks.values.allSatisfy { $0 }
+            log("MCP MORE \(good ? "OK" : "FAIL") " + checks.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "))
+            ok = ok && good
+        }
         // Magic with an AI: its calls edit a hidden draft and leave the timeline alone; its edits,
         // played back in any order their dependencies allow, make exactly the draft.
         do {

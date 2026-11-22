@@ -233,7 +233,7 @@ final class MagicAgent: ObservableObject {
         How to work:
         1. get_project and list_media.
         2. list_media says what each clip "shows" (seen on this Mac): a quick guide to find shots by what's in \
-        them. Look at the footage with look_at_media to see what's in each shot. If people talk in it (list_media \
+        them, and search_media finds shots by what they show or what's said in them, with times. Look at the footage with look_at_media to see what's in each shot. If people talk in it (list_media \
         says "speech"), get_transcript gives what's said with times: cut pauses, retakes and filler between \
         sentences, keep sentences whole, and put other shots over the talking where it helps. analyze_media finds a clip's best \
         moments, or a song's tempo and bar starts.
@@ -258,7 +258,10 @@ final class MagicAgent: ObservableObject {
         7. Finish. Colour only when they asked for it, or when the footage clearly needs it (look at the frames): \
         shots from different cameras or light that don't match, or shots too dark or washed out. Then one look \
         from list_looks, or small set_grade fixes, on every shot so it feels like one film. Otherwise leave colour \
-        as it is, and on an existing edit don't change colour unless they asked. Titles and text only when \
+        as it is, and on an existing edit don't change colour unless they asked. set_transform reframes a shot \
+        (to keep a subject in a vertical frame); set_title_style sets a title's font, size, colour and place. \
+        Markers (set_marker), the in/out range, freeze frames, reversing, detaching sound, track switches and \
+        solids only when they ask for them. Titles and text only when \
         they asked for them, or the kind of video needs them (a vlog's parts); most videos don't. Fade music out over the last 2 seconds. A dissolve or dip to black only where it helps, never on \
         every cut.
         8. Check a few moments with get_frame and fix what's wrong.
@@ -495,6 +498,7 @@ final class MagicAgent: ObservableObject {
                 "--tools", "WebSearch,WebFetch",
                 "--allowedTools", "mcp__editroom", "WebSearch", "WebFetch",
                 "--disallowedTools", "mcp__editroom__auto_edit", "mcp__editroom__import_media", "mcp__editroom__save_project",
+                "mcp__editroom__export",
             ]
             if !model(for: kind).isEmpty { p.arguments! += ["--model", model(for: kind)] }
             if !effort(for: kind).isEmpty { p.arguments! += ["--effort", effort(for: kind)] }
@@ -615,7 +619,10 @@ final class MagicAgent: ObservableObject {
         case "get_transcript": "listening"
         case "add_clip", "trim_clip", "move_clip", "split_clip", "delete_clips", "set_sequence", "add_track": "cutting"
         case "set_grade": "grading"
-        case "add_title": "titling"
+        case "add_title", "set_title_style": "titling"
+        case "search_media": "searching"
+        case "set_marker", "delete_markers", "set_in_out": "marking"
+        case "set_transform", "freeze_frame", "reverse_clip", "detach_audio", "duplicate_clip", "add_solid", "set_solid_color", "set_track": "editing"
         case "set_audio", "set_transition": "finishing"
         case "get_frame", "playback", "history": "checking"
         default: "thinking"
