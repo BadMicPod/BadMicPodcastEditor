@@ -543,6 +543,17 @@ enum SelfTest {
             log("AI RESULT SHOW \(good ? "OK" : "FAIL") same=\(same) depth=\(depth(resultPlan)) (was \(depth(stepPlan))) tasks=\(resultPlan.tasks.count)")
             ok = ok && good
         }
+        // Media search in everyday words: "ride" finds a rollercoaster, "party" a celebration, "city" a cityscape;
+        // a word nothing means finds nothing.
+        do {
+            func tags(_ names: String...) -> SceneTags { SceneTags(tags: names.map { SceneTags.Tag(name: $0, confidence: 0.9, times: [1]) }) }
+            let ride = tags("rollercoaster").shows("ride") && tags("amusement park").shows("rides") && tags("carousel").shows("ride")
+            let party = tags("celebration").shows("party") && tags("cityscape").shows("city") && tags("surfing").shows("waves")
+            let still = tags("dog").shows("puppy") && !tags("dog").shows("ride") && !tags("rollercoaster").shows("laughing")
+            let good = ride && party && still && SceneTags.aliases.count > 100
+            log("SEARCH WORDS \(good ? "OK" : "FAIL") ride=\(ride) everyday=\(party) unchanged=\(still) labels=\(SceneTags.aliases.count)")
+            ok = ok && good
+        }
         // @ markers: by name or @marker:, unnamed ones by colour, read as their times (a span, a title's place),
         // and a file of the same name wins over a marker.
         do {
