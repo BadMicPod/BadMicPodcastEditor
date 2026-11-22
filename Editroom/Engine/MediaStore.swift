@@ -371,10 +371,10 @@ final class MediaStore: ObservableObject {
     }
 
     /// A full-size frame for the main viewer. Any earlier request still in flight is dropped.
-    func viewerFrame(asset id: UUID, time: Double, completion: @escaping (CGImage) -> Void) {
+    func viewerFrame(asset id: UUID, time: Double, cancelEarlier: Bool = true, completion: @escaping (CGImage) -> Void) {
         guard let rt = runtimes[id], rt.videoTrack != nil else { return }
         let gen = rt.viewerGenerator
-        gen.cancelAllCGImageGeneration()
+        if cancelEarlier { gen.cancelAllCGImageGeneration() }
         gen.generateCGImageAsynchronously(for: CMTime(seconds: time, preferredTimescale: 600)) { cg, _, _ in
             guard let cg else { return }
             // Its values are the file's Rec.709 ones, as playback's are, but labelled "CoreMedia 709",

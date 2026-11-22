@@ -251,8 +251,10 @@ private struct SourceFrame: View {
         let a = current.asset
         let fps = a.fps > 1 ? a.fps : 30
         ZStack(alignment: .topLeading) {
-            Color.black
+            // Until its first frame is decoded, the viewer's own picture stays showing underneath
+            // rather than going black.
             if let img = current.image {
+                Color.black
                 Image(decorative: img, scale: 1)
                     .resizable()
                     .aspectRatio(contentMode: .fit)

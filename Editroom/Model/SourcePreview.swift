@@ -25,9 +25,34 @@ final class SourcePreviewState: ObservableObject {
             current?.note = note
             if let quick { current?.image = quick }
         }
+        // Trimming: the frame being decoded is finished, never cancelled, and shown (a moment behind
+        // beats nothing), then the latest time is fetched; cancelling at every move of the mouse left
+        // the viewer empty for as long as the drag kept moving.
+        if note != nil {
+            // A sharp made-ahead frame is already up: nothing to decode.
+            wanted = quick == nil ? time : nil
+            fetch(asset, media: media)
+            return
+        }
         media.viewerFrame(asset: asset.id, time: time) { [weak self] img in
             guard let self, self.current?.asset.id == asset.id, self.current?.time == time else { return }
             self.current?.image = img
+        }
+    }
+
+    private var fetching = false
+    private var wanted: Double?
+
+    private func fetch(_ asset: MediaAsset, media: MediaStore) {
+        guard !fetching, let time = wanted else { return }
+        wanted = nil
+        fetching = true
+        media.viewerFrame(asset: asset.id, time: time, cancelEarlier: false) { [weak self] img in
+            guard let self else { return }
+            self.fetching = false
+            guard self.current?.asset.id == asset.id else { return }
+            self.current?.image = img
+            self.fetch(asset, media: media)
         }
     }
 
@@ -37,6 +62,7 @@ final class SourcePreviewState: ObservableObject {
     }
 
     func clear() {
+        wanted = nil
         if current != nil { current = nil }
     }
 }
