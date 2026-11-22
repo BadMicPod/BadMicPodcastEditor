@@ -1,5 +1,8 @@
 import AVFoundation
 import Foundation
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
 import ImageIO
 import Vision
 
@@ -17,6 +20,20 @@ struct SceneTags: Codable, Equatable {
 
     var tags: [Tag]
 
+    /// Keywords from Apple Intelligence, each where it was said: tags of their own (a little less sure
+    /// than Vision's surest), or more times on a tag Vision already has.
+    mutating func add(_ described: [(Double, [String])]) {
+        for (t, words) in described {
+            for w in Set(words) {
+                if let i = tags.firstIndex(where: { $0.name == w }) {
+                    if !tags[i].times.contains(t) { tags[i].times.append(t) }
+                } else {
+                    tags.append(Tag(name: w, confidence: 0.6, times: [t]))
+                }
+            }
+        }
+    }
+
     /// The surest few, for a short summary.
     func top(_ n: Int) -> [String] { tags.sorted { $0.confidence > $1.confidence }.prefix(n).map(\.name) }
 
@@ -27,9 +44,24 @@ struct SceneTags: Codable, Equatable {
         guard w.count >= 2 else { return false }
         return tags.contains { tag in
             (tag.name.split(separator: " ").map(String.init) + (Self.aliases[tag.name] ?? [])).contains { p in
-                p == w || Self.singular(p) == w || (typing && p.hasPrefix(w))
+                p == w || Self.singular(p) == w || (typing && p.hasPrefix(w)) || Self.sameStem(p, w)
             }
         }
+    }
+
+    /// The same word in another form ("laughing" and "laughter", "smile" and "smiling"), for longer words.
+    static func sameStem(_ a: String, _ b: String) -> Bool {
+        guard a.count >= 5, b.count >= 5 else { return false }
+        func stem(_ w: String) -> String {
+            var w = w
+            for end in ["ing", "ter", "ers", "er", "ed", "es", "s"] where w.count > end.count + 3 && w.hasSuffix(end) {
+                w = String(w.dropLast(end.count))
+                break
+            }
+            if w.hasSuffix("e"), w.count > 4 { w.removeLast() }
+            return w
+        }
+        return stem(a) == stem(b)
     }
 
     /// The tags that match a word (as `shows` does), for saying where in the file it shows.
@@ -37,7 +69,7 @@ struct SceneTags: Codable, Equatable {
         let w = Self.singular(word.lowercased())
         guard w.count >= 2 else { return [] }
         return tags.filter { tag in
-            (tag.name.split(separator: " ").map(String.init) + (Self.aliases[tag.name] ?? [])).contains { $0 == w || Self.singular($0) == w }
+            (tag.name.split(separator: " ").map(String.init) + (Self.aliases[tag.name] ?? [])).contains { $0 == w || Self.singular($0) == w || Self.sameStem($0, w) }
         }
     }
 
@@ -159,6 +191,11 @@ struct SceneTags: Codable, Equatable {
         "playground": ["kids"],
         "garden": ["flowers", "plants"],
         "car": ["vehicle"],
+        "laughter": ["laughing", "laugh", "funny"],
+        "smiles": ["smiling", "smile", "happy"],
+        "smile": ["smiling", "happy"],
+        "excitement": ["excited", "happy"],
+        "fun": ["happy", "funny"],
         "bus": ["vehicle"],
         "truck": ["vehicle"],
         "semi truck": ["vehicle"],
@@ -196,7 +233,7 @@ final class SceneTagStore: ObservableObject {
         let (url, isVideo, duration) = queue.removeFirst()
         working = url
         Task.detached(priority: .utility) {
-            let result = isVideo ? await Self.seeVideo(url, duration: duration) : Self.seePhoto(url)
+            let result = isVideo ? await Self.seeVideo(url, duration: duration) : await Self.seePhotoDescribed(url)
             await MainActor.run {
                 let store = SceneTagStore.shared
                 store.working = nil
@@ -219,8 +256,9 @@ final class SceneTagStore: ObservableObject {
         return dir
     }
 
-    /// Named with the version of how tags are chosen, so a change makes them again.
-    private func file(for url: URL) -> URL { Self.folder.appendingPathComponent(ReverseAudio.cacheName(for: url) + "-2.json") }
+    /// Named with the version of how tags are chosen, so a change makes them again (3: with Apple
+    /// Intelligence's keywords).
+    private func file(for url: URL) -> URL { Self.folder.appendingPathComponent(ReverseAudio.cacheName(for: url) + "-3.json") }
 
     private func load(_ url: URL) -> SceneTags? {
         guard let data = try? Data(contentsOf: file(for: url)), let t = try? JSONDecoder().decode(SceneTags.self, from: data) else { return nil }
@@ -250,7 +288,41 @@ final class SceneTagStore: ObservableObject {
             seen.append((t, classify(image)))
         }
         guard !seen.isEmpty else { return nil }
-        return gather(seen)
+        var tags = gather(seen)
+        // What Apple Intelligence sees in a few frames: vehicles, expressions, actions and moods that
+        // Vision's fixed labels miss, especially in close-ups ("car", "laughter", "jumping").
+        let picks = Array(Set((0..<min(6, max(2, Int(duration / 3)))).map { i in
+            duration * (Double(i) + 0.5) / Double(min(6, max(2, Int(duration / 3))))
+        })).sorted()
+        var described: [(Double, [String])] = []
+        for t in picks {
+            guard let image = try? await gen.image(at: CMTime(seconds: t, preferredTimescale: 600)).image,
+                  let words = await describe(image) else { continue }
+            described.append(((t * 100).rounded() / 100, words))
+        }
+        tags.add(described)
+        return tags
+    }
+
+    /// Up to a dozen keywords for a frame from Apple's on-device model (macOS 27 with Apple Intelligence
+    /// that can see images); nil where it can't.
+    nonisolated static func describe(_ image: CGImage) async -> [String]? {
+        #if canImport(FoundationModels)
+        if #available(macOS 27.0, *) {
+            let model = SystemLanguageModel.default
+            guard model.isAvailable, model.capabilities.contains(.vision) else { return nil }
+            let session = LanguageModelSession(instructions: """
+                You label video frames for search. Reply with one line: up to 12 short comma-separated keywords \
+                for the place, vehicles, objects, activity and people's expressions. Plain words, no sentences.
+                """)
+            guard let reply = try? await session.respond(to: Prompt { "Keywords for this frame:"; Attachment(image) }) else { return nil }
+            let words = reply.content.lowercased().split(separator: ",").map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+            }.filter { !$0.isEmpty && $0.count <= 30 && $0.split(separator: " ").count <= 3 }
+            return words.isEmpty ? nil : Array(words.prefix(12))
+        }
+        #endif
+        return nil
     }
 
     /// Every label Vision gives anywhere in a video at 0.2 or more, surest first (for testing).
@@ -274,6 +346,19 @@ final class SceneTagStore: ObservableObject {
                 kCGImageSourceThumbnailMaxPixelSize: 640,
               ] as CFDictionary) else { return nil }
         return gather([(0, classify(image))])
+    }
+
+    /// A photo with Apple Intelligence's keywords too.
+    nonisolated static func seePhotoDescribed(_ url: URL) async -> SceneTags? {
+        guard var tags = seePhoto(url) else { return nil }
+        if let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+           let image = CGImageSourceCreateThumbnailAtIndex(src, 0, [
+               kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
+               kCGImageSourceThumbnailMaxPixelSize: 768,
+           ] as CFDictionary), let words = await describe(image) {
+            tags.add([(0, words)])
+        }
+        return tags
     }
 
     nonisolated private static func classify(_ image: CGImage) -> [(String, Double)] {

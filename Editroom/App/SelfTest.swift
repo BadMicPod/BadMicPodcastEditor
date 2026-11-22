@@ -551,8 +551,14 @@ enum SelfTest {
             let party = tags("celebration").shows("party") && tags("cityscape").shows("city") && tags("surfing").shows("waves")
             let still = tags("dog").shows("puppy") && !tags("dog").shows("ride") && !tags("rollercoaster").shows("laughing")
             let vehicle = tags("car").shows("vehicle") && tags("boat").shows("vehicles") && tags("airplane").shows("vehicle") && tags("bus").shows("vehicle")
-            let good = ride && party && still && vehicle && SceneTags.aliases.count > 100
-            log("SEARCH WORDS \(good ? "OK" : "FAIL") ride=\(ride) vehicle=\(vehicle) everyday=\(party) unchanged=\(still) labels=\(SceneTags.aliases.count)")
+            // Apple Intelligence's words, in other forms: "laughing" finds laughter, "smiling" a smile.
+            let feelings = tags("laughter").shows("laughing") && tags("smile").shows("smiling") && tags("smiles").shows("happy")
+                && tags("helicopter").shows("vehicle") && !tags("parking").shows("park")
+            var withWords = tags("people")
+            withWords.add([(1.5, ["car", "laughing"]), (3, ["car"])])
+            let added = withWords.tags.first { $0.name == "car" }?.times == [1.5, 3] && withWords.shows("vehicle") && withWords.shows("laughter")
+            let good = ride && party && still && vehicle && feelings && added && SceneTags.aliases.count > 100
+            log("SEARCH WORDS \(good ? "OK" : "FAIL") ride=\(ride) vehicle=\(vehicle) feelings=\(feelings) described=\(added) everyday=\(party) unchanged=\(still) labels=\(SceneTags.aliases.count)")
             ok = ok && good
         }
         // @ markers: by name or @marker:, unnamed ones by colour, read as their times (a span, a title's place),
