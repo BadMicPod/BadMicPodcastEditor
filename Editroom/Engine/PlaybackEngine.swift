@@ -179,6 +179,16 @@ final class PlaybackEngine {
         }
     }
 
+    /// Set when the spare takes over: the loop just started again (see `takeWrap`).
+    private var wrapped = false
+
+    /// True once after each loop: the playhead goes exactly to the start for that frame, the frame
+    /// the viewer is showing, rather than wherever playback has got to by the time it's drawn.
+    func takeWrap() -> Bool {
+        defer { wrapped = false }
+        return wrapped
+    }
+
     /// The loop is taken care of here (the spare is ready, or already starting).
     var loopsItself: Bool { loopSpan != nil && (spareReady || swapAt != nil) }
 
@@ -208,6 +218,7 @@ final class PlaybackEngine {
     private func swapToSpare() {
         guard swapAt != nil else { return }
         swapAt = nil
+        wrapped = true
         let old = player, oldOutput = videoOutput
         player = spare
         videoOutput = spareOutput

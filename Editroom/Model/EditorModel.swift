@@ -673,7 +673,7 @@ final class EditorModel: ObservableObject {
             // Looping: the engine starts over on its own, with no pause, once it's ready to.
             engine.loopSpan = loop && project.duration > 0 ? loopSpan : nil
             engine.serviceLoop()
-            playhead = min(engine.currentTime, max(engine.duration, 0))
+            playhead = engine.takeWrap() && loop ? loopSpan.start : min(engine.currentTime, max(engine.duration, 0))
             // Within a frame of the end, or stopped by the player: start over when looping (with a
             // seek, when the engine isn't ready to loop by itself yet).
             let span = loopSpan
