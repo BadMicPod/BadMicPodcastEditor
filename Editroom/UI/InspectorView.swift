@@ -126,6 +126,20 @@ struct InspectorView: View {
         let offSpeed = sourced.first.map { abs($0.speed - 1) > 0.001 } ?? false
         let offGain = audio.first.map { abs($0.gainDB) > 0.001 } ?? false
 
+        // What a title or a solid is comes first: its words, or its colour.
+        if clips.count == 1, let c = clips.first {
+            if c.kind == .text { textSection(c) }
+            if c.kind == .solid {
+                InspectorSection("Fill") {
+                    ColorField(color: c.color) { color in
+                        model.live { p in
+                            if let i = p.index(of: c.id) { p.clips[i].color = color }
+                        }
+                    }
+                }
+            }
+        }
+
         if sourced.first != nil || audio.first != nil {
             let ramped = sourced.first?.isRamped ?? false
             // Like the other sections: Reset puts the whole section back (speed, ramp and volume).
@@ -191,18 +205,6 @@ struct InspectorView: View {
         if !audio.isEmpty { fadeSection(visual.isEmpty ? "Fade" : "Audio fade", audio) }
         if !visual.isEmpty { colorSection(visual) }
 
-        if clips.count == 1, let c = clips.first {
-            if c.kind == .text { textSection(c) }
-            if c.kind == .solid {
-                InspectorSection("Fill") {
-                    ColorField(color: c.color) { color in
-                        model.live { p in
-                            if let i = p.index(of: c.id) { p.clips[i].color = color }
-                        }
-                    }
-                }
-            }
-        }
     }
 
     /// The ramp button: on, a starter ramp (100%, easing into the speed in the middle of the clip,
