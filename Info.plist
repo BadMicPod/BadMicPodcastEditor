@@ -13,7 +13,7 @@
 			<string>Owner</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>com.wonderassembly.room</string>
+				<string>com.wonderassembly.editroom.project</string>
 			</array>
 		</dict>
 		<dict>
@@ -36,12 +36,20 @@
 	<array>
 		<dict>
 			<key>UTTypeIdentifier</key>
-			<string>com.wonderassembly.room</string>
+			<string>com.wonderassembly.editroom.project</string>
 			<key>UTTypeDescription</key>
 			<string>Editroom Project</string>
+			<key>UTTypeIcons</key>
+			<dict>
+				<key>UTTypeIconBadgeName</key>
+				<string>AppIcon</string>
+				<key>UTTypeIconText</key>
+				<string>ROOM</string>
+			</dict>
 			<key>UTTypeConformsTo</key>
 			<array>
-				<string>public.json</string>
+				<string>public.data</string>
+				<string>public.content</string>
 			</array>
 			<key>UTTypeTagSpecification</key>
 			<dict>
