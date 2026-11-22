@@ -263,8 +263,8 @@ struct InspectorView: View {
             }
         }), collapsedByDefault: true, marked: !tf.isIdentity) {
             ParamRow(icon: .symbol("arrow.up.left.and.arrow.down.right"), label: "Scale", value: tf.scale * 100,
-                     range: 5...1000, logarithmic: true, format: { "\(Int($0.rounded()))%" }, onEditing: done,
-                     onChange: { v in live { $0.scale = (v.rounded() / 100).clamped(to: ClipTransform.scaleRange) } })
+                     range: 5...1000, logarithmic: true, step: 1, format: Self.percentTenths, onEditing: done,
+                     onChange: { v in live { $0.scale = ((v * 10).rounded() / 1000).clamped(to: ClipTransform.scaleRange) } })
             ParamRow(icon: .symbol("arrow.left.and.right"), label: "X", value: tf.x * w, range: -w...w,
                      format: { "\(Int($0.rounded()))" }, onEditing: done,
                      onChange: { v in live { $0.x = v.rounded() / w } })
@@ -272,6 +272,12 @@ struct InspectorView: View {
                      format: { "\(Int($0.rounded()))" }, onEditing: done,
                      onChange: { v in live { $0.y = v.rounded() / h } })
         }
+    }
+
+    /// A percentage to a tenth ("95.3%"), whole numbers without the ".0" ("100%").
+    static func percentTenths(_ v: Double) -> String {
+        let t = (v * 10).rounded() / 10
+        return t == t.rounded() ? "\(Int(t))%" : String(format: "%.1f%%", t)
     }
 
     /// Transitions on the cuts either side of a clip: In blends from the clip before, Out into the clip after.
@@ -676,6 +682,8 @@ private struct ParamRow: View {
     let value: Double
     let range: ClosedRange<Double>
     var logarithmic = false
+    /// What ↑/↓ change it by (ten times with Shift); nil goes by what the field shows.
+    var step: Double?
     let format: (Double) -> String
     let onEditing: (Bool) -> Void
     let onChange: (Double) -> Void
@@ -757,8 +765,7 @@ private struct ParamRow: View {
         let shown = text.replacingOccurrences(of: ",", with: ".").replacingOccurrences(of: "−", with: "-")
             .filter { "0123456789.-".contains($0) }
         let start = Double(shown) ?? value
-        let decimals = format(value).contains(".") ? 1 : 0
-        let step = (decimals == 0 ? 1.0 : 0.1) * (big ? 10 : 1)
+        let step = (self.step ?? (format(value).contains(".") ? 0.1 : 1)) * (big ? 10 : 1)
         // To the next whole step, so 0.47 goes to 0.5, not 0.57.
         let n = (start / step).rounded(up ? .down : .up) + (up ? 1 : -1)
         let v = min(max((n * step * 1e6).rounded() / 1e6, range.lowerBound), range.upperBound)
