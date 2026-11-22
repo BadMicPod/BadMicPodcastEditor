@@ -175,6 +175,9 @@ final class TimelineCanvas: NSView {
         }
         playheadView.frame.size = CGSize(width: PlayheadView.width, height: newSize.height)
         playheadView.needsDisplay = true
+        // In place now, not on the next screen refresh: a timeline made afresh (a theme change rebuilds
+        // the window) otherwise showed its playhead at the far left for a frame.
+        tick()
     }
 
     override func viewDidMoveToWindow() {
