@@ -656,12 +656,13 @@ final class MagicAgent: ObservableObject {
             return
         }
         // Played onto the timeline as it is now (in case it changed while the AI was thinking).
-        let plan = MCPDraft.plan(base: model.project, edits: edits)
+        // Shown as its result (every new clip flying in at once, like Local), not step by step as it worked.
+        let plan = MCPDraft.resultPlan(base: model.project, edits: edits)
         log("MAGIC AI playing \(plan.tasks.count) edits")
         let detail = noteDetail
         let play = { [weak self] in
             guard self?.stopped == false else { return }
-            let shown = MagicShow.play(model: model, plan: plan) { [weak self] in
+            let shown = MagicShow.play(model: model, plan: plan, crew: (kind.name, MCPTools.color(for: kind == .claude ? "Claude" : "ChatGPT"))) { [weak self] in
                 self?.note = Note(agent: kind, text: said, changed: true, detail: detail)
             }
             if !shown {

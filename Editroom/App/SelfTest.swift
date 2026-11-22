@@ -505,6 +505,44 @@ enum SelfTest {
             log("HISTORY \(good ? "OK" : "FAIL") order=\(order) file=\(file) opensOld=\(opensOld) capped=\(capped)")
             ok = ok && good
         }
+        // An AI's edit, played as its result: an AI adds clips one after another, each at full length then
+        // trimmed (so played in order every step waits for the last). As a result the new clips all fly in
+        // at once, and the show still ends exactly where the AI's edits do.
+        do {
+            var p = Project()
+            let v1 = p.videoTracks[0].id, a2 = p.audioTracks[1].id
+            let old = Clip(trackID: v1, kind: .solid, start: 0, duration: 3)
+            let music = Clip(trackID: a2, kind: .audio, start: 0, duration: 20)
+            p.clips = [old, music]
+            var edits: [MagicEdit] = [.remove([old.id])]
+            var t = 0.0
+            for _ in 0..<6 {
+                let c = Clip(trackID: v1, kind: .solid, start: t, duration: 5)
+                edits.append(.place([c], asset: nil))
+                edits.append(.trimTail([c.id], from: t + 5, to: t + 1))
+                edits.append(.fadeIn(c.id, to: 0.2))
+                t += 1
+            }
+            edits.append(.gain(music.id, from: 0, to: -6))
+            var final = p
+            for e in edits { e.apply(&final, 1) }
+            let stepPlan = MCPDraft.plan(base: p, edits: edits)
+            let resultPlan = MCPDraft.resultPlan(base: p, edits: edits)
+            var played = resultPlan.base
+            for task in resultPlan.tasks { task.edit.apply(&played, 1) }
+            let same = Dictionary(played.clips.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+                == Dictionary(final.clips.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            // The longest line of edits each waiting for the one before: short means many cursors at once.
+            func depth(_ plan: MagicPlan) -> Int {
+                var d: [Int] = []
+                for t in plan.tasks { d.append(1 + (t.after.map { d[$0] }.max() ?? 0)) }
+                return d.max() ?? 0
+            }
+            let wider = depth(resultPlan) <= 4 && depth(resultPlan) < depth(stepPlan)
+            let good = same && wider
+            log("AI RESULT SHOW \(good ? "OK" : "FAIL") same=\(same) depth=\(depth(resultPlan)) (was \(depth(stepPlan))) tasks=\(resultPlan.tasks.count)")
+            ok = ok && good
+        }
         // @ markers: by name or @marker:, unnamed ones by colour, read as their times (a span, a title's place),
         // and a file of the same name wins over a marker.
         do {
