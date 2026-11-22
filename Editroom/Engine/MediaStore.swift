@@ -185,7 +185,9 @@ final class MediaStore: ObservableObject {
     private func adopt(_ rt: MediaRuntime, for asset: MediaAsset) {
         runtimes[asset.id] = rt
         if rt.videoTrack != nil {
-            let gen = rt.makeGenerator(maximumSize: CGSize(width: 320, height: 120))
+            // Within a quarter second of each tile's time: with no tolerance AVFoundation hands back the
+            // nearest keyframe, and in a file with few of them every tile showed the same picture.
+            let gen = rt.makeGenerator(maximumSize: CGSize(width: 320, height: 120), tolerance: CMTime(value: 1, timescale: 4))
             rt.generator = gen
             makePoster(asset, rt)
             tagURLs[asset.id] = rt.asset.url
