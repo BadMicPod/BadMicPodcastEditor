@@ -223,6 +223,10 @@ final class PlaybackEngine {
             if let buffer {
                 let image = TimelineCompositor.compose(instruction, at: job.time, output: size) { i, _ in job.pictures[i] }
                 TimelineCompositor.context.render(image, to: buffer, bounds: CGRect(origin: .zero, size: size), colorSpace: nil)
+                // Tagged as the player's frames are, so the viewer shows them in the same colours.
+                CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+                CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+                CVBufferSetAttachment(buffer, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2, .shouldPropagate)
             }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {

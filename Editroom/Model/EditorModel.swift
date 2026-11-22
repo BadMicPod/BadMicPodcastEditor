@@ -220,6 +220,29 @@ final class EditorModel: ObservableObject {
                     FileHandle.standardError.write(String(format: "SCRUB %@: viewer updated %.0f times a second, exact frame %.0f ms after stopping (shown %.3f, playhead %.3f)\n",
                                                           exact ? "exact" : "fast", Double(updates) / secs, Date().timeIntervalSince(stop) * 1000,
                                                           self.engine.shownTime, self.playhead).data(using: .utf8)!)
+                    // The same moment, exact and from scrub frames: how far apart their colours are (0-255).
+                    if !exact, let still = self.engine.lastFrame {
+                        func mean(_ b: CVPixelBuffer) -> [Double] {
+                            CVPixelBufferLockBaseAddress(b, .readOnly)
+                            defer { CVPixelBufferUnlockBaseAddress(b, .readOnly) }
+                            let w = CVPixelBufferGetWidth(b), h = CVPixelBufferGetHeight(b), row = CVPixelBufferGetBytesPerRow(b)
+                            guard let base = CVPixelBufferGetBaseAddress(b)?.assumingMemoryBound(to: UInt8.self) else { return [] }
+                            var sum = [0.0, 0.0, 0.0], n = 0.0
+                            for y in stride(from: 0, to: h, by: 8) { for x in stride(from: 0, to: w, by: 8) {
+                                let p = base + y * row + x * 4
+                                sum[0] += Double(p[2]); sum[1] += Double(p[1]); sum[2] += Double(p[0]); n += 1 } }
+                            return sum.map { $0 / n }
+                        }
+                        let a = mean(still)
+                        _ = self.engine.showScrubFrame(at: self.playhead, cache: self.media.scrubCache)
+                        try? await Task.sleep(nanoseconds: 300_000_000)
+                        if let scrubbed = self.engine.lastFrame, scrubbed !== still {
+                            let b = mean(scrubbed)
+                            FileHandle.standardError.write(String(format: "SCRUB colour exact RGB %.1f %.1f %.1f, scrub frame %.1f %.1f %.1f\n",
+                                                                  a[0], a[1], a[2], b[0], b[1], b[2]).data(using: .utf8)!)
+                        }
+                        self.engine.endScrubFrames()
+                    }
                     // One seek at a time, each to somewhere new: how long until its frame is on screen.
                     var waits: [Double] = []
                     for i in 0..<24 {

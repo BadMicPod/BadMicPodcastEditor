@@ -34,7 +34,8 @@ final class ScrubCache {
     func image(_ id: UUID, at time: Double) -> CIImage? {
         guard let f = frames[id], !f.ranges.isEmpty else { return nil }
         let i = min(f.ranges.count - 1, max(0, Int((time * Self.rate).rounded())))
-        return CIImage(data: f.data.subdata(in: f.ranges[i]))
+        // Its values as they are (Rec.709, like the player's frames), not colour-matched on the way in.
+        return CIImage(data: f.data.subdata(in: f.ranges[i]), options: [.colorSpace: NSNull()])
     }
 
     /// The frame nearest a time, decoded now, at full size: for the viewer while a clip's edge is
@@ -82,12 +83,18 @@ final class ScrubCache {
         return dir
     }
 
-    nonisolated private static let context = CIContext(options: [.cacheIntermediates: false])
+    /// Unmanaged, like the compositor's: the file's Rec.709 values go in and come out untouched (a
+    /// managed context turned them into sRGB, which looked brighter and more saturated than playback).
+    nonisolated private static let context = CIContext(options: [
+        .workingColorSpace: NSNull(), .outputColorSpace: NSNull(), .cacheIntermediates: false,
+    ])
+    /// What the frames are tagged as, so shown on their own (trimming) they look as playback does.
+    nonisolated private static let rec709 = CGColorSpace(name: CGColorSpace.itur_709) ?? CGColorSpaceCreateDeviceRGB()
 
     /// Reads the file through once, start to end (much faster than seeking), keeping a frame every tenth
     /// of a second.
     nonisolated static func build(_ url: URL, duration: Double) async -> Store? {
-        let file = folder.appendingPathComponent(ReverseAudio.cacheName(for: url) + ".scrubhd")
+        let file = folder.appendingPathComponent(ReverseAudio.cacheName(for: url) + ".scrub709")
         if let saved = load(file) { return saved }
         let asset = AVURLAsset(url: url)
         guard let track = try? await asset.loadTracks(withMediaType: .video).first,
@@ -134,7 +141,9 @@ final class ScrubCache {
     nonisolated private static func trim() {
         let keys: [URLResourceKey] = [.contentAccessDateKey, .fileSizeKey]
         guard let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: keys) else { return }
-        let scrub = files.filter { $0.pathExtension == "scrubhd" }.compactMap { url -> (URL, Date, Int)? in
+        // (Older kinds of scrub file are just removed.)
+        for old in files where ["scrubhd", "scrub10"].contains(old.pathExtension) { try? FileManager.default.removeItem(at: old) }
+        let scrub = files.filter { $0.pathExtension == "scrub709" }.compactMap { url -> (URL, Date, Int)? in
             guard let v = try? url.resourceValues(forKeys: Set(keys)) else { return nil }
             return (url, v.contentAccessDate ?? .distantPast, v.fileSize ?? 0)
         }.sorted { $0.1 < $1.1 }
@@ -169,7 +178,7 @@ final class ScrubCache {
         guard e.width > 0 else { return nil }
         let s = min(1, maxSide / max(e.width, e.height))
         let sized = img.transformed(by: CGAffineTransform(scaleX: s, y: s))
-        guard let cg = context.createCGImage(sized, from: sized.extent) else { return nil }
+        guard let cg = context.createCGImage(sized, from: sized.extent, format: .RGBA8, colorSpace: rec709) else { return nil }
         let data = NSMutableData()
         guard let dest = CGImageDestinationCreateWithData(data, UTType.heic.identifier as CFString, 1, nil) else { return nil }
         CGImageDestinationAddImage(dest, cg, [kCGImageDestinationLossyCompressionQuality: 0.86] as CFDictionary)
