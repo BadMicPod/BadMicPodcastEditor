@@ -258,9 +258,9 @@ private struct MediaThumb: View {
                             if scrub != nil { frame = img }
                         }
                     }
-                    // The main viewer shows the same frame at once, then the exact one, full size.
+                    // The main viewer shows it too, full size and in playback's colours.
                     let exact = min(asset.duration - 0.02, fraction * asset.duration)
-                    preview?.show(asset, at: max(0, exact), media: media, quick: quick)
+                    preview?.hover(asset, at: max(0, exact), media: media)
                 case .ended:
                     scrub = nil
                     frame = nil

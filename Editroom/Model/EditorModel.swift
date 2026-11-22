@@ -136,6 +136,7 @@ final class EditorModel: ObservableObject {
     private var lastRebuild = 0.0
 
     init() {
+        defer { sourcePreview.engine = engine }
         engine.onEnded = { [weak self] in
             guard let self else { return }
             if self.loop, self.project.duration > 0 {

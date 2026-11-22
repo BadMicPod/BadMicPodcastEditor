@@ -15,6 +15,27 @@ final class SourcePreviewState: ObservableObject {
 
     @Published private(set) var current: Current?
 
+    /// The viewer's player: hover frames are drawn into it on the GPU, like scrubbing.
+    weak var engine: PlaybackEngine?
+    /// A still is up in the viewer (drawn by the engine), to take down on clear.
+    private var drawing = false
+
+    /// Hover-scrubbing a Media item: its made-ahead frames (sharp, in playback's colours) drawn straight
+    /// into the viewer, the overlay just naming it; without them, frames decoded from the file one after
+    /// another (never a small, differently coloured stand-in in between, which made the colours flicker).
+    func hover(_ asset: MediaAsset, at time: Double, media: MediaStore) {
+        if let engine, let still = media.scrubCache.image(asset.id, at: time), let rt = media.runtimes[asset.id] {
+            engine.showStill(still, orientation: rt.orientation, time: time)
+            drawing = true
+            wanted = nil
+            current = Current(asset: asset, time: time, image: nil)
+            return
+        }
+        if current?.asset.id != asset.id { current = Current(asset: asset, time: time, image: nil) } else { current?.time = time }
+        wanted = time
+        fetch(asset, media: media)
+    }
+
     /// `quick` is a frame already at hand (made ahead, smaller) to show at once; the exact full-size
     /// frame replaces it when it's decoded, unless the mouse has moved on by then.
     func show(_ asset: MediaAsset, at time: Double, media: MediaStore, quick: CGImage? = nil, note: String? = nil) {
@@ -69,6 +90,10 @@ final class SourcePreviewState: ObservableObject {
 
     func clear() {
         wanted = nil
+        if drawing {
+            drawing = false
+            engine?.endStill()
+        }
         if current != nil { current = nil }
     }
 }
