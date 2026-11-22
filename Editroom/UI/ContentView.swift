@@ -52,7 +52,7 @@ struct ContentView: View {
             // A Media item being scrubbed when Magic starts lets the viewer go back.
             .onChange(of: locked) { _, now in if now { model.sourcePreview.clear() } }
             // A hairline under the title bar.
-            .overlay(alignment: .top) { Hairline() }
+            .overlay(alignment: .top) { Hairline(solid: true) }
             }
         }
         .id(themes.look)
