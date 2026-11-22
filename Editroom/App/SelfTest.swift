@@ -550,8 +550,9 @@ enum SelfTest {
             let ride = tags("rollercoaster").shows("ride") && tags("amusement park").shows("rides") && tags("carousel").shows("ride")
             let party = tags("celebration").shows("party") && tags("cityscape").shows("city") && tags("surfing").shows("waves")
             let still = tags("dog").shows("puppy") && !tags("dog").shows("ride") && !tags("rollercoaster").shows("laughing")
-            let good = ride && party && still && SceneTags.aliases.count > 100
-            log("SEARCH WORDS \(good ? "OK" : "FAIL") ride=\(ride) everyday=\(party) unchanged=\(still) labels=\(SceneTags.aliases.count)")
+            let vehicle = tags("car").shows("vehicle") && tags("boat").shows("vehicles") && tags("airplane").shows("vehicle") && tags("bus").shows("vehicle")
+            let good = ride && party && still && vehicle && SceneTags.aliases.count > 100
+            log("SEARCH WORDS \(good ? "OK" : "FAIL") ride=\(ride) vehicle=\(vehicle) everyday=\(party) unchanged=\(still) labels=\(SceneTags.aliases.count)")
             ok = ok && good
         }
         // @ markers: by name or @marker:, unnamed ones by colour, read as their times (a span, a title's place),
