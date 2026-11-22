@@ -2,6 +2,19 @@ import AVFoundation
 import CoreImage
 import Metal
 
+/// Where a video layer's picture comes from in its file, for showing it from the scrub frames.
+struct ScrubSource {
+    let asset: UUID
+    let clock: SourceClock
+    /// Played backwards: the file's length, which the time is counted back from.
+    var reversedLength: Double? = nil
+
+    func time(at t: Double) -> Double {
+        let s = clock.source(at: t - 1e-4)
+        return reversedLength.map { $0 - s } ?? s
+    }
+}
+
 /// One visual element on the timeline, already resolved for a specific render size.
 struct RenderLayer {
     enum Source {
@@ -34,8 +47,12 @@ struct RenderLayer {
     /// How the source file's picture is encoded; HDR and Log are converted to Rec.709 first.
     let color: SourceColor
     let transform: ClipTransform?
+    /// A video layer's place in its file, for scrubbing from made-ahead frames (nil: not from them).
+    let scrub: ScrubSource?
 
-    init(clip: Clip, source: Source, cube: Data? = nil, color: SourceColor = .standard, plan: TransitionPlan = TransitionPlan()) {
+    init(clip: Clip, source: Source, cube: Data? = nil, color: SourceColor = .standard, plan: TransitionPlan = TransitionPlan(),
+         scrub: ScrubSource? = nil) {
+        self.scrub = scrub
         self.cube = cube
         self.color = color
         transform = clip.transform.flatMap { $0.isIdentity ? nil : $0 }
@@ -171,30 +188,33 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
 
     private static func compose(_ instruction: TimelineInstruction, request: AVAsynchronousVideoCompositionRequest) -> CIImage {
         let t = request.compositionTime.seconds + 1e-4
+        return compose(instruction, at: t, output: request.renderContext.size) { _, layer in
+            let buffer: CVPixelBuffer?
+            switch layer.source {
+            case .track(let id, _): buffer = request.sourceFrame(byTrackID: id)
+            case .reversed(let frames, _, let limit, let clock, let length): buffer = frames.frame(before: length - clock.source(at: t - 1e-4), limit: limit)
+            case .decoded(let frames, _, let limit, let clock): buffer = frames.frame(at: clock.source(at: t - 1e-4), limit: limit)
+            default: buffer = nil
+            }
+            return buffer.map { CIImage(cvPixelBuffer: $0) }
+        }
+    }
+
+    /// The frame at timeline time `t`: every layer showing then, bottom first. `picture` gives a video
+    /// layer's own frame, as it comes from the file (the player's decoded frame, or a scrub frame).
+    static func compose(_ instruction: TimelineInstruction, at t: Double, output: CGSize,
+                        picture: (Int, RenderLayer) -> CIImage?) -> CIImage {
         let size = instruction.canvas
         let frame = CGRect(origin: .zero, size: size)
         var out = CIImage(color: .black).cropped(to: frame)
 
-        for layer in instruction.layers where t >= layer.start && t < layer.end {
+        for (index, layer) in instruction.layers.enumerated() where t >= layer.start && t < layer.end {
             let opacity = layer.opacity(at: t)
             if opacity <= 0.001 { continue }
             var image: CIImage
             switch layer.source {
-            case .track, .reversed, .decoded:
-                var buffer: CVPixelBuffer?
-                var orientation = CGImagePropertyOrientation.up
-                if case .track(let id, let o) = layer.source {
-                    buffer = request.sourceFrame(byTrackID: id)
-                    orientation = o
-                } else if case .reversed(let frames, let o, let limit, let clock, let length) = layer.source {
-                    buffer = frames.frame(before: length - clock.source(at: t - 1e-4), limit: limit)
-                    orientation = o
-                } else if case .decoded(let frames, let o, let limit, let clock) = layer.source {
-                    buffer = frames.frame(at: clock.source(at: t - 1e-4), limit: limit)
-                    orientation = o
-                }
-                guard let buffer else { continue }
-                var src = CIImage(cvPixelBuffer: buffer)
+            case .track(_, let orientation), .reversed(_, let orientation, _, _, _), .decoded(_, let orientation, _, _):
+                guard var src = picture(index, layer) else { continue }
                 if orientation != .up { src = src.oriented(orientation) }
                 let e = src.extent
                 guard e.width > 0, e.height > 0 else { continue }
@@ -233,7 +253,6 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
             }
             out = image.composited(over: out)
         }
-        let output = request.renderContext.size
         if instruction.offset != .zero || output != size {
             out = out.transformed(by: CGAffineTransform(translationX: -instruction.offset.x, y: -instruction.offset.y))
         }

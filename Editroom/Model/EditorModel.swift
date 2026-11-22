@@ -188,6 +188,54 @@ final class EditorModel: ObservableObject {
                     try? await Task.sleep(nanoseconds: 800_000_000)
                     self.editingMarker = m.id
                 }
+                // `--scrub-test` (testing): drags the playhead back and forth like a fast scrub, 60 moves a
+                // second, and times how far the shown frame falls behind.
+                // `--scrub-test [exact]` (testing): drags the playhead like a hand scrub (back and forth across
+                // a few seconds, 60 moves a second) and counts how often the viewer's picture changes.
+                if args.contains("--scrub-test") {
+                    try? await Task.sleep(nanoseconds: 4_000_000_000)
+                    // The made-ahead frames for what's on the timeline, unless testing without them.
+                    let made = Date()
+                    let videos = Set(self.project.clips.filter { $0.kind == .video }.compactMap(\.assetID))
+                    while !args.contains("exact"), !videos.allSatisfy({ self.media.scrubCache.has($0) }), Date().timeIntervalSince(made) < 120 {
+                        try? await Task.sleep(nanoseconds: 100_000_000)
+                    }
+                    FileHandle.standardError.write(String(format: "SCRUB frames ready after %.1fs\n", Date().timeIntervalSince(made)).data(using: .utf8)!)
+                    let d = self.project.duration
+                    let exact = args.contains("exact")
+                    var last = -1.0, updates = 0
+                    let t0 = Date()
+                    for i in 0..<240 {
+                        let u = Double(i) / 60
+                        let t = min(d - 0.1, d * 0.2 + min(2.5, d * 0.35) * (1 - cos(u * 2.2)))
+                        if exact { self.seek(to: t) } else { self.scrub(to: t) }
+                        try? await Task.sleep(nanoseconds: 16_000_000)
+                        if self.engine.shownTime != last { updates += 1; last = self.engine.shownTime }
+                    }
+                    let secs = Date().timeIntervalSince(t0)
+                    let stop = Date()
+                    while abs(self.engine.shownTime - self.playhead) > 1.5 / self.project.fps, Date().timeIntervalSince(stop) < 3 {
+                        try? await Task.sleep(nanoseconds: 2_000_000)
+                    }
+                    FileHandle.standardError.write(String(format: "SCRUB %@: viewer updated %.0f times a second, exact frame %.0f ms after stopping (shown %.3f, playhead %.3f)\n",
+                                                          exact ? "exact" : "fast", Double(updates) / secs, Date().timeIntervalSince(stop) * 1000,
+                                                          self.engine.shownTime, self.playhead).data(using: .utf8)!)
+                    // One seek at a time, each to somewhere new: how long until its frame is on screen.
+                    var waits: [Double] = []
+                    for i in 0..<24 {
+                        let t = d * (0.1 + 0.8 * Double((i * 7) % 24) / 24)
+                        let asked = Date()
+                        if exact { self.seek(to: t) } else { self.scrub(to: t) }
+                        while abs(self.engine.shownTime - self.playhead) > (exact ? 1.5 / self.project.fps : 0.8), Date().timeIntervalSince(asked) < 2 {
+                            try? await Task.sleep(nanoseconds: 1_000_000)
+                        }
+                        waits.append(Date().timeIntervalSince(asked) * 1000)
+                        try? await Task.sleep(nanoseconds: 200_000_000)
+                    }
+                    waits.sort()
+                    FileHandle.standardError.write(String(format: "SEEK %@: median %.0f ms, slowest %.0f ms (shown vs asked: %.3f / %.3f)\n", exact ? "exact" : "fast",
+                                                          waits[waits.count / 2], waits.last!, self.engine.shownTime, self.playhead).data(using: .utf8)!)
+                }
                 if args.contains("--show-export") { self.showExport = true }
                 if args.contains("--show-agents") { self.showAgents = true }
                 // `--import-test <file>` (testing): imports it and times its Media poster and a timeline frame.
@@ -689,7 +737,10 @@ final class EditorModel: ObservableObject {
         let time = min(max(0, project.snapFrame(t)), project.duration)
         guard time != skimTime else { return }
         skimTime = time
-        engine.seek(to: time)
+        if !engine.showScrubFrame(at: time, cache: media.scrubCache) {
+            engine.seek(to: time, fast: true)
+        }
+        settleSoon()
         scrubSound(at: time)
     }
 
@@ -707,6 +758,8 @@ final class EditorModel: ObservableObject {
             }
         }
         skimTime = nil
+        settleWork?.cancel()
+        engine.endScrubFrames()
         guard project.duration > 0 else { return }
         rebuildNow()
         guard !engine.isEmpty else { return }
@@ -729,12 +782,44 @@ final class EditorModel: ObservableObject {
 
     func seek(to time: Double) {
         skimTime = nil
+        settleWork?.cancel()
+        engine.endScrubFrames()
         if isPlaying {
             engine.pause()
             isPlaying = false
         }
         playhead = max(0, project.snapFrame(time))
         engine.seek(to: playhead)
+    }
+
+    /// Moving the playhead by dragging it: the viewer keeps up with the nearest frame it can show at
+    /// once, and the exact frame follows when the drag rests for a moment or stops.
+    func scrub(to time: Double) {
+        skimTime = nil
+        if isPlaying {
+            engine.pause()
+            isPlaying = false
+        }
+        playhead = max(0, project.snapFrame(time))
+        // A frame from the made-ahead ones at once if they're there; the player's own seek otherwise.
+        if !engine.showScrubFrame(at: playhead, cache: media.scrubCache) {
+            engine.seek(to: playhead, fast: true)
+        }
+        settleSoon()
+    }
+
+    private var settleWork: DispatchWorkItem?
+
+    /// The exact frame once scrubbing or skimming rests (the playhead's, or the skimmer's).
+    private func settleSoon() {
+        settleWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.isPlaying else { return }
+            self.engine.endScrubFrames()
+            self.engine.seek(to: self.skimTime ?? self.playhead)
+        }
+        settleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.09, execute: work)
     }
 
     func step(frames: Int) {

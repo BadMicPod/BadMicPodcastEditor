@@ -106,7 +106,8 @@ enum CompositionBuilder {
                         hash(shown, into: &hasher)
                         let limit = Int(max(canvas.width, canvas.height).rounded())
                         layers.append(RenderLayer(clip: clip, source: .reversed(frames, rt.orientation, limit: limit, clock: SourceClock(shown), length: length),
-                                                  cube: GradeBaker.cube(for: clip.grade), color: rt.sourceColor, plan: plan))
+                                                  cube: GradeBaker.cube(for: clip.grade), color: rt.sourceColor, plan: plan,
+                                                  scrub: rt.sourceColor.isStandard ? ScrubSource(asset: id, clock: SourceClock(shown), reversedLength: length) : nil))
                     case .video where clip.assetID.flatMap { media.runtimes[$0] }.map { !$0.sourceColor.isStandard } == true:
                         // HDR and Log: read from the file as it plays, so the compositor gets the file's own
                         // pixels; no composition track needed.
@@ -132,7 +133,8 @@ enum CompositionBuilder {
                         shown.duration += plan.leadIn + plan.tailOut
                         guard let ct = compTracks[lane], insert(shown, source: src, range: rt.videoRange, into: ct, cursor: &cursors[lane]) else { continue }
                         hash(shown, into: &hasher)
-                        layers.append(RenderLayer(clip: clip, source: .track(ct.trackID, rt.orientation), cube: GradeBaker.cube(for: clip.grade), color: rt.sourceColor, plan: plan))
+                        layers.append(RenderLayer(clip: clip, source: .track(ct.trackID, rt.orientation), cube: GradeBaker.cube(for: clip.grade), color: rt.sourceColor, plan: plan,
+                                                  scrub: ScrubSource(asset: id, clock: SourceClock(shown))))
                     case .image:
                         guard let cg = media.still(clip.assetID) else { continue }
                         let img = CIImage(cgImage: cg)

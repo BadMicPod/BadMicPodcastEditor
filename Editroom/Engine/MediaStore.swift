@@ -80,6 +80,8 @@ final class MediaStore: ObservableObject {
     private var reverseJobs: [UUID: Task<Void, Never>] = [:]
     /// Frames made ahead for hover-scrubbing Media items.
     private let strips = ScrubStrips()
+    /// Frames for dragging the playhead and skimming without waiting on the decoder.
+    let scrubCache = ScrubCache()
     /// Called when a file's reversed sound is ready, so the timeline can be rebuilt with it.
     var onReverseReady: (() -> Void)?
 
@@ -180,6 +182,7 @@ final class MediaStore: ObservableObject {
         stills[id] = nil
         thumbs = thumbs.filter { $0.key.asset != id }
         strips.forget(id)
+        scrubCache.forget(id)
     }
 
     private func adopt(_ rt: MediaRuntime, for asset: MediaAsset) {
@@ -199,6 +202,7 @@ final class MediaStore: ObservableObject {
                 // Its best moments, as Magic scores them: ready before Magic needs them.
                 AnalysisWarmer.shared.warm(asset.url, kind: asset.kind, song: false)
                 self?.strips.make(asset.id, rt, duration: asset.duration)
+                if rt.sourceColor.isStandard { self?.scrubCache.make(asset.id, url: rt.asset.url, duration: asset.duration) }
             }
         }
         if rt.audioTrack != nil {

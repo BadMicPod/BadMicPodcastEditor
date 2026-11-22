@@ -603,7 +603,7 @@ final class TimelineCanvas: NSView {
         if let s { t += s.delta }
         if let target = s?.target, target != lastScrubSnap { Self.tap() }
         lastScrubSnap = s?.target
-        model.seek(to: t)
+        model.scrub(to: t)
         model.scrubSound(at: model.playhead)
         scrubReadout = model.playhead
         needsDisplay = true
