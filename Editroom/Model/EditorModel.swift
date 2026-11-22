@@ -197,6 +197,40 @@ final class EditorModel: ObservableObject {
                 // second, and times how far the shown frame falls behind.
                 // `--scrub-test [exact]` (testing): drags the playhead like a hand scrub (back and forth across
                 // a few seconds, 60 moves a second) and counts how often the viewer's picture changes.
+                // `--loop-test` (testing): plays the last two seconds on Loop, three times round, and reports
+                // the longest wait between new frames in the viewer at each wrap (a frame is ~17-42 ms).
+                if args.contains("--loop-test") {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    let d = self.project.duration
+                    self.loop = true
+                    // `--loop-test inout`: an in/out range in the middle instead of the whole timeline.
+                    if args.contains("inout") { self.mutate { $0.inPoint = d * 0.3; $0.outPoint = d * 0.3 + 1.5 } }
+                    self.seek(to: args.contains("inout") ? d * 0.3 + 1 : max(0, d - 2))
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    self.play()
+                    var lastShown = -1.0, lastChange = CACurrentMediaTime(), prevPlayhead = self.playhead
+                    var gaps: [(at: Double, gap: Double)] = [], wrapTimes: [Double] = []
+                    let t0 = CACurrentMediaTime()
+                    while CACurrentMediaTime() - t0 < 7.2 {
+                        try? await Task.sleep(nanoseconds: 2_000_000)
+                        let now = CACurrentMediaTime()
+                        if self.engine.shownTime != lastShown {
+                            if lastShown >= 0 { gaps.append((now, now - lastChange)) }
+                            lastShown = self.engine.shownTime
+                            lastChange = now
+                        }
+                        if self.playhead < prevPlayhead - 0.5 { wrapTimes.append(now) }
+                        prevPlayhead = self.playhead
+                    }
+                    let typical = gaps.map(\.gap).sorted()[gaps.count / 2]
+                    let wraps = wrapTimes.map { w in
+                        String(format: "%.0f ms", (gaps.filter { abs($0.at - w) < 0.5 }.map(\.gap).max() ?? 0) * 1000)
+                    }
+                    FileHandle.standardError.write(String(format: "LOOP typical frame %.0f ms\n", typical * 1000).data(using: .utf8)!)
+                    self.pause()
+                    FileHandle.standardError.write("LOOP wraps=\(wraps.count) longest gap at each: \(wraps.joined(separator: ", "))\n".data(using: .utf8)!)
+                    exit(0)
+                }
                 if args.contains("--scrub-test") {
                     try? await Task.sleep(nanoseconds: 4_000_000_000)
                     // The made-ahead frames for what's on the timeline, unless testing without them.
@@ -629,14 +663,20 @@ final class EditorModel: ObservableObject {
 
     func tick() {
         if isPlaying {
+            // Looping: the engine starts over on its own, with no pause, once it's ready to.
+            engine.loopSpan = loop && project.duration > 0 ? loopSpan : nil
+            engine.serviceLoop()
             playhead = min(engine.currentTime, max(engine.duration, 0))
-            // Within a frame of the end, or stopped by the player: start over when looping.
+            // Within a frame of the end, or stopped by the player: start over when looping (with a
+            // seek, when the engine isn't ready to loop by itself yet).
             let span = loopSpan
-            if loop, span.end > 0, playhead >= span.end - 1 / project.fps || !engine.isPlaying {
+            if loop, !engine.loopsItself, span.end > 0, playhead >= span.end - 1 / project.fps || !engine.isPlaying {
                 playhead = span.start
                 engine.seek(to: span.start)
                 engine.play()
             }
+        } else if engine.loopSpan != nil {
+            engine.loopSpan = nil
         }
         clock.update(time: playhead, fps: project.fps)
         // While scrubbing with sound, the meters show what's being heard.
@@ -796,6 +836,8 @@ final class EditorModel: ObservableObject {
             playhead = span.start
             engine.seek(to: span.start)
         }
+        // Looping: the start is made ready to follow the end right away.
+        engine.loopSpan = loop ? span : nil
         engine.play()
         isPlaying = true
     }
@@ -803,6 +845,7 @@ final class EditorModel: ObservableObject {
     func pause() {
         guard isPlaying else { return }
         engine.pause()
+        engine.loopSpan = nil
         isPlaying = false
         playhead = project.snapFrame(engine.currentTime)
         engine.seek(to: playhead)

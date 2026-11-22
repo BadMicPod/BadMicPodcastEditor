@@ -5,7 +5,8 @@ import QuartzCore
 /// Owns the AVPlayer and swaps freshly built compositions in as the timeline changes.
 @MainActor
 final class PlaybackEngine {
-    let player = AVPlayer()
+    /// The player being watched and heard. While looping it swaps with `spare` at each loop.
+    private(set) var player = AVPlayer()
     private(set) var duration: Double = 0
     private(set) var fps: Double = 30
     private var videoOutput: AVPlayerItemVideoOutput?
@@ -18,11 +19,19 @@ final class PlaybackEngine {
     var isEmpty: Bool { player.currentItem == nil }
 
     init() {
-        player.automaticallyWaitsToMinimizeStalling = false
-        player.actionAtItemEnd = .pause
+        for p in [player, spare] {
+            p.automaticallyWaitsToMinimizeStalling = false
+            p.actionAtItemEnd = .pause
+        }
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] note in
             MainActor.assumeIsolated {
                 guard let self, (note.object as? AVPlayerItem) === self.player.currentItem else { return }
+                // Looping with the spare ready: it takes over, with no seek.
+                if self.loopsItself {
+                    if self.swapAt == nil { self.startSpare(in: 0) }
+                    self.swapToSpare()
+                    return
+                }
                 self.onEnded?()
             }
         }
@@ -45,6 +54,7 @@ final class PlaybackEngine {
                                                    renderSize: CompositionBuilder.previewSize(for: project)) else {
             player.replaceCurrentItem(with: nil)
             videoOutput = nil
+            dropSpare()
             signature = nil
             duration = 0
             isSeeking = false
@@ -57,6 +67,10 @@ final class PlaybackEngine {
         if built.signature == signature, let item = player.currentItem {
             item.videoComposition = built.videoComposition
             item.audioMix = built.audioMix
+            if spareSignature == signature, let s = spare.currentItem {
+                s.videoComposition = built.videoComposition
+                s.audioMix = built.audioMix
+            }
             if !isPlaying { refresh(at: time) }
             return
         }
@@ -72,12 +86,15 @@ final class PlaybackEngine {
         item.add(output)
 
         let wasPlaying = isPlaying
+        dropSpare()
+        if let span = loopSpan { item.forwardPlaybackEndTime = CompositionBuilder.time(span.end) }
         player.replaceCurrentItem(with: item)
         videoOutput = output
         signature = built.signature
         isSeeking = false
         seek(to: time)
         if wasPlaying { player.playImmediately(atRate: 1) }
+        if loopSpan != nil { primeSpare() }
     }
 
     func play() {
@@ -87,6 +104,7 @@ final class PlaybackEngine {
 
     func pause() {
         player.pause()
+        cancelSwap()
     }
 
     /// Coalescing seek: only one seek is in flight, the latest request always wins. `fast` (scrubbing,
@@ -97,6 +115,7 @@ final class PlaybackEngine {
     func seek(to time: Double, fast: Bool = false) {
         targetTime = clamp(time)
         exactWanted = !fast
+        cancelSwap()
         guard player.currentItem != nil else { return }
         if !isSeeking { performSeek() }
     }
@@ -136,8 +155,129 @@ final class PlaybackEngine {
         }
     }
 
+    // MARK: Seamless looping
+
+    /// Looping: a second player waits at the loop's start, already decoded, and starts at the very
+    /// moment the first reaches the end (its own clock, not a seek), so the loop has no pause. Then
+    /// they swap, and the one that finished goes back to wait at the start for the next time round.
+    private var spare = AVPlayer()
+    private var spareOutput: AVPlayerItemVideoOutput?
+    /// The edit the spare's item was made from (a different one is made again).
+    private var spareSignature: Int?
+    /// The spare is at the loop's start, decoded, ready to start.
+    private var spareReady = false
+    private var priming = 0
+    /// When the spare is set to start (host time, seconds).
+    private var swapAt: Double?
+
+    /// What's being looped while playing (nil: not looping). The player stops itself at its end.
+    var loopSpan: (start: Double, end: Double)? {
+        didSet {
+            guard loopSpan?.start != oldValue?.start || loopSpan?.end != oldValue?.end else { return }
+            player.currentItem?.forwardPlaybackEndTime = loopSpan.map { CompositionBuilder.time($0.end) } ?? .invalid
+            if loopSpan == nil { dropSpare() } else { primeSpare() }
+        }
+    }
+
+    /// The loop is taken care of here (the spare is ready, or already starting).
+    var loopsItself: Bool { loopSpan != nil && (spareReady || swapAt != nil) }
+
+    /// Each frame while playing: starts the spare just as the loop's end comes, and swaps once it has.
+    func serviceLoop() {
+        guard let span = loopSpan, player.currentItem != nil else { return }
+        if let at = swapAt {
+            if CACurrentMediaTime() >= at { swapToSpare() }
+            return
+        }
+        guard spareReady, isPlaying else { return }
+        let left = span.end - player.currentTime().seconds
+        if left < 0.25 { startSpare(in: max(0, left)) }
+    }
+
+    /// Starts the waiting spare `seconds` from now, on the host clock.
+    private func startSpare(in seconds: Double) {
+        guard spareReady, swapAt == nil else { return }
+        let now = CMClockGetTime(CMClockGetHostTimeClock())
+        let at = CMTimeAdd(now, CMTime(seconds: seconds, preferredTimescale: 1_000_000_000))
+        spare.setRate(1, time: .invalid, atHostTime: at)
+        swapAt = at.seconds
+        spareReady = false
+    }
+
+    /// The spare is playing: it becomes the player, and the old one goes to wait at the start.
+    private func swapToSpare() {
+        guard swapAt != nil else { return }
+        swapAt = nil
+        let old = player, oldOutput = videoOutput
+        player = spare
+        videoOutput = spareOutput
+        spare = old
+        spareOutput = oldOutput
+        spareSignature = signature
+        old.pause()
+        isSeeking = false
+        primeSpare()
+    }
+
+    /// Stopped or moved before the spare took over: it goes back to waiting.
+    private func cancelSwap() {
+        guard swapAt != nil else { return }
+        swapAt = nil
+        spare.pause()
+        primeSpare()
+    }
+
+    private func dropSpare() {
+        priming += 1
+        spareReady = false
+        if swapAt != nil { spare.pause(); swapAt = nil }
+        spare.replaceCurrentItem(with: nil)
+        spareOutput = nil
+        spareSignature = nil
+    }
+
+    /// Puts the spare at the loop's start, decoded and ready to go.
+    private func primeSpare() {
+        guard let span = loopSpan, let main = player.currentItem else { return }
+        priming += 1
+        let generation = priming
+        spareReady = false
+        let item: AVPlayerItem
+        if spareSignature == signature, let current = spare.currentItem {
+            item = current
+        } else {
+            item = AVPlayerItem(asset: main.asset)
+            item.audioTimePitchAlgorithm = .spectral
+            let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
+            ])
+            item.add(output)
+            spare.replaceCurrentItem(with: item)
+            spareOutput = output
+            spareSignature = signature
+        }
+        item.videoComposition = main.videoComposition
+        item.audioMix = main.audioMix
+        item.forwardPlaybackEndTime = CompositionBuilder.time(span.end)
+        let player = spare
+        Task { @MainActor [weak self] in
+            for _ in 0..<150 where item.status != .readyToPlay || player.status != .readyToPlay {
+                if item.status == .failed { return }
+                try? await Task.sleep(nanoseconds: 20_000_000)
+            }
+            guard let self, generation == self.priming, item.status == .readyToPlay, player.status == .readyToPlay else { return }
+            let landed = await player.seek(to: CompositionBuilder.time(span.start), toleranceBefore: .zero, toleranceAfter: .zero)
+            guard landed, generation == self.priming, player.rate == 0 else { return }
+            let ready = await player.preroll(atRate: 1)
+            guard ready, generation == self.priming else { return }
+            self.spareReady = true
+        }
+    }
+
     /// Pulls the newest decoded frame, if one arrived since the last call.
     func pullFrame() -> CVPixelBuffer? {
+        if let at = swapAt, CACurrentMediaTime() >= at { swapToSpare() }
         if let ready = scrubReady {
             scrubReady = nil
             lastFrame = ready.buffer
