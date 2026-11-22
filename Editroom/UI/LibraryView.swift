@@ -135,7 +135,7 @@ struct LibraryView: View {
             // The same menu on the space around the items (each item keeps its own).
             .contextMenu { panelMenu }
         }
-        .background(Theme.panel).panelTopLight()
+        .background(Theme.panel)
         .background(GeometryReader { g in
             Color.clear
                 .onAppear { panelWidth = g.size.width }
