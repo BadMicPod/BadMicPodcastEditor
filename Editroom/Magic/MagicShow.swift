@@ -62,6 +62,26 @@ final class MagicState: ObservableObject {
     @Published var status: String?
     /// The thinking show's stage ("Looking", "Analyzing", "Thinking"), or "Editing" during the swarm.
     @Published var stage: String?
+    /// What an AI's latest tool call is doing ("looking at kareoke", "placing boat_wide"), shown on
+    /// the button in place of the stage while it's fresh.
+    @Published var activity: String?
+    private var activityID = 0
+
+    /// Shows what a tool call is doing; when the call is done, the button goes back to the stage
+    /// ("Claude is thinking") after a moment unless another call has started.
+    func begin(activity: String?) -> Int {
+        activityID += 1
+        self.activity = activity
+        return activityID
+    }
+
+    func finish(activity id: Int) {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard let self, self.activityID == id else { return }
+            self.activity = nil
+        }
+    }
 }
 
 private final class FlippedView: NSView {

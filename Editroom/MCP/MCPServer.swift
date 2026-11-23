@@ -268,7 +268,10 @@ enum MCPHandler {
                 default: _ = draft
                 }
             }
+            let activity = draft != nil && MagicThinking.current != nil
+                ? MagicState.shared.begin(activity: describe(name, args, in: model.project)) : nil
             defer {
+                if let activity { MagicState.shared.finish(activity: activity) }
                 let edits: Set<String> = ["add_clip", "add_title", "move_clip", "trim_clip", "split_clip", "delete_clips", "set_speed", "set_speed_ramp",
                                           "set_grade", "set_audio", "set_transition", "set_sequence", "add_track", "history", "download_media",
                                           "set_marker", "delete_markers", "set_in_out", "set_transform", "set_title_style", "freeze_frame",
@@ -283,6 +286,66 @@ enum MCPHandler {
             }
         default:
             return MCPServer.error(id, -32601, "Method not found")
+        }
+    }
+
+    /// What a Magic run's tool call is doing, as the button says it after "Claude is" (nil keeps the
+    /// stage word).
+    static func describe(_ name: String, _ args: [String: Any], in p: Project) -> String? {
+        func short(_ s: String) -> String {
+            let base = (s as NSString).deletingPathExtension
+            return base.count > 24 ? String(base.prefix(23)) + "…" : base
+        }
+        func asset(_ key: String = "asset_id") -> String? {
+            guard let id = (args[key] as? String).flatMap(UUID.init(uuidString:)),
+                  let a = p.assets.first(where: { $0.id == id }) else { return nil }
+            return short(a.name)
+        }
+        func clip() -> String? {
+            guard let id = (args["clip_id"] as? String).flatMap(UUID.init(uuidString:)),
+                  let c = p.clips.first(where: { $0.id == id }) else { return nil }
+            return short(p.name(of: c))
+        }
+        func quoted(_ key: String) -> String? {
+            guard let t = (args[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+            return "“" + (t.count > 22 ? String(t.prefix(21)) + "…" : t) + "”"
+        }
+        func on(_ verb: String, _ what: String?) -> String { what.map { "\(verb) \($0)" } ?? verb }
+        switch name {
+        case "list_media": return "going through the media"
+        case "get_project": return "reading the timeline"
+        case "list_looks": return "browsing looks"
+        case "look_at_media": return on("looking at", asset())
+        case "analyze_media": return on("studying", asset())
+        case "get_transcript": return on("reading what’s said in", asset())
+        case "get_frame": return asset().map { "checking a frame of \($0)" } ?? "checking a frame"
+        case "search_media":
+            if let q = quoted("said") { return "searching for \(q)" }
+            return on("searching for", quoted("shows") ?? "a shot")
+        case "add_clip": return on("placing", asset())
+        case "add_title": return on("adding the title", quoted("text"))
+        case "add_solid": return "adding a solid"
+        case "move_clip": return on("moving", clip())
+        case "trim_clip": return on("trimming", clip())
+        case "split_clip": return on("splitting", clip())
+        case "delete_clips": return "removing clips"
+        case "duplicate_clip": return on("duplicating", clip())
+        case "set_speed", "set_speed_ramp": return on("changing the speed of", clip())
+        case "reverse_clip": return on("reversing", clip())
+        case "freeze_frame": return on("freezing a frame of", clip())
+        case "set_grade": return on("grading", clip())
+        case "set_audio": return on("mixing", clip())
+        case "detach_audio": return on("detaching the sound of", clip())
+        case "set_transition": return "adding a transition"
+        case "set_transform": return on("framing", clip())
+        case "set_title_style": return "styling the title"
+        case "set_sequence": return "setting up the sequence"
+        case "add_track", "set_track": return "arranging tracks"
+        case "set_marker", "delete_markers": return "marking moments"
+        case "set_in_out": return "setting the in and out"
+        case "download_media": return on("downloading", quoted("name"))
+        case "history": return "undoing a step"
+        default: return nil
         }
     }
 }

@@ -278,7 +278,11 @@ struct MagicButton: View {
     /// The same stage words as the cursors' tags ("Claude is thinking", "Analyzing 3 of 5", "Editing").
     private var status: String? {
         if ai.running {
-            if let stage = state.stage, let name = ai.agent?.name { return "\(name) is \(stage.lowercased())" }
+            if let stage = state.stage, let name = ai.agent?.name {
+                // What it's doing right now, while the thinking show runs; the swarm says "Editing".
+                if stage != "Editing", let doing = state.activity { return "\(name) is \(doing)" }
+                return "\(name) is \(stage.lowercased())"
+            }
             return ai.status
         }
         return ai.ready ?? state.status ?? state.stage
