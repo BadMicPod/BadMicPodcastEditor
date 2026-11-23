@@ -424,7 +424,8 @@ private struct IdeasMenu: View {
     private func open() {
         let menu = NSMenu()
         menu.autoenablesItems = false
-        for (title, ideas) in sections {
+        for (i, (title, ideas)) in sections.enumerated() {
+            if i > 0 { menu.addItem(.separator()) }
             menu.addItem(NSMenuItem.sectionHeader(title: title))
             for idea in ideas {
                 let item = ActionItem(idea.name) { use(idea.prompt) }
