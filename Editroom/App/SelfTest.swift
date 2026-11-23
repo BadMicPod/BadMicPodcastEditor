@@ -745,6 +745,33 @@ enum SelfTest {
             log("LOCAL ADD \(good ? "OK" : "FAIL") reads=\(reads) counts=\(counts) placed=\(placed) \(results)")
             ok = ok && good
         }
+        // Several asks in one request: the clip added, then the title at the new end, then captions, as one plan.
+        do {
+            var p = Project()
+            let mk = { (n: String) in MediaAsset(path: "/tmp/\(n).mov", name: "\(n).mov", kind: .video, duration: 8, width: 1920, height: 1080, fps: 30, hasAudio: true) }
+            let a = mk("A"), b = mk("Heli")
+            p.assets = [a, b]
+            let l = UUID()
+            var v = Clip(trackID: p.videoTracks[0].id, kind: .video, assetID: a.id, start: 0, duration: 3); v.linkID = l
+            var au = Clip(trackID: p.audioTracks[0].id, kind: .audio, assetID: a.id, start: 0, duration: 3); au.linkID = l
+            p.clips = [v, au]
+            let request = "add @Heli clip to end and add captions and a title at the end"
+            let parts = LocalCombined.parts(request, project: p)
+            let m = EditorModel()
+            m.load(p, url: nil)
+            let outcome = await LocalCombined.plan(parts, request: request, typed: request,
+                                                   pointers: MagicPointers(playhead: 0, selected: [], range: nil), model: m) {}
+            var q = p
+            for t in outcome.plan?.tasks ?? [] { t.edit.apply(&q, 1) }
+            let heli = q.clips.first { $0.kind == .video && $0.assetID == b.id }
+            let title = q.clips.first { $0.kind == .text }
+            let added = heli.map { abs($0.start - 3) < 0.01 } ?? false
+            let titled = title.map { t in abs(t.end - (heli?.end ?? -1)) < 0.05 && t.text.string == "Title" } ?? false
+            let captioned = q.captions != nil && q.captionedClips.count == 2
+            let good = parts.count == 3 && added && titled && captioned
+            log("LOCAL COMBINED \(good ? "OK" : "FAIL") parts=\(parts.count) added=\(added) title=\(titled) captions=\(captioned)")
+            ok = ok && good
+        }
         // Typed timecodes.
         do {
             let cases: [(String, Double?)] = [("1000", 10), ("1:02:03", 62.1), ("00:00:02:15", 2.5), ("12", 0.4), ("abc", nil)]

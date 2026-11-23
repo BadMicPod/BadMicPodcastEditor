@@ -1095,6 +1095,21 @@ enum LocalMagic {
                 await perform(outcome, model: model, run: run)
                 return
             }
+            // More than one thing asked ("add @Beach to the end, add captions and a title"): all of them, in turn.
+            let parts = LocalCombined.parts(request, project: model.project)
+            if parts.count > 1 {
+                let outcome = await LocalCombined.plan(parts, request: request, typed: typed, pointers: pointers, model: model) {
+                    state.status = "Listening"
+                }
+                guard run == MagicShow.runID else { return }
+                state.busy = false
+                state.status = nil
+                if CommandLine.arguments.contains("--magic-local") {
+                    FileHandle.standardError.write("MAGIC LOCAL combined \(parts): \(outcome.said) (\(outcome.plan?.tasks.count ?? 0) edits)\n".data(using: .utf8)!)
+                }
+                await perform(outcome, model: model, run: run)
+                return
+            }
             // Captions from what's said (heard on this Mac first), or taking them off.
             if LocalCaptions.asks(request, project: model.project) {
                 let p = model.project
