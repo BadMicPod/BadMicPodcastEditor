@@ -704,6 +704,39 @@ enum SelfTest {
             log("CAPTION UNDO \(good ? "OK" : "FAIL") both=\(both) oneUndo=\(back) redo=\(again)")
             ok = ok && good
         }
+        // Local adds clips to the edit: unused library clips, at the end or the start.
+        do {
+            var p = Project()
+            let mk = { (n: String) in MediaAsset(path: "/tmp/\(n).mov", name: "\(n).mov", kind: .video, duration: 8, width: 1920, height: 1080, fps: 30, hasAudio: true) }
+            let a = mk("A"), b = mk("B"), c = mk("C")
+            p.assets = [a, b, c]
+            p.clips = [Clip(trackID: p.videoTracks[0].id, kind: .video, assetID: a.id, start: 0, duration: 3)]
+            let reads = LocalAdd.asks("add one more clip to end of video", project: p) && LocalAdd.asks("put two more shots at the start", project: p)
+                && !LocalAdd.asks("add a title at the end", project: p) && !LocalAdd.asks("add captions", project: p)
+                && !LocalAdd.asks("make a new video with 5 clips", project: p)
+            let counts = LocalAdd.count("add one more clip") == 1 && LocalAdd.count("add two more shots") == 2
+                && LocalAdd.count("add 3 clips at the end") == 3 && LocalAdd.count("add another clip") == 1
+            func applied(_ request: String) -> Project? {
+                guard let plan = LocalAdd.plan(request: request, typed: request, project: p).plan else { return nil }
+                var q = plan.base
+                for t in plan.tasks { t.edit.apply(&q, 1) }
+                return q
+            }
+            let end = applied("add one more clip to end of video")
+            let endOK = end.map { q in
+                let v = q.clips.filter { $0.kind == .video }.sorted { $0.start < $1.start }
+                return v.count == 2 && v[1].assetID == b.id && abs(v[1].start - 3) < 0.01 && abs(v[1].duration - 3) < 0.01
+                    && q.clips.contains { $0.kind == .audio && $0.linkID == v[1].linkID && v[1].linkID != nil }
+            } ?? false
+            let front = applied("add two more shots at the start")
+            let frontOK = front.map { q in
+                let v = q.clips.filter { $0.kind == .video }.sorted { $0.start < $1.start }
+                return v.map(\.assetID) == [b.id, c.id, a.id] && abs(v[2].start - 6) < 0.01
+            } ?? false
+            let good = reads && counts && endOK && frontOK
+            log("LOCAL ADD \(good ? "OK" : "FAIL") reads=\(reads) counts=\(counts) end=\(endOK) start=\(frontOK)")
+            ok = ok && good
+        }
         // Typed timecodes.
         do {
             let cases: [(String, Double?)] = [("1000", 10), ("1:02:03", 62.1), ("00:00:02:15", 2.5), ("12", 0.4), ("abc", nil)]
