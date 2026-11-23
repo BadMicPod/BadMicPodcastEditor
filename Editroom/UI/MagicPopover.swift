@@ -467,29 +467,19 @@ private struct HistoryMenu: View {
         if entries.isEmpty {
             menu.addItem(ActionItem("Prompts you send show up here.", enabled: false) {})
         }
-        let font = NSFont.menuFont(ofSize: 0)
-        func item(_ e: MagicHistory.Entry) -> NSMenuItem {
-            let item = ActionItem(e.text) { use(e.text) }
-            item.attributedTitle = NSAttributedString(string: Self.wrapped(e.text), attributes: [.font: font])
-            item.badge = NSMenuItemBadge(string: MagicAgent.Tab(rawValue: e.tab)?.name ?? "")
-            item.toolTip = e.text
-            return item
-        }
-        // The latest few; the rest in a submenu, so the menu stays a manageable size (a menu can't be
-        // given a height to scroll at).
-        for e in entries.prefix(Self.shown) { menu.addItem(item(e)) }
-        if entries.count > Self.shown {
-            let older = NSMenuItem(title: "Older", action: nil, keyEquivalent: "")
-            let sub = NSMenu()
-            sub.autoenablesItems = false
-            for e in entries.dropFirst(Self.shown) { sub.addItem(item(e)) }
-            older.submenu = sub
-            menu.addItem(.separator())
-            menu.addItem(older)
+        if !entries.isEmpty {
+            // In a list of its own that scrolls past the latest few (a menu can't be given a height).
+            let list = NSMenuItem()
+            list.view = HistoryList(entries: entries, rows: Self.shown) { [weak menu] text in
+                menu?.cancelTracking()
+                use(text)
+            }
+            menu.addItem(list)
         }
         anchor.popUp(menu)
     }
 
+    /// How many prompts show before the list scrolls.
     static let shown = 8
 
     /// At most two lines of about `width` characters, broken between words, with … if there's more.
@@ -1309,4 +1299,95 @@ enum LocalMagic {
         MagicAgent.shared.note = MagicAgent.Note(agent: nil, text: said, changed: changed,
                                                 detail: detail.filter { !$0.isEmpty }.joined(separator: " · "))
     }
+}
+
+
+/// The history menu's prompts, as menu items look (wrapped to two lines, the AI's badge on the right,
+/// highlighted under the pointer), in a list as tall as `rows` of them that scrolls to the rest.
+private final class HistoryList: NSView {
+    private let scroll = NSScrollView()
+
+    init(entries: [MagicHistory.Entry], rows: Int, pick: @escaping (String) -> Void) {
+        let width: CGFloat = 330
+        let doc = FlippedDoc()
+        var y: CGFloat = 0
+        var heights: [CGFloat] = []
+        for e in entries {
+            let row = HistoryRow(entry: e, width: width, pick: pick)
+            row.frame.origin = CGPoint(x: 0, y: y)
+            doc.addSubview(row)
+            y += row.frame.height
+            heights.append(row.frame.height)
+        }
+        doc.frame = CGRect(x: 0, y: 0, width: width, height: y)
+        let visible = heights.prefix(rows).reduce(0, +)
+        super.init(frame: CGRect(x: 0, y: 0, width: width, height: visible))
+        scroll.frame = bounds
+        scroll.autoresizingMask = [.width, .height]
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = entries.count > rows
+        scroll.scrollerStyle = .overlay
+        scroll.documentView = doc
+        addSubview(scroll)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private final class FlippedDoc: NSView {
+        override var isFlipped: Bool { true }
+    }
+}
+
+private final class HistoryRow: NSView {
+    private let text = NSTextField(labelWithString: "")
+    private let badge = NSTextField(labelWithString: "")
+    private let entry: MagicHistory.Entry
+    private let pick: (String) -> Void
+    private var lit = false { didSet { needsDisplay = true; recolor() } }
+
+    init(entry: MagicHistory.Entry, width: CGFloat, pick: @escaping (String) -> Void) {
+        self.entry = entry
+        self.pick = pick
+        let font = NSFont.menuFont(ofSize: 0)
+        text.stringValue = HistoryMenu.wrapped(entry.text)
+        text.font = font
+        text.maximumNumberOfLines = 2
+        let lines = CGFloat(text.stringValue.split(separator: "\n").count)
+        let height = ceil(font.boundingRectForFont.height * lines) + 8
+        super.init(frame: CGRect(x: 0, y: 0, width: width, height: height))
+        badge.stringValue = MagicAgent.Tab(rawValue: entry.tab)?.name ?? ""
+        badge.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        badge.alignment = .center
+        badge.sizeToFit()
+        let bw = badge.frame.width + 14, bh: CGFloat = 18
+        let holder = NSView(frame: CGRect(x: width - 14 - bw, y: (height - bh) / 2, width: bw, height: bh))
+        holder.wantsLayer = true
+        holder.layer?.cornerRadius = bh / 2
+        holder.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.1).cgColor
+        badge.frame = CGRect(x: 0, y: (bh - badge.frame.height) / 2, width: bw, height: badge.frame.height)
+        holder.addSubview(badge)
+        addSubview(holder)
+        text.frame = CGRect(x: 14, y: 4, width: holder.frame.minX - 22, height: height - 8)
+        addSubview(text)
+        toolTip = entry.text
+        recolor()
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func recolor() {
+        text.textColor = lit ? .selectedMenuItemTextColor : .labelColor
+        badge.textColor = lit ? .selectedMenuItemTextColor : .secondaryLabelColor
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard lit else { return }
+        NSColor.selectedContentBackgroundColor.setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 1), xRadius: 4, yRadius: 4).fill()
+    }
+
+    override func mouseEntered(with event: NSEvent) { lit = true }
+    override func mouseExited(with event: NSEvent) { lit = false }
+    override func mouseUp(with event: NSEvent) { pick(entry.text) }
 }
