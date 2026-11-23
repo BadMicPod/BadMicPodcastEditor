@@ -316,6 +316,7 @@ enum MCPHandler {
         case "get_project": return "reading the timeline"
         case "list_looks": return "browsing looks"
         case "look_at_media": return on("looking at", asset())
+        case "note_media": return on("taking notes on", asset())
         case "analyze_media": return on("studying", asset())
         case "get_transcript": return on("reading what’s said in", asset())
         case "get_frame": return asset().map { "checking a frame of \($0)" } ?? "checking a frame"

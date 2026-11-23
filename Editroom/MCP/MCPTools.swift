@@ -17,7 +17,8 @@ enum MCPTools {
     over another on the same track overwrites what's underneath, as on the timeline. Start with \
     get_project and list_media; analyze_media finds a clip's best moments or a song's beats; \
     look_at_media shows you a clip or photo, and get_frame shows you the cut; search_media finds shots by what they \
-    show or what's said. Each edit is shown to the person with your own cursor and can be undone with history. \
+    show or what's said. After looking at a clip, save what you saw with note_media; list_media gives those notes \
+    back next time, so trust a clip's notes and look again only for an exact frame. Each edit is shown to the person with your own cursor and can be undone with history. \
     auto_edit builds a whole cut on its own, and export delivers it to a file (vertical, square or portrait too, at a \
     loudness target).
     """
@@ -44,7 +45,7 @@ enum MCPTools {
     static var definitions: [[String: Any]] {
         [
             tool("get_project", "Get project", "The sequence (size, frame rate, length), tracks, and every clip with its id, track, times, source, grade, sound and transition.", readOnly: true),
-            tool("list_media", "List media", "Everything in the library: id, name, kind (video, audio, image), length, size, frame rate.", readOnly: true),
+            tool("list_media", "List media", "Everything in the library: id, name, kind (video, audio, image), length, size, frame rate, what it shows, whether people talk in it, and notes saved from looking at it before.", readOnly: true),
             tool("import_media", "Import media", "Adds files to the library.", ["paths": ["type": "array", "items": ["type": "string"], "description": "Absolute file paths."]], required: ["paths"]),
             tool("download_media", "Download media", "Downloads one music or sound file you found online and adds it to the library, ready for add_clip. Give the direct link to the audio file (an .mp3, .m4a or .wav), not a web page. Only for music that's free to use; say where you found it and what its licence allows, which is noted beside the file.",
                  ["url": str("https link to the audio file itself."), "name": str("What to call it, like the track and artist."),
@@ -58,6 +59,9 @@ enum MCPTools {
                  ["asset_id": str("A library item's id."), "frames": ["type": "integer", "description": "How many frames from across a video (default 6, at most 12)."],
                   "times": ["type": "array", "items": ["type": "number"], "description": "Or exactly which times in the file to show, in seconds (at most 12)."]],
                  required: ["asset_id"], readOnly: true),
+            tool("note_media", "Note what's in media", "Saves what you saw in a library item after looking at it, for later edits: what happens and where (times in the file), the people, the place, the light, how steady, and its best and weakest moments. Two or three short lines. list_media hands it back as \"notes\", so it needn't be looked at again. Replaces any note it had; kept on this Mac, never in the project.",
+                 ["asset_id": str("A library item's id."), "notes": str("What's in it, with times, like \"0-3s girl in a high chair eating noodles; 3-8s close-up, laughing at the camera, best moment 5s; bright kitchen, handheld but steady.\"")],
+                 required: ["asset_id", "notes"]),
             tool("get_frame", "Get frame", "A picture of the cut at a time (default: the playhead), 640 pixels on its longer side.", ["time": num("Seconds.")], readOnly: true),
             tool("add_clip", "Add clip", "Drags a library item onto the timeline. A video with sound brings its audio, linked.",
                  ["asset_id": str("A library item's id."), "start": num("Where on the timeline (default: the end of the track)."),
@@ -204,7 +208,17 @@ enum MCPTools {
             guard let sheet = await ContactSheet.make(asset, frames: frames, around: times) else { throw MCPToolError("Couldn't look at \(asset.name).") }
             let note = asset.kind == .image ? "\(asset.name), a photo." :
                 "\(asset.name), \(round3(asset.duration))s long. Frames at " + sheet.times.map { String(format: "%.1fs", $0) }.joined(separator: ", ") + ", left to right, top to bottom."
-            return [["type": "image", "data": sheet.jpeg.base64EncodedString(), "mimeType": "image/jpeg"], ["type": "text", "text": note]]
+            let saved = MediaNotes.note(for: asset.path).map { " Its saved notes: \($0.text) Update them with note_media if you see more." }
+                ?? " Save what you see with note_media."
+            return [["type": "image", "data": sheet.jpeg.base64EncodedString(), "mimeType": "image/jpeg"], ["type": "text", "text": note + saved]]
+
+        case "note_media":
+            let asset = try assetArg(args, p)
+            guard let text = (args["notes"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+                throw MCPToolError("Give notes: what's in it, with times.")
+            }
+            MediaNotes.save(text, for: asset.path, by: client?.name)
+            return [["type": "text", "text": "Saved. list_media will show it with \(asset.name)."]]
 
         case "get_frame":
             guard !p.clips.isEmpty else { throw MCPToolError("The timeline is empty.") }
@@ -645,6 +659,7 @@ enum MCPTools {
             let shows = s.top(20).filter { !common.contains($0) }.prefix(8)
             if !shows.isEmpty { d["shows"] = Array(shows) }
         }
+        if let n = MediaNotes.note(for: a.path) { d["notes"] = n.text }
         if let t = media.transcript(a.id) {
             d["speech"] = !t.isEmpty
             if !t.isEmpty { d["says"] = String(t.text.prefix(120)) + (t.text.count > 120 ? "…" : "") }
