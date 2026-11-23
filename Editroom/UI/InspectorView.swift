@@ -8,6 +8,8 @@ struct InspectorView: View {
     @ObservedObject var model: EditorModel
     @State private var speedOrigin: [Clip]?
     @State private var rampOrigin: [Clip]?
+    /// Where the playhead was before a ramp dot's drag moved it to the dot; put back when the drag ends.
+    @State private var rampPlayhead: Double?
 
     private var selected: [Clip] {
         model.project.clips.filter { model.selection.contains($0.id) }
@@ -183,18 +185,34 @@ struct InspectorView: View {
                              inside: AnyView(RampButton(on: ramped) { toggleRamp(first, ids: ids) }))
                     // The ramp, while the clip has one (kept up mid-drag, even if a dot is pulled back out).
                     if ramped || rampOrigin != nil {
-                        SpeedRampGraph(clip: first, onEditing: { began in
+                        SpeedRampGraph(clip: first, fps: model.project.fps, onEditing: { began in
                             if began {
                                 rampOrigin = model.project.clips
                             } else {
                                 rampOrigin = nil
                                 model.commitLive()
+                                if let back = rampPlayhead {
+                                    rampPlayhead = nil
+                                    model.seek(to: back)
+                                }
                             }
-                        }, onChange: { shape in
+                        }, onChange: { shape, focus in
                             guard let origin = rampOrigin else { return }
                             let sticky = model.sticky
                             model.live(autoCommit: false) { p in
                                 p.clips = origin
+                                p.setRamp(ids: p.linked(ids), speed: shape.mid, points: (shape.p1, shape.p2, shape.p3, shape.p4),
+                                          start: shape.start, end: shape.end, sticky: sticky)
+                            }
+                            // The playhead and viewer follow the dot being dragged, to show the frame it's on
+                            // (never while playing, which would stop playback).
+                            if let focus, !model.isPlaying, let c = model.project.clips.first(where: { $0.id == first.id }) {
+                                if rampPlayhead == nil { rampPlayhead = model.playhead }
+                                model.scrub(to: SpeedRampGraph.time(of: focus, in: c))
+                            }
+                        }, onSet: { shape in
+                            let sticky = model.sticky
+                            model.mutate { p in
                                 p.setRamp(ids: p.linked(ids), speed: shape.mid, points: (shape.p1, shape.p2, shape.p3, shape.p4),
                                           start: shape.start, end: shape.end, sticky: sticky)
                             }
@@ -227,7 +245,9 @@ struct InspectorView: View {
             model.mutate { p in p.retime(ids: group, sticky: sticky) { $0.ramp = nil } }
         } else {
             let mid = abs(clip.speed - 1) < 0.001 ? 0.5 : clip.speed
-            model.mutate { p in p.setRamp(ids: group, speed: mid, points: (0.3, 0.4, 0.6, 0.7), start: 1, end: 1, sticky: sticky) }
+            // In the shape last picked on the graph: easing in and back out, or just in (2-point).
+            let points = SpeedRampGraph.twoPoint ? (0.3, 0.6, 1.0, 1.0) : (0.3, 0.4, 0.6, 0.7)
+            model.mutate { p in p.setRamp(ids: group, speed: mid, points: points, start: 1, end: 1, sticky: sticky) }
         }
     }
 
@@ -1242,6 +1262,10 @@ private struct RampGlyph: SwiftUI.Shape {
 /// the slider). An inner dot pulled in from either edge makes a ramp; its outer dot then slides left or
 /// right to say where the ramp begins, and up or down for the speed before (or after) it. Across the graph
 /// is the clip's footage, which stays put while the clip's length changes.
+///
+/// Two shapes, picked under the graph: 4-point eases into the speed and back out; 2-point eases from one
+/// speed to another and holds it to the end (its right dot sets both where the ease ends and that speed).
+/// While a dot is held, its speed and timecode show beside it, and the playhead goes to its frame.
 private struct SpeedRampGraph: View {
     struct Shape {
         var mid: Double
@@ -1251,18 +1275,37 @@ private struct SpeedRampGraph: View {
         var end: Double
         var hasIn: Bool { p2 - p1 > 0.001 }
         var hasOut: Bool { p4 - p3 > 0.001 }
+        /// Eases in and holds: the 2-point shape.
+        var isTwoPoint: Bool { hasIn && !hasOut }
     }
 
     let clip: Clip
+    let fps: Double
     let onEditing: (Bool) -> Void
-    let onChange: (Shape) -> Void
+    /// The shape mid-drag, and the fraction across the footage of the dot being dragged (nil for the flat middle).
+    let onChange: (Shape, Double?) -> Void
+    /// A shape set in one go (the 2-point / 4-point buttons).
+    let onSet: (Shape) -> Void
 
     private enum Part { case inStart, inEnd, outStart, outEnd, line }
     @State private var dragging: Part?
     @State private var drawn: Shape?
+    /// The shape the graph was in when the drag began, kept until it ends (a dot pulled away mid-drag
+    /// doesn't switch it).
+    @State private var draggingTwo = false
 
     private static let lo = 0.1, hi = 10.0
     private static let height: CGFloat = 76
+
+    /// The shape last picked, which new ramps start in.
+    private static let twoPointKey = "speedRampTwoPoint"
+    static var twoPoint: Bool { UserDefaults.standard.bool(forKey: twoPointKey) }
+
+    /// Timeline time of a point `f` of the way across a clip's footage.
+    static func time(of f: Double, in clip: Clip) -> Double {
+        let s0 = clip.sourceStart
+        return clip.start + clip.timelineSpan(from: s0, to: s0 + clip.sourceLength * min(1, max(0, f)))
+    }
 
     /// The clip's ramp as the graph draws it.
     private var shape: Shape {
@@ -1284,6 +1327,8 @@ private struct SpeedRampGraph: View {
         return out
     }
 
+    private func two(_ s: Shape) -> Bool { dragging != nil ? draggingTwo : s.isTwoPoint }
+
     private func y(_ v: Double, _ h: CGFloat) -> CGFloat {
         let n = (log(min(max(v, Self.lo), Self.hi)) - log(Self.lo)) / (log(Self.hi) - log(Self.lo))
         return 6 + (h - 12) * CGFloat(1 - n)
@@ -1300,7 +1345,9 @@ private struct SpeedRampGraph: View {
     private func points(_ s: Shape, w: CGFloat, h: CGFloat) -> [(Part, CGPoint)] {
         let midY = y(s.mid, h)
         let x = { (f: Double) in min(max(5, CGFloat(f) * w), w - 5) }
-        var out: [(Part, CGPoint)] = [(.inEnd, CGPoint(x: x(s.p2), y: midY)), (.outStart, CGPoint(x: x(s.p3), y: midY))]
+        var out: [(Part, CGPoint)] = [(.inEnd, CGPoint(x: x(s.p2), y: midY))]
+        // 2-point has no way back out, so no dot to start one.
+        if !two(s) { out.append((.outStart, CGPoint(x: x(s.p3), y: midY))) }
         if s.hasIn { out.append((.inStart, CGPoint(x: x(s.p1), y: y(s.start, h)))) }
         if s.hasOut { out.append((.outEnd, CGPoint(x: x(s.p4), y: y(s.end, h)))) }
         return out
@@ -1308,7 +1355,7 @@ private struct SpeedRampGraph: View {
 
     var body: some View {
         let s = drawn ?? shape
-        VStack(spacing: 6) {
+        VStack(spacing: 5) {
             GeometryReader { geo in
                 let w = geo.size.width, h = geo.size.height
                 ZStack(alignment: .topLeading) {
@@ -1326,21 +1373,42 @@ private struct SpeedRampGraph: View {
                         area.closeSubpath()
                         ctx.fill(area, with: .color(Theme.ink.opacity(0.05)))
                         ctx.stroke(line, with: .color(Theme.text), lineWidth: 1.5)
+                        // The held dot's guide down to its timecode.
+                        if let part = dragging, part != .line {
+                            let p = anchor(part, s, w: w, h: h)
+                            var guide = Path()
+                            guide.move(to: CGPoint(x: p.x, y: p.y + 7))
+                            guide.addLine(to: CGPoint(x: p.x, y: h - 7))
+                            ctx.stroke(guide, with: .color(Theme.text.opacity(0.35)), style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+                        }
                     }
-                    ForEach(points(s, w: w, h: h), id: \.0) { _, p in dot(at: p) }
+                    ForEach(points(s, w: w, h: h), id: \.0) { part, p in dot(at: p, held: part == dragging) }
                     if let part = dragging {
-                        let label = tip(part, s, w: w, h: h)
-                        Text(label.text)
+                        let p = anchor(part, s, w: w, h: h)
+                        // The speed beside the dot, on whichever side has room.
+                        let pct = "\(Int((speedAt(part, s) * 100).rounded()))%"
+                        Text(pct)
                             .font(Theme.mono(10.5))
                             .foregroundStyle(Theme.text)
                             .fixedSize()
-                            .position(x: min(max(label.at.x, 22), w - 22), y: label.at.y < 18 ? label.at.y + 12 : label.at.y - 11)
+                            .position(x: p.x > w - 44 ? p.x - 26 : p.x + 26, y: p.y < 16 ? p.y + 12 : p.y - 11)
+                        if part != .line {
+                            Text(Timecode.string(Self.time(of: fraction(part, s), in: clip), fps: fps))
+                                .font(Theme.mono(10.5))
+                                .foregroundStyle(Theme.text)
+                                .fixedSize()
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(RoundedRectangle(cornerRadius: 3).fill(Theme.raised))
+                                .position(x: min(max(p.x, 40), w - 40), y: h - 1)
+                        }
                     }
                 }
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0).onChanged { g in
                     if dragging == nil {
                         guard let part = hit(g.startLocation, s: s, w: w, h: h) else { return }
+                        draggingTwo = s.isTwoPoint
                         dragging = part
                         drawn = s
                         onEditing(true)
@@ -1355,6 +1423,8 @@ private struct SpeedRampGraph: View {
                         let had = d.hasIn
                         d.p2 = min(max(f, d.p1), d.p3)
                         if !d.hasIn { d.p1 = d.p2; d.start = d.mid } else if !had { d.p1 = 0; d.start = 1 }
+                        // 2-point: the right dot is also the speed it eases to.
+                        if draggingTwo { d.mid = speed(p.y, h) }
                     case .outStart:
                         let had = d.hasOut
                         d.p3 = max(min(f, d.p4), d.p2)
@@ -1373,7 +1443,7 @@ private struct SpeedRampGraph: View {
                     if !d.hasIn { d.p1 = 0; d.p2 = 0; d.start = d.mid }
                     if !d.hasOut { d.p3 = 1; d.p4 = 1; d.end = d.mid }
                     drawn = d
-                    onChange(d)
+                    onChange(d, part == .line ? nil : fraction(part, d))
                 }.onEnded { _ in
                     guard dragging != nil else { return }
                     dragging = nil
@@ -1384,7 +1454,8 @@ private struct SpeedRampGraph: View {
                     guard dragging == nil else { return }
                     if case .active(let p) = phase {
                         switch hit(p, s: s, w: w, h: h) {
-                        case .inEnd, .outStart: NSCursor.resizeLeftRight.set()
+                        case .inEnd: (two(s) ? NSCursor.openHand : NSCursor.resizeLeftRight).set()
+                        case .outStart: NSCursor.resizeLeftRight.set()
                         case .inStart, .outEnd: NSCursor.openHand.set()
                         case .line: NSCursor.resizeUpDown.set()
                         case nil: NSCursor.arrow.set()
@@ -1395,27 +1466,96 @@ private struct SpeedRampGraph: View {
                 }
             }
             .frame(height: Self.height)
-            HStack {
-                Text(String(format: "%.1fs footage", clip.sourceLength))
+            HStack(spacing: 0) {
+                modes(s)
                 Spacer()
-                Text(String(format: "plays in %.1fs", clip.duration))
+                // How long the clip plays, now that the ramp has changed it.
+                Text(String(format: "%.1fs", clip.duration))
+                    .font(Theme.mono(10.5))
+                    .foregroundStyle(Theme.textFaint)
+                    .help("How long the clip plays")
             }
-            .font(Theme.mono(10.5))
-            .foregroundStyle(Theme.textFaint)
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
     }
 
-    /// The speed shown while dragging, beside what's dragged.
-    private func tip(_ part: Part, _ s: Shape, w: CGFloat, h: CGFloat) -> (text: String, at: CGPoint) {
-        let pct = { (v: Double) in "\(Int((v * 100).rounded()))%" }
+    /// The 2-point and 4-point buttons.
+    private func modes(_ s: Shape) -> some View {
+        let isTwo = two(s)
+        return HStack(spacing: 1.5) {
+            ForEach([true, false], id: \.self) { twoPoint in
+                Button { pick(twoPoint: twoPoint, from: s) } label: {
+                    RampModeGlyph(twoPoint: twoPoint)
+                        .stroke(Theme.text.opacity(isTwo == twoPoint ? 1 : 0.55), lineWidth: 1.3)
+                        .frame(width: 12, height: 7)
+                        .frame(width: 20, height: 13)
+                        .background(RoundedRectangle(cornerRadius: 3).fill(isTwo == twoPoint ? Theme.ink.opacity(0.14) : .clear))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(twoPoint ? "2-point: ease from one speed to another" : "4-point: ease into the speed and back out")
+            }
+        }
+        .padding(1.5)
+        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.bg))
+    }
+
+    /// Switches shape, keeping as much of the ramp as fits the other one. Remembered for new ramps.
+    private func pick(twoPoint: Bool, from s: Shape) {
+        UserDefaults.standard.set(twoPoint, forKey: Self.twoPointKey)
+        guard twoPoint != s.isTwoPoint else { return }
+        var d = s
+        if twoPoint {
+            if d.hasIn {
+                // Drop the way back out.
+                d.p3 = 1; d.p4 = 1; d.end = d.mid
+            } else {
+                // Only a way out: it becomes the one ease, from the speed to the end speed.
+                d = Shape(mid: s.end, p1: s.p3, p2: s.p4, p3: 1, p4: 1, start: s.mid, end: s.end)
+            }
+        } else {
+            // Ease back to the starting speed, in the room after the first ease (made if there's little).
+            if d.p2 > 0.6 {
+                let k = 0.6 / d.p2
+                d.p1 *= k; d.p2 *= k
+            }
+            let room = 1 - d.p2
+            d.p3 = d.p2 + room * 0.4
+            d.p4 = d.p2 + room * 0.7
+            d.end = d.start
+        }
+        onSet(d)
+    }
+
+    /// Where a part's label hangs.
+    private func anchor(_ part: Part, _ s: Shape, w: CGFloat, h: CGFloat) -> CGPoint {
+        let x = { (f: Double) in min(max(5, CGFloat(f) * w), w - 5) }
         switch part {
-        case .inStart: return (pct(s.start), CGPoint(x: CGFloat(s.p1) * w, y: y(s.start, h)))
-        case .outEnd: return (pct(s.end), CGPoint(x: CGFloat(s.p4) * w, y: y(s.end, h)))
-        case .inEnd: return (pct(s.mid), CGPoint(x: CGFloat(s.p2) * w, y: y(s.mid, h)))
-        case .outStart: return (pct(s.mid), CGPoint(x: CGFloat(s.p3) * w, y: y(s.mid, h)))
-        case .line: return (pct(s.mid), CGPoint(x: CGFloat(s.p2 + s.p3) / 2 * w, y: y(s.mid, h)))
+        case .inStart: return CGPoint(x: x(s.p1), y: y(s.start, h))
+        case .outEnd: return CGPoint(x: x(s.p4), y: y(s.end, h))
+        case .inEnd: return CGPoint(x: x(s.p2), y: y(s.mid, h))
+        case .outStart: return CGPoint(x: x(s.p3), y: y(s.mid, h))
+        case .line: return CGPoint(x: CGFloat(s.p2 + s.p3) / 2 * w, y: y(s.mid, h))
+        }
+    }
+
+    /// How far across the footage a dot is.
+    private func fraction(_ part: Part, _ s: Shape) -> Double {
+        switch part {
+        case .inStart: s.p1
+        case .inEnd: s.p2
+        case .outStart: s.p3
+        case .outEnd: s.p4
+        case .line: (s.p2 + s.p3) / 2
+        }
+    }
+
+    private func speedAt(_ part: Part, _ s: Shape) -> Double {
+        switch part {
+        case .inStart: s.start
+        case .outEnd: s.end
+        case .inEnd, .outStart, .line: s.mid
         }
     }
 
@@ -1454,7 +1594,7 @@ private struct SpeedRampGraph: View {
         }
         if let near {
             // Inner dots on top of each other: whichever side the drag is toward.
-            if near.part == Part.inEnd || near.part == Part.outStart {
+            if !two(s), near.part == Part.inEnd || near.part == Part.outStart {
                 let x2 = CGFloat(s.p2) * w, x3 = CGFloat(s.p3) * w
                 if abs(x2 - x3) < 10 { return p.x < (x2 + x3) / 2 ? .inEnd : .outStart }
             }
@@ -1465,11 +1605,35 @@ private struct SpeedRampGraph: View {
         return nil
     }
 
-    private func dot(at p: CGPoint) -> some View {
-        Circle().fill(Theme.text).frame(width: 10, height: 10)
+    private func dot(at p: CGPoint, held: Bool) -> some View {
+        let size: CGFloat = held ? 12 : 10
+        return Circle().fill(Theme.text).frame(width: size, height: size)
             .overlay(Circle().strokeBorder(Theme.field, lineWidth: 2.5).padding(-2.5))
             .position(p)
             .allowsHitTesting(false)
+    }
+}
+
+/// The ramp shapes on the graph's buttons: one ease up (2-point), or up and back down (4-point).
+private struct RampModeGlyph: SwiftUI.Shape {
+    let twoPoint: Bool
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        let lo = r.maxY, hi = r.minY, w = r.width
+        let at = { (f: CGFloat) in r.minX + w * f }
+        p.move(to: CGPoint(x: r.minX, y: lo))
+        if twoPoint {
+            p.addLine(to: CGPoint(x: at(0.25), y: lo))
+            p.addCurve(to: CGPoint(x: at(0.7), y: hi), control1: CGPoint(x: at(0.5), y: lo), control2: CGPoint(x: at(0.45), y: hi))
+            p.addLine(to: CGPoint(x: r.maxX, y: hi))
+        } else {
+            p.addLine(to: CGPoint(x: at(0.12), y: lo))
+            p.addCurve(to: CGPoint(x: at(0.4), y: hi), control1: CGPoint(x: at(0.28), y: lo), control2: CGPoint(x: at(0.24), y: hi))
+            p.addLine(to: CGPoint(x: at(0.6), y: hi))
+            p.addCurve(to: CGPoint(x: at(0.88), y: lo), control1: CGPoint(x: at(0.76), y: hi), control2: CGPoint(x: at(0.72), y: lo))
+            p.addLine(to: CGPoint(x: r.maxX, y: lo))
+        }
+        return p
     }
 }
 
