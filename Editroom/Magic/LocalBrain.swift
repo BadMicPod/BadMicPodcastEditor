@@ -168,7 +168,7 @@ enum LocalBrain {
                 "new video", "new cut", "new edit", "create ", "montage"].contains { t.contains($0) }
     }
 
-    /// The title they asked for, if they did: their quoted words, or "" for one made from the dates.
+    /// The title they asked for, if they did: their quoted words, or "" for one with placeholder words to type over.
     /// No title unless they ask (a title over every cut gets in the way more often than it helps).
     static func titleAsked(_ request: String) -> String? {
         let t = request.lowercased()
