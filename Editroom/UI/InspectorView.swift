@@ -130,13 +130,13 @@ struct InspectorView: View {
     /// A caption colour: its well, and for a part that can be off (highlight, outline) a chip to turn it on.
     private func captionColorRow(_ label: String, on: Bool?, color: RGBA, toggle: ((inout CaptionStyle) -> Void)? = nil,
                                  set: @escaping (inout CaptionStyle, RGBA) -> Void) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.system(size: 11.5))
+                .foregroundStyle(on == false ? Theme.textFaint : Theme.textDim)
+            // Highlight and outline: an eye to show or hide them, as on the tracks.
             if let on, let toggle {
-                Chip(label: label, active: on) { model.setCaptionStyle(toggle) }
-            } else {
-                Text(label)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Theme.textDim)
+                CaptionEye(on: on) { model.setCaptionStyle(toggle) }
             }
             Spacer()
             ColorField(color: color) { c in model.setCaptionStyle(live: true, settles: true) { set(&$0, c) } }
@@ -1733,6 +1733,26 @@ extension View {
     }
 }
 
+
+/// Shows or hides part of the captions' look: a bare eye, brighter on hover.
+private struct CaptionEye: View {
+    let on: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            // The tracks' eye (MiniKey), without its box.
+            Glyph(symbol: on ? "eye" : "eye.slash", size: 9.5, weight: .semibold)
+                .foregroundStyle(hovering ? Theme.text : (on ? Theme.textDim : Theme.textFaint))
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(on ? "Hide" : "Show")
+    }
+}
 
 /// A caption's words, retyped in place: set on Return or when the field is left; Escape puts them back.
 /// Double-clicking a caption on the timeline puts the cursor here.
