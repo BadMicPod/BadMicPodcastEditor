@@ -1265,7 +1265,8 @@ private struct RampGlyph: SwiftUI.Shape {
 ///
 /// Two shapes, picked under the graph: 4-point eases into the speed and back out; 2-point eases from one
 /// speed to another and holds it to the end (its right dot sets both where the ease ends and that speed).
-/// While a dot is held, its speed and timecode show beside it, and the playhead goes to its frame.
+/// While a dot is held, its speed shows beside it, its timecode takes the clip length's place under the graph,
+/// and the playhead goes to its frame.
 private struct SpeedRampGraph: View {
     struct Shape {
         var mid: Double
@@ -1297,9 +1298,9 @@ private struct SpeedRampGraph: View {
     private static let lo = 0.1, hi = 10.0
     private static let height: CGFloat = 76
 
-    /// The shape last picked, which new ramps start in.
+    /// The shape last picked, which new ramps start in (2-point until another is picked).
     private static let twoPointKey = "speedRampTwoPoint"
-    static var twoPoint: Bool { UserDefaults.standard.bool(forKey: twoPointKey) }
+    static var twoPoint: Bool { UserDefaults.standard.object(forKey: twoPointKey) as? Bool ?? true }
 
     /// Timeline time of a point `f` of the way across a clip's footage.
     static func time(of f: Double, in clip: Clip) -> Double {
@@ -1373,14 +1374,6 @@ private struct SpeedRampGraph: View {
                         area.closeSubpath()
                         ctx.fill(area, with: .color(Theme.ink.opacity(0.05)))
                         ctx.stroke(line, with: .color(Theme.text), lineWidth: 1.5)
-                        // The held dot's guide down to its timecode.
-                        if let part = dragging, part != .line {
-                            let p = anchor(part, s, w: w, h: h)
-                            var guide = Path()
-                            guide.move(to: CGPoint(x: p.x, y: p.y + 7))
-                            guide.addLine(to: CGPoint(x: p.x, y: h - 7))
-                            ctx.stroke(guide, with: .color(Theme.text.opacity(0.35)), style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
-                        }
                     }
                     ForEach(points(s, w: w, h: h), id: \.0) { part, p in dot(at: p, held: part == dragging) }
                     if let part = dragging {
@@ -1392,16 +1385,6 @@ private struct SpeedRampGraph: View {
                             .foregroundStyle(Theme.text)
                             .fixedSize()
                             .position(x: p.x > w - 44 ? p.x - 26 : p.x + 26, y: p.y < 16 ? p.y + 12 : p.y - 11)
-                        if part != .line {
-                            Text(Timecode.string(Self.time(of: fraction(part, s), in: clip), fps: fps))
-                                .font(Theme.mono(10.5))
-                                .foregroundStyle(Theme.text)
-                                .fixedSize()
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(RoundedRectangle(cornerRadius: 3).fill(Theme.raised))
-                                .position(x: min(max(p.x, 40), w - 40), y: h - 1)
-                        }
                     }
                 }
                 .contentShape(Rectangle())
@@ -1469,11 +1452,17 @@ private struct SpeedRampGraph: View {
             HStack(spacing: 0) {
                 modes(s)
                 Spacer()
-                // How long the clip plays, now that the ramp has changed it.
-                Text(String(format: "%.1fs", clip.duration))
-                    .font(Theme.mono(10.5))
-                    .foregroundStyle(Theme.textFaint)
-                    .help("How long the clip plays")
+                // While a dot is held, the timecode it's at; otherwise how long the clip plays with its ramp.
+                if let part = dragging, part != .line {
+                    Text(Timecode.string(Self.time(of: fraction(part, s), in: clip), fps: fps))
+                        .font(Theme.mono(10.5))
+                        .foregroundStyle(Theme.text)
+                } else {
+                    Text(String(format: "%.1fs", clip.duration))
+                        .font(Theme.mono(10.5))
+                        .foregroundStyle(Theme.textFaint)
+                        .help("How long the clip plays")
+                }
             }
         }
         .padding(8)
@@ -1528,7 +1517,7 @@ private struct SpeedRampGraph: View {
         onSet(d)
     }
 
-    /// Where a part's label hangs.
+    /// Where a part's speed label hangs.
     private func anchor(_ part: Part, _ s: Shape, w: CGFloat, h: CGFloat) -> CGPoint {
         let x = { (f: Double) in min(max(5, CGFloat(f) * w), w - 5) }
         switch part {
