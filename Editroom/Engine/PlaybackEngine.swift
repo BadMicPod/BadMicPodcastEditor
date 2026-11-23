@@ -19,18 +19,10 @@ final class PlaybackEngine {
     var isEmpty: Bool { player.currentItem == nil }
 
     init() {
-        for p in [player, spare] {
-            p.automaticallyWaitsToMinimizeStalling = false
-            p.actionAtItemEnd = .pause
-        }
+        for p in [player, spare] { Self.configure(p) }
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] note in
             MainActor.assumeIsolated {
                 guard let self, (note.object as? AVPlayerItem) === self.player.currentItem else { return }
-                // A hand-over: the old edit was set to end where the new one starts.
-                if self.handingOff, self.swapAt != nil {
-                    self.swapToSpare()
-                    return
-                }
                 // Looping with the spare ready: it takes over, with no seek.
                 if self.loopsItself {
                     if self.swapAt == nil { self.startSpare(in: 0) }
@@ -40,6 +32,11 @@ final class PlaybackEngine {
                 self.onEnded?()
             }
         }
+    }
+
+    private static func configure(_ p: AVPlayer) {
+        p.automaticallyWaitsToMinimizeStalling = false
+        p.actionAtItemEnd = .pause
     }
 
     var isPlaying: Bool { player.rate != 0 }
@@ -108,6 +105,7 @@ final class PlaybackEngine {
     /// The new edit becomes the player's at once, at `time` (a seek, so a moment's pause while playing).
     private func install(_ item: AVPlayerItem, output: AVPlayerItemVideoOutput, signature: Int, at time: Double) {
         let wasPlaying = isPlaying
+        endFade()
         dropSpare()
         player.replaceCurrentItem(with: item)
         videoOutput = output
@@ -125,6 +123,7 @@ final class PlaybackEngine {
 
     func pause() {
         player.pause()
+        endFade()
         settleHandoff()
         cancelSwap()
     }
@@ -135,6 +134,7 @@ final class PlaybackEngine {
     /// footage (a 4K screen recording, a phone clip) takes long enough to fall seconds behind a quick
     /// drag. The exact frame follows as soon as the scrub rests (`seek(to:)` again, not fast).
     func seek(to time: Double, fast: Bool = false) {
+        endFade()
         settleHandoff()
         targetTime = clamp(time)
         exactWanted = !fast
@@ -197,10 +197,7 @@ final class PlaybackEngine {
     var loopSpan: (start: Double, end: Double)? {
         didSet {
             guard loopSpan?.start != oldValue?.start || loopSpan?.end != oldValue?.end else { return }
-            // (A hand-over that's set to start keeps the old edit's end where the new one takes over.)
-            if !(handingOff && swapAt != nil) {
-                player.currentItem?.forwardPlaybackEndTime = loopSpan.map { CompositionBuilder.time($0.end) } ?? .invalid
-            }
+            player.currentItem?.forwardPlaybackEndTime = loopSpan.map { CompositionBuilder.time($0.end) } ?? .invalid
             if handingOff {
                 spare.currentItem?.forwardPlaybackEndTime = loopSpan.map { CompositionBuilder.time($0.end) } ?? .invalid
                 return
@@ -252,20 +249,62 @@ final class PlaybackEngine {
         handingOff = false
         if !handover { wrapped = true }
         let old = player, oldOutput = videoOutput, oldSignature = signature
-        if handover { signature = spareSignature }
+        isSeeking = false
+        if handover {
+            // The picture changes now; the old edit keeps playing a moment longer for its sound.
+            signature = spareSignature
+            player = spare
+            videoOutput = spareOutput
+            spare = AVPlayer()
+            Self.configure(spare)
+            spareOutput = nil
+            spareSignature = nil
+            crossfade(from: old, to: player)
+            if loopSpan != nil { primeSpare() }
+            return
+        }
         player = spare
         videoOutput = spareOutput
         spare = old
         spareOutput = oldOutput
         spareSignature = oldSignature
         old.pause()
-        isSeeking = false
-        if handover {
-            // The old edit is no use to loop with.
-            if loopSpan == nil { dropSpare() } else { primeSpare() }
-        } else {
-            primeSpare()
+        primeSpare()
+    }
+
+    /// The edit that was playing before a hand-over, still heard until the new one's sound comes in.
+    private var fading: AVPlayer?
+    private var fadeGeneration = 0
+
+    /// Both players are at the same moment of the same sound, so passing it from one to the other is
+    /// silent: no gap while the new one's sound starts, and no doubling.
+    private func crossfade(from old: AVPlayer, to new: AVPlayer) {
+        endFade()
+        fading = old
+        fadeGeneration += 1
+        let generation = fadeGeneration
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            for step in 1...8 {
+                guard let self, generation == self.fadeGeneration else { return }
+                let f = Float(step) / 8
+                new.volume = f
+                old.volume = 1 - f
+                try? await Task.sleep(nanoseconds: 10_000_000)
+            }
+            guard let self, generation == self.fadeGeneration else { return }
+            self.endFade()
         }
+    }
+
+    /// Any crossfade finishes at once: the old edit stops, and the player is at full volume.
+    private func endFade() {
+        fadeGeneration += 1
+        player.volume = 1
+        guard let old = fading else { return }
+        fading = nil
+        old.pause()
+        old.replaceCurrentItem(with: nil)
     }
 
     // MARK: Seamless edits while playing
@@ -321,9 +360,10 @@ final class PlaybackEngine {
                 let at = self.player.currentItem?.timebase.map { CMSyncConvertTime(CompositionBuilder.time(target), from: $0, to: host) }
                     ?? CMTimeAdd(CMClockGetTime(host), CMTime(seconds: target - self.player.currentTime().seconds, preferredTimescale: 1_000_000_000))
                 if at.isNumeric, at.seconds - CMClockGetTime(host).seconds > 0.01 {
+                    // It starts silent: its sound takes a moment longer than its picture to get going, so
+                    // the old one's carries on until then and the two cross over (see `crossfade`).
+                    next.volume = 0
                     next.setRate(1, time: CompositionBuilder.time(target), atHostTime: at)
-                    // The old one ends at that same frame, rather than playing on underneath until the swap.
-                    self.player.currentItem?.forwardPlaybackEndTime = CompositionBuilder.time(target)
                     self.swapAt = at.seconds
                     return
                 }
@@ -343,6 +383,7 @@ final class PlaybackEngine {
         priming += 1
         swapAt = nil
         spare.pause()
+        spare.volume = 1
         spare.replaceCurrentItem(with: nil)
         spareOutput = nil
         spareSignature = nil
@@ -352,7 +393,7 @@ final class PlaybackEngine {
     /// The edit waiting to take over is out of date: it's dropped, and the player carries on as it was.
     private func abandonHandoff() {
         guard handingOff else { return }
-        player.currentItem?.forwardPlaybackEndTime = loopSpan.map { CompositionBuilder.time($0.end) } ?? .invalid
+        spare.volume = 1
         handingOff = false
         swapAt = nil
         dropSpare()
