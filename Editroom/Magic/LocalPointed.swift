@@ -28,7 +28,9 @@ enum LocalPointed {
         let playhead = mentions.contains(.playhead) || says(["playhead"])
         if let moved = reorder(request: request, project: p) { return moved }
         let atPlayhead = mentions.contains(.playhead) || says(["playhead", "right here", "at this point"])
-        if let added = addShown(request: request, recipe: recipe, project: p, at: atPlayhead ? ptr.playhead : nil) { return added }
+        // Nothing on the timeline: it goes at the playhead, wherever that is.
+        let empty = !p.clips.contains { $0.kind == .video || $0.kind == .image }
+        if let added = addShown(request: request, recipe: recipe, project: p, at: atPlayhead || empty ? ptr.playhead : nil) { return added }
         guard selection || range || playhead else { return nil }
 
         let remove = says(["remove", "delete", "take out", "take it out", "take them out", "get rid", "cut out", "cut it", "cut them", "drop",
@@ -195,7 +197,9 @@ extension LocalPointed {
         if playhead == nil, p.clips.contains(where: { $0.assetID == id }) {
             return Outcome(said: "\(asset.name) is already in your edit.")
         }
-        let length = frames(min(3, asset.kind == .image ? 3 : asset.duration))
+        // As long as they said ("add a 5 second clip of…"), or 3 seconds.
+        let wanted = recipe.seconds.map { max(0.5, $0) } ?? 3
+        let length = frames(asset.kind == .image ? wanted : min(wanted, asset.duration))
         // The edit's track: the one under the playhead, else the last clip's, else the first one free.
         let at: Double
         let track: UUID
@@ -241,9 +245,9 @@ extension LocalPointed {
             if !later.isEmpty { edits.append(.move(later, from: at, to: at + length, tracks: [:])) }
         }
         edits.append(.place(group, asset: id))
-        let whereSaid = playhead == nil ? "at the end" : "at the playhead"
+        let whereSaid = playhead == nil ? "at the end" : p.clips.isEmpty ? "" : "at the playhead"
         return Outcome(plan: MCPDraft.plan(base: p, edits: edits),
-                       said: "Added a \(Int(length.rounded()))-second shot of " + (recipe.asked.isEmpty ? asset.name : "the \(recipe.asked) from \(asset.name)") + " \(whereSaid).")
+                       said: "Added a \(Int(length.rounded()))-second shot of " + (recipe.asked.isEmpty ? asset.name : "the \(recipe.asked) from \(asset.name)") + (whereSaid.isEmpty ? "." : " \(whereSaid)."))
     }
 
     static func reorder(request: String, project p: Project) -> Outcome? {
