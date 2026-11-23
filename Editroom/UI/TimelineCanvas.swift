@@ -72,7 +72,7 @@ final class TimelineCanvas: NSView {
         case trim(grabbed: Clip, left: Bool, time: Double, originals: [Clip])
         case fade(id: UUID, fadeIn: Bool)
         case gain(id: UUID, startY: CGFloat, startNorm: CGFloat, height: CGFloat)
-        case marquee(origin: CGPoint, base: Set<UUID>)
+        case marquee(origin: CGPoint, base: Set<UUID>, captionBase: Set<String>)
         /// Dragging out a box on the caption track: picks the captions it touches.
         case captionMarquee(origin: CGPoint, base: Set<String>)
         /// A marker's flag: a click opens its panel, a drag moves it.
@@ -482,7 +482,8 @@ final class TimelineCanvas: NSView {
 
         guard let h = hit(at: p) else {
             if !extend { model.selection = []; model.releaseCaptions() }
-            drag = .marquee(origin: CGPoint(x: p.x + view.scrollX, y: p.y + view.scrollY), base: model.selection)
+            drag = .marquee(origin: CGPoint(x: p.x + view.scrollX, y: p.y + view.scrollY), base: model.selection,
+                            captionBase: extend ? model.captionSelection : [])
             return
         }
 
@@ -584,7 +585,7 @@ final class TimelineCanvas: NSView {
             model.setRangeEdgeLive(isIn: isIn, to: snapped)
             scrubReadout = snapped
             needsDisplay = true
-        case .marquee(let origin, let base):
+        case .marquee(let origin, let base, let captionBase):
             let current = CGPoint(x: p.x + view.scrollX, y: p.y + view.scrollY)
             let content = CGRect(x: min(origin.x, current.x), y: min(origin.y, current.y),
                                  width: abs(origin.x - current.x), height: abs(origin.y - current.y))
@@ -596,7 +597,8 @@ final class TimelineCanvas: NSView {
             }
             ids = model.project.unlocked(model.project.linked(ids))
             // A box drawn up over the caption track, touching no clips, picks the captions in it.
-            let captions = Set(model.captionBlocks.filter { captionRect($0)?.intersects(r) == true }.map(\.id))
+            let boxed = Set(model.captionBlocks.filter { captionRect($0)?.intersects(r) == true }.map(\.id))
+            let captions = boxed.isEmpty ? boxed : boxed.union(captionBase)
             if ids == base, !captions.isEmpty {
                 if captions != model.captionSelection { model.selectCaptions(captions) }
             } else {
