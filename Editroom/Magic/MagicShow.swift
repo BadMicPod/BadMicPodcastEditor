@@ -1186,8 +1186,8 @@ final class MagicShow: NSObject {
 
     // MARK: Frames
 
-    /// An AI's edit is played by one cursor, at twice the swarm's pace (one cursor at swarm speed drags).
-    static let agentSpeed = 2.0
+    /// An AI's edit is played by one cursor, at four times the swarm's pace (one cursor at swarm speed drags).
+    static let agentSpeed = 4.0
 
     private var now: Double {
         let r = (CACurrentMediaTime() - t0) * (agentMode ? Self.agentSpeed : 1)
