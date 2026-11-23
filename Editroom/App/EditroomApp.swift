@@ -135,6 +135,14 @@ enum AboutPanel {
         add("LGPL 2.1", link: "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html")
         NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
         NSApp.activate()
+        // Links in the text's own colour (white in Dark, black in Light), underlined, not the system blue.
+        func textViews(_ view: NSView) -> [NSTextView] { view.subviews.flatMap { ($0 as? NSTextView).map { [$0] } ?? textViews($0) } }
+        for window in NSApp.windows {
+            for text in textViews(window.contentView ?? NSView()) where text.string == credits.string {
+                text.linkTextAttributes = [.foregroundColor: NSColor.labelColor, .underlineStyle: NSUnderlineStyle.single.rawValue,
+                                           .cursor: NSCursor.pointingHand]
+            }
+        }
     }
 }
 
