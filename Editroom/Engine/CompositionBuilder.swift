@@ -51,8 +51,12 @@ enum CompositionBuilder {
     @MainActor
     /// With `reframe`, the sequence is scaled to cover `renderSize` and cropped around that point
     /// (0...1 across and down), for outputs of a different shape.
+    /// With `keepAllTracks` (the player), hidden and silent tracks stay in the composition, left out of the picture
+    /// and at no volume, so hiding, muting or soloing one changes only the mix and the layers: the
+    /// player takes that as it plays, with no new item and no pause.
     static func build(project: Project, media: MediaStore, renderSize: CGSize,
-                      includeVideo: Bool = true, includeAudio: Bool = true, reframe: CGPoint? = nil) -> BuiltTimeline? {
+                      includeVideo: Bool = true, includeAudio: Bool = true, reframe: CGPoint? = nil,
+                      keepAllTracks: Bool = false) -> BuiltTimeline? {
         // The sequence is laid out on `canvas`, then `offset` picks the output's window from it.
         var canvas = renderSize
         var offset = CGPoint.zero
@@ -87,8 +91,16 @@ enum CompositionBuilder {
         let frame = CGRect(origin: .zero, size: canvas)
 
         if includeVideo {
-            for track in project.videoTracks where !track.hidden {
+            for track in project.videoTracks where keepAllTracks || !track.hidden {
                 hasher.combine(track.id)
+                let layersBefore = layers.count, tracksBefore = requiredTracks.count
+                defer {
+                    // A hidden track keeps its place in the composition but adds nothing to the picture.
+                    if track.hidden {
+                        layers.removeSubrange(layersBefore...)
+                        requiredTracks.removeSubrange(tracksBefore...)
+                    }
+                }
                 let clips = project.clips.filter { $0.trackID == track.id }.sorted { $0.start < $1.start }
                 // Clips alternate between two composition tracks, so neighbours can overlap in a transition.
                 var compTracks: [AVMutableCompositionTrack?] = [nil, nil]
@@ -160,15 +172,16 @@ enum CompositionBuilder {
         // Audio
         var mixParams: [AVMutableAudioMixInputParameters] = []
         if includeAudio {
-            for track in project.audioTracks where project.isAudible(track) {
+            for track in project.audioTracks where keepAllTracks || project.isAudible(track) {
                 hasher.combine(track.id)
+                let audible = project.isAudible(track)
                 let clips = project.clips.filter { $0.trackID == track.id && $0.kind == .audio }.sorted { $0.start < $1.start }
                 var compTrack: AVMutableCompositionTrack?
                 var params: AVMutableAudioMixInputParameters?
                 var cursor = CMTime.zero
-                let trackGain = dbToLinear(track.gainDB)
+                let trackGain = audible ? dbToLinear(track.gainDB) : 0
                 // Ducking under another track: the level follows that track's sound.
-                let duckSpans: [(start: Double, end: Double)]? = track.duckUnder.flatMap { voice in
+                let duckSpans: [(start: Double, end: Double)]? = !audible ? nil : track.duckUnder.flatMap { voice in
                     guard let v = project.audioTracks.first(where: { $0.id == voice }), project.isAudible(v) else { return nil }
                     return AudioLevels.activity(on: voice, project: project, media: media)
                 }

@@ -5,6 +5,10 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static weak var shared: AppDelegate?
     private var pending: [URL] = []
+    /// Files dropped on the icon or opened from Finder while Editroom was quit: it starts on a new
+    /// project with them, instead of reopening the last one.
+    private(set) var openedAtLaunch = false
+    private(set) var launching = true
 
     @MainActor weak var model: EditorModel? {
         didSet {
@@ -19,6 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Files that open the app arrive just before this; any after it are dropped on a running Editroom.
+        DispatchQueue.main.async { self.launching = false }
         // macOS adds Services to the app menu, and Writing Tools, AutoFill, Start Dictation and Emoji &
         // Symbols to the Edit menu. None of them help with editing video, so they come out once the menus
         // exist, and again whenever they're put back (SwiftUI rebuilds menus as commands change).
@@ -51,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         MainActor.assumeIsolated {
+            if launching { openedAtLaunch = true }
             pending += urls
             flush()
         }

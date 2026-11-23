@@ -51,7 +51,7 @@ final class PlaybackEngine {
     func rebuild(project: Project, media: MediaStore, at time: Double) {
         fps = project.fps
         guard let built = CompositionBuilder.build(project: project, media: media,
-                                                   renderSize: CompositionBuilder.previewSize(for: project)) else {
+                                                   renderSize: CompositionBuilder.previewSize(for: project), keepAllTracks: true) else {
             player.replaceCurrentItem(with: nil)
             videoOutput = nil
             dropSpare()

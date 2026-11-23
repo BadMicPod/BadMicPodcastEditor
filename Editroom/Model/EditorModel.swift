@@ -447,6 +447,8 @@ final class EditorModel: ObservableObject {
                     self.toggleViewerFullScreen()
                 }
             } else if !args.contains("--selftest") {
+                // Files that opened the app have arrived by the time launching ends.
+                for _ in 0..<100 where AppDelegate.shared?.launching == true { try? await Task.sleep(nanoseconds: 20_000_000) }
                 self.restoreLastSession()
             }
         }
@@ -539,6 +541,8 @@ final class EditorModel: ObservableObject {
     /// Opens whatever was being worked on last time: the project file, or untitled work from the
     /// recovery copy. Nothing to reopen leaves the empty project that's already there.
     private func restoreLastSession() {
+        // Opened by dropping files on the icon: those start a new project (or are the project), so nothing reopens.
+        guard AppDelegate.shared?.openedAtLaunch != true else { return }
         guard let last = lastSession else { return }
         if last == "untitled" {
             guard let data = try? Data(contentsOf: Self.recoveryURL),
