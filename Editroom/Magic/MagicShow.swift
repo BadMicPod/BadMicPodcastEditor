@@ -154,27 +154,29 @@ final class MagicShow: NSObject {
         show.begin()
     }
 
-    /// Looks at the media, plans a cut, and plays it. `fromMouse` spawns the cursors from where the
-    /// mouse was when this was called; otherwise from the Magic button.
-    /// `recipe` is what the person asked for in the Local tab (read by Apple's on-device model); `done` gets
-    /// a sentence on what changed (and anything it couldn't do) once the show is over, and whether it changed anything.
     /// What a new cut is, in terms of what they asked: "Made a 12-second cut of the little girl eating
-    /// from IMG_1838, in 5 shots cut to the beat."
+    /// from 5 moments in IMG_1838, cut to the beat."
     static func madeNote(_ d: EditDecision, length: Double, recipe: LocalRecipe) -> String {
         var names: [String] = []
         for s in d.shots where !names.contains(s.asset.name) { names.append(s.asset.name) }
         let of = recipe.asked.isEmpty ? "" : " of " + (recipe.asked.hasPrefix("the ") ? "" : "the ") + recipe.asked
-        // The files when they're few or were asked for; otherwise how many.
+        let n = d.shots.count
         let from: String
-        if names.count <= 3 || !recipe.asked.isEmpty || !recipe.keepOnly.isEmpty, names.count <= 5 {
-            from = " from " + (names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + names.last!)
+        if names.count == 1 {
+            // One file: the moments taken from it, not "shots" (it's one shot, cut up).
+            from = n == 1 ? " from \(names[0])" : " from \(n) moments in \(names[0])"
+        } else if names.count <= 3 || ((!recipe.asked.isEmpty || !recipe.keepOnly.isEmpty) && names.count <= 5) {
+            from = " from \(n) shots of " + names.dropLast().joined(separator: ", ") + " and " + names.last!
         } else {
-            from = " from \(names.count) clips"
+            from = " from \(n) shots across \(names.count) clips"
         }
-        let shots = d.shots.count == 1 ? "in one shot" : "in \(d.shots.count) shots"
-        return String(format: "Made a %.0f-second cut", length) + of + from + ", " + shots + (d.music == nil ? "" : " cut to the beat") + "."
+        return String(format: "Made a %.0f-second cut", length) + of + from + (d.music == nil ? "" : ", cut to the beat") + "."
     }
 
+    /// Looks at the media, plans a cut, and plays it. `fromMouse` spawns the cursors from where the
+    /// mouse was when this was called; otherwise from the Magic button.
+    /// `recipe` is what the person asked for in the Local tab (read by Apple's on-device model); `done` gets
+    /// a sentence on what changed (and anything it couldn't do) once the show is over, and whether it changed anything.
     static func start(model: EditorModel, fromMouse: Bool, recipe: LocalRecipe = .plain, done: ((String, Bool) -> Void)? = nil) {
         let state = MagicState.shared
         guard current == nil, !state.busy, let canvas = TimelineCanvas.current, let window = canvas.window else { return }
