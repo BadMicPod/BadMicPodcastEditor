@@ -218,7 +218,8 @@ enum LocalBrain {
     /// Words in a request that aren't things a clip shows.
     static let notThings: Set<String> = ["make", "the", "and", "use", "using", "only", "just", "clip", "clips", "shot", "shots",
         "video", "videos", "cut", "edit", "fast", "slow", "with", "out", "take", "remove", "keep", "all", "some", "more", "less",
-        "seconds", "second", "minute", "music", "song", "look", "vertical", "square", "from", "into", "this", "that", "these"]
+        "seconds", "second", "minute", "music", "song", "look", "vertical", "square", "from", "into", "this", "that", "these",
+        "show", "shows", "showing", "see", "want", "give", "put", "add", "where", "who", "any", "little", "big"]
 
     static func applyMedia(_ r: inout LocalRecipe, named: [MediaAsset], action: String, request: String, pointed: Set<UUID> = [],
                            hasEdit: Bool = false) {
@@ -302,6 +303,14 @@ enum LocalBrain {
         }
     }
 
+    /// The files that show what's asked for: those matching the most of its words ("girl eating" is
+    /// the clip with a child eating, not every clip with a person in it).
+    static func showing(_ words: [String], in media: [MediaAsset], shows: (UUID) -> SceneTags?) -> [MediaAsset] {
+        let scored = media.map { a in (a, shows(a.id).map { t in words.filter { t.shows($0) }.count } ?? 0) }
+        guard let best = scored.map(\.1).max(), best > 0 else { return [] }
+        return scored.filter { $0.1 == best }.map(\.0)
+    }
+
     /// The times in each file where one of these words shows, by its labels.
     static func moments(of words: [String], in media: [MediaAsset], shows: (UUID) -> SceneTags?) -> [UUID: [Double]] {
         var out: [UUID: [Double]] = [:]
@@ -318,10 +327,8 @@ enum LocalBrain {
                        shows: (UUID) -> SceneTags? = { _ in nil }) async throws -> LocalRecipe {
         // Files named, with @ or by name, or by what they show ("the pool clips").
         let words = Transcript.tokens(request).filter { $0.count >= 3 && !Self.notThings.contains($0) }
-        let named = media.filter { a in
-            pointed.contains(a.id) || Self.named(in: request, media: [a]).count == 1
-                || words.contains { w in shows(a.id)?.shows(w) == true }
-        }
+        let named = media.filter { a in pointed.contains(a.id) || Self.named(in: request, media: [a]).count == 1 }
+            + showing(words, in: media, shows: shows).filter { a in !pointed.contains(a.id) && Self.named(in: request, media: [a]).count != 1 }
         #if canImport(FoundationModels)
         if #available(macOS 26, *), available {
             let session = LanguageModelSession(instructions: """

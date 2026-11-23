@@ -1713,9 +1713,18 @@ enum SelfTest {
                 let wantDog = AutoPlanner.decide(project: Project(), clips: [(dogClip, dogLook)], music: nil, recipe: dogRecipe)
                 let momentOK = !(plainDog?.shots.contains { $0.source <= 10 && $0.source + $0.duration >= 8 } ?? true)
                     && (wantDog?.shots.contains { $0.source <= 10 && $0.source + $0.duration >= 8 } ?? false)
+                // "show little girl eating": the clip of a child eating, not every clip with a person in it.
+                let party = MediaAsset(path: "/tmp/party.mov", name: "party", kind: .video, duration: 6, width: 1920, height: 1080, fps: 30, hasAudio: false)
+                let tag = { (n: String) in SceneTags.Tag(name: n, confidence: 0.9, times: [1]) }
+                let seen: [UUID: SceneTags] = [dogClip.id: SceneTags(tags: [tag("child"), tag("eating"), tag("food")]),
+                                               party.id: SceneTags(tags: [tag("people"), tag("cake")])]
+                let asked = Transcript.tokens("show little girl eating").filter { $0.count >= 3 && !LocalBrain.notThings.contains($0) }
+                let picked = LocalBrain.showing(asked, in: [party, dogClip], shows: { seen[$0] }).map(\.name)
+                let pickOK = picked == ["dog"]
+                log("SHOWING \(pickOK ? "OK" : "FAIL") \(picked)")
                 let spans = { (d: EditDecision?) in (d?.shots ?? []).map { String(format: "%.2f+%.2f", $0.source, $0.duration) }.joined(separator: ",") }
                 log("MOMENTS \(momentOK ? "OK" : "FAIL") plain=\(spans(plainDog)) wanted=\(spans(wantDog))")
-                let mOK = momentOK && rampOK && countOK && tagOK && speechOK && cutOK && timeOK && typedOK && clipOK && moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
+                let mOK = pickOK && momentOK && rampOK && countOK && tagOK && speechOK && cutOK && timeOK && typedOK && clipOK && moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
                 log("MENTIONS \(mOK ? "OK" : "FAIL") every=\(everyOK) (\(Set(montage?.shots.map(\.asset.id) ?? []).count) clips, \(String(format: "%.1f", montageLength))s) ramp=\(rampOK) \(moment.said) / \(cutsPlan.said) count=\(countOK) tags=\(tagOK) speech=\(speechOK) cut=\(cutOK) \(cutPlan.said) time=\(timeOK) typed=\(typedOK) clip=\(clipOK) \(labels) move=\(moveOK) keep=\(keepOK) find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
                 good = good && mOK
             }

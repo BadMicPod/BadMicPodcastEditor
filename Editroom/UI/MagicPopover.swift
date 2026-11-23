@@ -1242,7 +1242,7 @@ enum LocalMagic {
                 if CommandLine.arguments.contains("--magic-local") {
                     FileHandle.standardError.write("MAGIC LOCAL said: \(said)\n".data(using: .utf8)!)
                 }
-                note(said, changed: changed, detail: ["On this Mac", recipe.summary, "\(Int(Date().timeIntervalSince(started).rounded()))s"])
+                note(said, changed: changed, detail: ["On this Mac", "\(Int(Date().timeIntervalSince(started).rounded()))s"])
             }
         }
     }
