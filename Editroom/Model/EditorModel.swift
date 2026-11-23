@@ -1476,7 +1476,9 @@ final class EditorModel: ObservableObject {
     @discardableResult
     func addCaptions(to ids: Set<UUID>? = nil) -> Int {
         let picked = ids ?? selection
-        let targets = project.unlocked(picked.isEmpty ? project.defaultCaptionTargets : project.captionTargets(picked))
+        // Everything picked (⌘A), or nothing: everyone talking, not the music.
+        let everything = picked.isEmpty || picked.isSuperset(of: Set(project.clips.map(\.id)))
+        let targets = project.unlocked(everything ? project.defaultCaptionTargets : project.captionTargets(picked))
         guard !targets.isEmpty else { return 0 }
         for c in project.clips where targets.contains(c.id) {
             if let id = c.assetID, let url = media.soundURL(id) { Transcripts.shared.make(url, soon: true) }
@@ -1575,13 +1577,15 @@ final class EditorModel: ObservableObject {
 
     /// Holds the frame under the playhead for two seconds: the clip splits there, a freeze frame goes
     /// in, and everything after it on the clip's tracks moves along to make room.
+    /// The picked video clip under the playhead, which Freeze Frame holds.
+    private var freezeTarget: Clip? {
+        let t = project.snapFrame(playhead)
+        return project.clips.first { selection.contains($0.id) && $0.kind == .video && !$0.isFreeze && !project.isLocked($0.trackID) && t >= $0.start && t < $0.end }
+    }
+
     func freezeFrame(seconds hold: Double = 2) {
         let t = project.snapFrame(playhead)
-        let under = project.clips.filter { $0.kind == .video && !$0.isFreeze && !project.isLocked($0.trackID) && t >= $0.start && t < $0.end }
-        let chosen = under.first { selection.contains($0.id) } ?? under.max { a, b in
-            (project.trackIndex(a.trackID, kind: .video) ?? 0) < (project.trackIndex(b.trackID, kind: .video) ?? 0)
-        }
-        guard let c = chosen else { return }
+        guard let c = freezeTarget else { return }
         var source = c.sourceTime(at: t)
         if c.playsBackwards, let length = project.asset(c.assetID)?.duration { source = max(0, length - source - 0.001) }
         var made: UUID?
@@ -1809,16 +1813,31 @@ final class EditorModel: ObservableObject {
     }
 
     /// Puts a dissolve on the cut nearest the playhead, looking at selected clips first.
+    /// A dissolve on the picked clips' cut nearest the playhead (either end of a picked clip).
     func addTransitionAtPlayhead() {
+        guard let best = dissolveTarget else { return }
+        setTransition(into: best.id, best.transitionIn ?? Transition())
+    }
+
+    private var dissolveTarget: Clip? {
         let cuts = project.clips.filter { c in
             c.kind != .audio && !project.isLocked(c.trackID) && project.previous(touching: c) != nil
         }
         let selected = cuts.filter { c in
             selection.contains(c.id) || project.previous(touching: c).map { selection.contains($0.id) } ?? false
         }
-        guard let best = (selected.isEmpty ? cuts : selected).min(by: { abs($0.start - playhead) < abs($1.start - playhead) }) else { return }
-        setTransition(into: best.id, best.transitionIn ?? Transition())
+        return selected.min(by: { abs($0.start - playhead) < abs($1.start - playhead) })
     }
+
+    // MARK: What the Clip menu can do with what's picked
+
+    var canAddDissolve: Bool { dissolveTarget != nil }
+    var canDuplicate: Bool { !selectedForCopy.isEmpty }
+    var canReverse: Bool { project.clips.contains { selection.contains($0.id) && $0.playsSource && !project.isLocked($0.trackID) } }
+    var canFreezeFrame: Bool { freezeTarget != nil }
+    var canDeleteSelected: Bool { !selection.isEmpty || !mediaSelection.isEmpty || !captionSelection.isEmpty }
+    /// Picked clips with sound to caption (or captions to remove).
+    var canCaption: Bool { Transcripts.available && !project.captionTargets(selection).isEmpty }
 
     /// The Playback section back as it was: 100% with no ramp, and these clips' volume at 0 dB.
     func resetPlayback(volume: Set<UUID>) {

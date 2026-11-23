@@ -55,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 for top in NSApp.mainMenu?.items ?? [] {
                     NSLog("MENU %@", top.title)
                     for i in top.submenu?.items ?? [] {
-                        NSLog("MENU    %@ [%@ %lu] %@", i.title, i.keyEquivalent, i.keyEquivalentModifierMask.rawValue, i.action.map { NSStringFromSelector($0) } ?? "-")
+                        NSLog("MENU    %@ [%@ %lu] %@%@", i.title, i.keyEquivalent, i.keyEquivalentModifierMask.rawValue, i.action.map { NSStringFromSelector($0) } ?? "-", i.isEnabled ? "" : " (off)")
                     }
                 }
             }
@@ -245,11 +245,16 @@ struct EditroomApp: App {
             CommandMenu("Clip") {
                 Button("Split at Playhead") { model.splitAtPlayhead() }.keyboardShortcut(keys.menu(.split))
                 Button("Add Dissolve") { model.addTransitionAtPlayhead() }.keyboardShortcut(keys.menu(.addDissolve))
+                    .disabled(!model.canAddDissolve)
                 Button("Even Out Audio Levels") { model.evenOutLevels() }
                 Button("Detach Audio") { model.detachAudio() }.keyboardShortcut(keys.menu(.detachAudio))
+                    .disabled(!model.selectionIsLinked)
                 Button("Duplicate") { model.duplicateSelection() }.keyboardShortcut(keys.menu(.duplicate))
+                    .disabled(!model.canDuplicate)
                 Button("Freeze Frame") { model.freezeFrame() }.keyboardShortcut(keys.menu(.freezeFrame))
+                    .disabled(!model.canFreezeFrame)
                 Button("Reverse") { model.reverseSelection() }.keyboardShortcut(keys.menu(.reverse))
+                    .disabled(!model.canReverse)
                 Divider()
                 Button("Copy Grade") { model.copyGrade() }
                     .keyboardShortcut(keys.menu(.copyGrade))
@@ -262,13 +267,15 @@ struct EditroomApp: App {
                     .disabled(model.matchableAsset.map { model.sequenceMatches($0) } ?? true)
                 Divider()
                 Button("Delete") { model.deleteSelected() }.keyboardShortcut(keys.menu(.delete))
+                    .disabled(!model.canDeleteSelected)
                 Button("Ripple Delete") { model.deleteSelected(ripple: true) }.keyboardShortcut(keys.menu(.rippleDelete))
+                    .disabled(!model.canDeleteSelected)
                 Button("Close All Gaps") { model.closeAllGaps() }
                 Divider()
                 Button("Add Text") { model.addAtPlayhead(.text) }.keyboardShortcut(keys.menu(.addText))
                 Button("Add Solid") { model.addAtPlayhead(.solid) }
                 Button(model.captionsMenuTitle) { model.captionsFromMenu() }
-                    .disabled(!Transcripts.available)
+                    .disabled(!model.canCaption)
                 Divider()
                 Button("Add Video Track") { model.addTrack(.video) }
                 Button("Add Audio Track") { model.addTrack(.audio) }

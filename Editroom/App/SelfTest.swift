@@ -792,6 +792,7 @@ enum SelfTest {
             let m = EditorModel()
             m.load(p, url: nil)
             m.seek(to: 1)
+            m.selection = [p.clips[0].id]
             m.freezeFrame()
             let parts = m.project.clips.sorted { $0.start < $1.start }.map { ($0.start, $0.end, $0.isFreeze) }
             let shape = parts.count == 3 && parts[1] == (1, 3, true) && parts[2].0 == 3 && abs(parts[2].1 - 6) < 1e-9
