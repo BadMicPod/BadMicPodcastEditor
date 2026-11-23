@@ -468,15 +468,29 @@ private struct HistoryMenu: View {
             menu.addItem(ActionItem("Prompts you send show up here.", enabled: false) {})
         }
         let font = NSFont.menuFont(ofSize: 0)
-        for e in entries {
+        func item(_ e: MagicHistory.Entry) -> NSMenuItem {
             let item = ActionItem(e.text) { use(e.text) }
             item.attributedTitle = NSAttributedString(string: Self.wrapped(e.text), attributes: [.font: font])
             item.badge = NSMenuItemBadge(string: MagicAgent.Tab(rawValue: e.tab)?.name ?? "")
             item.toolTip = e.text
-            menu.addItem(item)
+            return item
+        }
+        // The latest few; the rest in a submenu, so the menu stays a manageable size (a menu can't be
+        // given a height to scroll at).
+        for e in entries.prefix(Self.shown) { menu.addItem(item(e)) }
+        if entries.count > Self.shown {
+            let older = NSMenuItem(title: "Older", action: nil, keyEquivalent: "")
+            let sub = NSMenu()
+            sub.autoenablesItems = false
+            for e in entries.dropFirst(Self.shown) { sub.addItem(item(e)) }
+            older.submenu = sub
+            menu.addItem(.separator())
+            menu.addItem(older)
         }
         anchor.popUp(menu)
     }
+
+    static let shown = 8
 
     /// At most two lines of about `width` characters, broken between words, with … if there's more.
     static func wrapped(_ text: String, width: Int = 34) -> String {
