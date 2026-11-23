@@ -146,6 +146,8 @@ struct ContentView: View {
 @MainActor
 enum KeyCommands {
     private static var installed = false
+    /// The editor window, where the bare-key shortcuts work.
+    private static weak var editor: NSWindow?
 
     static func install(_ model: EditorModel) {
         guard !installed else { return }
@@ -181,8 +183,10 @@ enum KeyCommands {
             }
             return false
         }
-        // Only the editor window gets these; sheets, panels and Settings keep their keys.
-        guard TimelineCanvas.current?.window === window, window.attachedSheet == nil, window.sheetParent == nil,
+        // Only the editor window gets these; sheets, panels and Settings keep their keys. It's remembered from
+        // the timeline, which the full-screen viewer takes out of the window.
+        if let w = TimelineCanvas.current?.window { editor = w }
+        guard editor === window, window.attachedSheet == nil, window.sheetParent == nil,
               !(window is NSPanel) else { return false }
 
         if e.keyCode == 53, e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty {
