@@ -1059,6 +1059,7 @@ enum LocalMagic {
         guard !request.isEmpty else {
             let started = Date()
             return MagicShow.start(model: model, fromMouse: false) { said, changed in
+                if CommandLine.arguments.contains("--magic-local") { logTitles(model) }
                 note(said, changed: changed, detail: ["On this Mac", "\(Int(Date().timeIntervalSince(started).rounded()))s"])
             }
         }
@@ -1124,6 +1125,7 @@ enum LocalMagic {
                 recipe.soundEffects = LocalBrain.wantsSoundEffects(request)
                 recipe.askedJudgement = LocalBrain.asksJudgement(request)
                 recipe.title = LocalBrain.titleAsked(request)
+                recipe.titleAtEnd = LocalTitle.atEnd(request)
                 recipe.wholeLibrary = LocalBrain.wantsLibrary(request)
                 recipe.shots = LocalBrain.shotCount(request)
                 recipe.every = LocalBrain.wantsEvery(request)
@@ -1267,12 +1269,23 @@ enum LocalMagic {
         let played = MagicShow.play(model: model, plan: plan) {
             if CommandLine.arguments.contains("--magic-local") {
                 FileHandle.standardError.write("MAGIC LOCAL said: \(outcome.said)\n".data(using: .utf8)!)
+                logTitles(model)
             }
             note(outcome.said, changed: true, detail: ["On this Mac", "\(Int(Date().timeIntervalSince(started).rounded()))s"])
         }
         if !played {
             model.mutate { q in for task in plan.tasks { task.edit.apply(&q, 1) } }
             note(outcome.said, changed: true, detail: ["On this Mac"])
+        }
+    }
+
+    /// (Testing) Where the titles are, next to the edit.
+    private static func logTitles(_ model: EditorModel) {
+        let p = model.project
+        let edit = p.clips.filter { $0.kind == .video || $0.kind == .image }
+        for t in p.clips where t.kind == .text {
+            FileHandle.standardError.write(String(format: "MAGIC LOCAL title \"%@\" %.2f-%.2f (edit %.2f-%.2f)\n", t.text.string,
+                t.start, t.end, edit.map(\.start).min() ?? 0, edit.map(\.end).max() ?? 0).data(using: .utf8)!)
         }
     }
 

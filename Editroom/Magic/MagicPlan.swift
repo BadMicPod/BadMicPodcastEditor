@@ -374,8 +374,11 @@ enum Choreographer {
         // A title on V2 once the rough cut has cleared from under it (only one they asked for).
         if !decision.title.isEmpty {
             let titleLength = min(3, max(2, total * 0.12))
-            let clearing = cuts.filter { $0.roughFrom < titleLength }.map(\.moved)
-            var title = Clip(trackID: v2, kind: .text, start: 0, duration: frames(titleLength))
+            // At the start, or over the last seconds when they asked for it at the end.
+            let titleStart = decision.titleAtEnd ? frames(max(0, total - titleLength)) : 0
+            // (At the end: once every shot has settled, since the rough cut can run on past it.)
+            let clearing = decision.titleAtEnd ? cuts.map(\.moved) : cuts.filter { $0.roughFrom < titleLength }.map(\.moved)
+            var title = Clip(trackID: v2, kind: .text, start: titleStart, duration: frames(titleLength))
             title.text.string = ""
             title.text.size = 130
             let placed = add(.place([title], asset: nil), after: clearing)

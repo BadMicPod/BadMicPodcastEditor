@@ -1056,6 +1056,8 @@ enum SelfTest {
                         && LocalBrain.titleAsked("make a fast cut") == nil && LocalBrain.titleAsked("add a title") == ""
                         && LocalBrain.titleAsked("put a title saying \"Summer '26\" on it")?.hasPrefix("Summer") == true
                         && LocalBrain.titleAsked("make it without a title") == nil
+                        && LocalTitle.atEnd("make a 18s video using all the media. add title at end \"Novemeber 23\"")
+                        && LocalTitle.atEnd("put an end card on it") && !LocalTitle.atEnd("add a title saying \"Weekend\"")
                         && p.clips.contains { $0.assetID == songAsset.id }
                 }
                 good = tempoOK && steady && onBeat && onBar && inside && !clash && built && d.shots.count >= 2

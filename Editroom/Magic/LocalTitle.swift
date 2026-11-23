@@ -9,18 +9,29 @@ enum LocalTitle {
         let t = request.lowercased()
         let hasEdit = p.clips.contains { $0.kind == .video || $0.kind == .image }
         let newCut = ["new cut", "new edit", "new video", "montage", "recut", "re-cut", "from scratch", "start over"].contains { t.contains($0) }
+            || LocalBrain.wantsLibrary(request)
+            // "make a 18s video…", "create an edit…": a cut to make, with a title in it.
+            || (["make a", "make an", "make me", "create", "build a", "cut a", "edit a"].contains { t.contains($0) }
+                && ["video", "cut", "edit", "montage", "reel", "recap", "vlog", "movie", "film"].contains { t.contains($0) })
         return hasEdit && !newCut && LocalBrain.titleAsked(request) != nil
     }
 
     enum Spot { case start, end, playhead, at(Double) }
+
+    /// They want the title at the end ("add a title at the end", "an end card", "outro").
+    static func atEnd(_ request: String) -> Bool {
+        let t = request.lowercased()
+        return ["at the end", "the end", "at end", "in the end", "to the end", "end of", "ending", "end screen", "end card",
+                "end title", "outro", "closing", "at the close", "last shot", "at the finish", "final shot", "finale"]
+            .contains(where: { t.contains($0) })
+    }
 
     static func spot(_ request: String, fps: Double = 30) -> Spot {
         let t = request.lowercased()
         // A time they typed, or a marker (read as its time): "a title at 0:12", "a title at @Intro".
         if MagicTimes.span(in: request, fps: fps) == nil,
            let typed = MagicTimes.times(in: request, fps: fps).first(where: { !$0.unitOnly }) { return .at(typed.seconds) }
-        if ["at the end", "the end", "ending", "end screen", "end card", "end title", "outro", "closing", "at the close", "last shot"]
-            .contains(where: { t.contains($0) }) { return .end }
+        if atEnd(request) { return .end }
         if ["playhead", "here", "right now", "this point"].contains(where: { t.contains($0) }) { return .playhead }
         return .start
     }

@@ -27,6 +27,8 @@ struct EditDecision {
     var title: String
     var look: String
     var bpm: Double?
+    /// The title over the last seconds instead of the first.
+    var titleAtEnd = false
 }
 
 /// Picks the best moments from each clip and cuts them to the music, with no network and no key.
@@ -233,7 +235,8 @@ enum AutoPlanner {
         // A title only when they asked for one: their words, or when it was filmed.
         let asked = recipe.title.map { $0.isEmpty ? title(for: usable.compactMap(\.1.created), today: today) : $0 } ?? ""
         var decision = EditDecision(shots: shots, music: nil, title: asked,
-                                    look: recipe.look.map { $0 == "none" ? "" : $0 } ?? "", bpm: nil)
+                                    look: recipe.look.map { $0 == "none" ? "" : $0 } ?? "", bpm: nil,
+                                    titleAtEnd: recipe.titleAtEnd)
 
         if let (asset, m) = music, !m.beats.isEmpty {
             decision.bpm = m.bpm

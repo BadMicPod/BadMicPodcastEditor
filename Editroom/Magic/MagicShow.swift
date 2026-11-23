@@ -385,6 +385,7 @@ final class MagicShow: NSObject {
     private static func log(_ d: EditDecision, _ m: MusicAnalysis?, seconds: Double) {
         var lines = [String(format: "MAGIC PLAN %.2fs analysis, %d shots, %.2fs long, title \"%@\"", seconds, d.shots.count,
                             d.shots.reduce(0) { $0 + $1.duration }, d.title)]
+        if !d.title.isEmpty { lines[0] += d.titleAtEnd ? " at the end" : " at the start" }
         if let m, let music = d.music {
             lines.append(String(format: "MAGIC MUSIC %.1f bpm, %d beats, bar phase %d, starts %.2fs", m.bpm, m.beats.count, m.barPhase, music.source))
         }

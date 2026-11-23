@@ -58,6 +58,8 @@ struct LocalRecipe: Equatable {
     /// A title they asked for: nil if they didn't, "" for one made from when it was filmed, or their
     /// words when they quote them ("add a title saying \"Summer\"").
     var title: String?
+    /// The title goes over the end instead of the start ("add a title at the end").
+    var titleAtEnd = false
     /// Bring every audio clip to the same level ("equalize the audio", "same volume"): the clip gain for
     /// each, worked out from the waveforms when the request is read.
     var levelAudio = false
