@@ -476,8 +476,6 @@ final class MagicShow: NSObject {
     private var cards: [UUID: Card] = [:]
     private let overlay: NSWindow
     private let root = CALayer()
-    private let status = CALayer()
-    private let statusText = CATextLayer()
     private var link: CADisplayLink?
     /// The show's clock when its window can't be seen (behind another app, minimised, on another
     /// Space): the display stops calling `step` then, but the show carries on and finishes.
@@ -868,18 +866,6 @@ final class MagicShow: NSObject {
             root.addSublayer(a.cursor)
         }
 
-        status.backgroundColor = NSColor(white: 0.08, alpha: 0.92).cgColor
-        status.cornerRadius = 13
-        status.borderWidth = 1
-        status.borderColor = NSColor(white: 1, alpha: 0.12).cgColor
-        statusText.contentsScale = scale
-        statusText.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
-        statusText.fontSize = 11
-        statusText.foregroundColor = Theme.NS.text.cgColor
-        statusText.alignmentMode = .center
-        status.addSublayer(statusText)
-        status.opacity = 0
-        root.addSublayer(status)
     }
 
     private func buildCard(_ c: Card, scale: CGFloat) {
@@ -1190,10 +1176,8 @@ final class MagicShow: NSObject {
 
         // The project at this moment: every edit applied as far as it has got.
         var p = plan.base
-        var finished = 0
         for i in order where t >= slots[i].start {
             let s = slots[i]
-            if t >= s.end { finished += 1 }
             // A clip's grade changes once its whole card is done: each new grade means re-grading its thumbnails.
             if s.edit.isGradeCard { continue }
             s.edit.apply(&p, (t - s.start) / (s.end - s.start))
@@ -1219,7 +1203,6 @@ final class MagicShow: NSObject {
         CATransaction.setDisableActions(true)
         drawAgents(t)
         drawCards(t)
-        drawStatus(t, finished: finished)
         CATransaction.commit()
 
         if t >= showEnd { finish() }
@@ -1496,24 +1479,6 @@ final class MagicShow: NSObject {
         backdrop.frame = inspectorRect
         let active = cards.values.filter { t >= $0.appear && t < $0.vanish }.count
         backdropCount.string = active == 0 ? "" : "\(active) clip\(active == 1 ? "" : "s")"
-    }
-
-    private func drawStatus(_ t: Double, finished: Int) {
-        guard !agentMode else {
-            status.opacity = 0
-            return
-        }
-        let out = agents.filter { !$0.slots.isEmpty && t >= $0.birth && t < $0.gone }.count
-        let text = "✦  \(out) agent\(out == 1 ? "" : "s")  ·  \(finished) / \(slots.count) edits"
-        statusText.string = text
-        let w = ceil((text as NSString).size(withAttributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)]).width) + 28
-        let tl = timelineRect
-        status.bounds = CGRect(x: 0, y: 0, width: w, height: 26)
-        status.position = CGPoint(x: tl.midX, y: tl.minY - 22)
-        statusText.frame = CGRect(x: 0, y: 6, width: w, height: 15)
-        let fadeIn = min(1, t / 0.2)
-        let fadeOut = t > showEnd - Self.outro ? 1 - min(1, (t - (showEnd - Self.outro)) / Self.outro) : 1
-        status.opacity = Float(fadeIn * fadeOut)
     }
 
     /// A gentle curve between two points; the first trip fans out from where the cursors appeared.
