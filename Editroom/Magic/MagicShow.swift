@@ -1060,7 +1060,7 @@ final class MagicShow: NSObject {
             below = (order.firstIndex(of: asset) ?? 0) > (shown.max() ?? -1)
         }
         let size = CGSize(width: 64, height: 36)
-        return CGRect(x: list.midX - size.width / 2, y: below ? list.maxY - size.height - 6 : list.minY + 42,
+        return CGRect(x: list.midX - size.width / 2, y: below ? list.maxY - size.height + 6 : list.minY + 20,
                       width: size.width, height: size.height)
     }
 
