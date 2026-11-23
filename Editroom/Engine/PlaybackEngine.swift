@@ -54,6 +54,8 @@ final class PlaybackEngine {
         fps = project.fps
         guard let built = CompositionBuilder.build(project: project, media: media,
                                                    renderSize: CompositionBuilder.previewSize(for: project), keepAllTracks: true) else {
+            abandonHandoff()
+            endFade()
             player.replaceCurrentItem(with: nil)
             videoOutput = nil
             dropSpare()
@@ -65,20 +67,28 @@ final class PlaybackEngine {
         duration = built.duration
         instruction = built.videoComposition.instructions.first as? TimelineInstruction
         renderSize = built.videoComposition.renderSize
+        mediaStore = media
 
         if handingOff {
             // The edit waiting to take over changed again: a tweak goes to it, anything else starts over.
             if built.signature == spareSignature, let s = spare.currentItem {
                 s.videoComposition = built.videoComposition
-                s.audioMix = built.audioMix
+                spareProject = project
+                spareMix = built.audioMix
+                // Once it's set to start, its sound keeps the hand-over's fade in.
+                if swapAt == nil { s.audioMix = built.audioMix }
                 return
             }
             abandonHandoff()
         }
 
         if built.signature == signature, let item = player.currentItem {
+            // A fade still under way would be undone by the new mix: it finishes first.
+            endFade()
             item.videoComposition = built.videoComposition
             item.audioMix = built.audioMix
+            currentProject = project
+            currentMix = built.audioMix
             if spareSignature == signature, let s = spare.currentItem {
                 s.videoComposition = built.videoComposition
                 s.audioMix = built.audioMix
@@ -98,17 +108,20 @@ final class PlaybackEngine {
         item.add(output)
         if let span = loopSpan { item.forwardPlaybackEndTime = CompositionBuilder.time(span.end) }
         // Playing: the new edit takes over in step with the playhead, with no pause.
-        if isPlaying, handOff(item, output: output, signature: built.signature) { return }
-        install(item, output: output, signature: built.signature, at: time)
+        if isPlaying, handOff(item, output: output, signature: built.signature, project: project, mix: built.audioMix) { return }
+        install(item, output: output, signature: built.signature, project: project, mix: built.audioMix, at: time)
     }
 
     /// The new edit becomes the player's at once, at `time` (a seek, so a moment's pause while playing).
-    private func install(_ item: AVPlayerItem, output: AVPlayerItemVideoOutput, signature: Int, at time: Double) {
+    private func install(_ item: AVPlayerItem, output: AVPlayerItemVideoOutput, signature: Int, project: Project?, mix: AVAudioMix?, at time: Double) {
         let wasPlaying = isPlaying
         endFade()
         dropSpare()
+        item.audioMix = mix
         player.replaceCurrentItem(with: item)
         videoOutput = output
+        currentProject = project
+        currentMix = mix
         self.signature = signature
         isSeeking = false
         seek(to: time)
@@ -253,13 +266,18 @@ final class PlaybackEngine {
         if handover {
             // The picture changes now; the old edit keeps playing a moment longer for its sound.
             signature = spareSignature
+            currentProject = spareProject
+            currentMix = player.currentItem?.audioMix
             player = spare
             videoOutput = spareOutput
+            restoreMix = spareMix
             spare = AVPlayer()
             Self.configure(spare)
             spareOutput = nil
             spareSignature = nil
-            crossfade(from: old, to: player)
+            spareProject = nil
+            spareMix = nil
+            crossfade(from: old)
             if loopSpan != nil { primeSpare() }
             return
         }
@@ -272,35 +290,47 @@ final class PlaybackEngine {
         primeSpare()
     }
 
-    /// The edit that was playing before a hand-over, still heard until the new one's sound comes in.
+    /// The edit that was playing before a hand-over, still heard until its sound has faded out.
     private var fading: AVPlayer?
     private var fadeGeneration = 0
+    /// The project and mix the player's edit was made from, for building a hand-over's fades.
+    private var currentProject: Project?
+    private var currentMix: AVAudioMix?
+    private var spareProject: Project?
+    private var spareMix: AVAudioMix?
+    /// The player's own mix, put back once its hand-over's fade in is done.
+    private var restoreMix: AVAudioMix?
+    private weak var mediaStore: MediaStore?
+    /// When the hand-over's sound fade ends, on the timeline.
+    private var fadeEnds = 0.0
 
-    /// Both players are at the same moment of the same sound, so passing it from one to the other is
-    /// silent: no gap while the new one's sound starts, and no doubling.
-    private func crossfade(from old: AVPlayer, to new: AVPlayer) {
+    /// Both players are at the same moment of the same sound, and their mixes fade one out as the other
+    /// fades in over the same stretch of the timeline (see `handOff`), so the sound passes from one to
+    /// the other with no gap, no doubling and no step. The old one stops once that's past.
+    private func crossfade(from old: AVPlayer) {
         endFade()
         fading = old
         fadeGeneration += 1
         let generation = fadeGeneration
         Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 120_000_000)
-            for step in 1...8 {
-                guard let self, generation == self.fadeGeneration else { return }
-                let f = Float(step) / 8
-                new.volume = f
-                old.volume = 1 - f
-                try? await Task.sleep(nanoseconds: 10_000_000)
+            // (At most a second: a loop may have gone back to before it.)
+            for _ in 0..<50 {
+                guard let self, generation == self.fadeGeneration, self.player.currentTime().seconds < self.fadeEnds + 0.1 else { break }
+                try? await Task.sleep(nanoseconds: 20_000_000)
             }
             guard let self, generation == self.fadeGeneration else { return }
             self.endFade()
         }
     }
 
-    /// Any crossfade finishes at once: the old edit stops, and the player is at full volume.
+    /// Any crossfade finishes at once: the old edit stops, and the player gets its own mix back.
     private func endFade() {
         fadeGeneration += 1
-        player.volume = 1
+        if let mix = restoreMix {
+            restoreMix = nil
+            player.currentItem?.audioMix = mix
+            currentMix = mix
+        }
         guard let old = fading else { return }
         fading = nil
         old.pause()
@@ -318,7 +348,7 @@ final class PlaybackEngine {
     /// item. While playing, it's readied on the spare a little ahead of the playhead, then started at
     /// the moment the playhead gets there and swapped in, as a loop is: playback never stops. False
     /// when there isn't room ahead to do that (the end is too close); the edit is installed at once.
-    private func handOff(_ item: AVPlayerItem, output: AVPlayerItemVideoOutput, signature sig: Int) -> Bool {
+    private func handOff(_ item: AVPlayerItem, output: AVPlayerItemVideoOutput, signature sig: Int, project: Project, mix: AVAudioMix?) -> Bool {
         if swapAt != nil { cancelSwap() }
         let now = player.currentTime().seconds
         guard now.isFinite else { return false }
@@ -331,6 +361,8 @@ final class PlaybackEngine {
         spare.replaceCurrentItem(with: item)
         spareOutput = output
         spareSignature = sig
+        spareProject = project
+        spareMix = mix
         handingOff = true
         let next = spare
         Task { @MainActor [weak self] in
@@ -347,6 +379,8 @@ final class PlaybackEngine {
                 let asked = CACurrentMediaTime()
                 let target = self.player.currentTime().seconds + lead
                 guard target < end - 0.1 else { break }
+                // The sound crosses over a moment after the picture, once the new one's sound is going.
+                self.setHandoverFades(at: target + 0.1, next: item)
                 let landed = await next.seek(to: CompositionBuilder.time(target), toleranceBefore: .zero, toleranceAfter: .zero)
                 guard generation == self.priming else { return }
                 guard landed else { break }
@@ -360,9 +394,6 @@ final class PlaybackEngine {
                 let at = self.player.currentItem?.timebase.map { CMSyncConvertTime(CompositionBuilder.time(target), from: $0, to: host) }
                     ?? CMTimeAdd(CMClockGetTime(host), CMTime(seconds: target - self.player.currentTime().seconds, preferredTimescale: 1_000_000_000))
                 if at.isNumeric, at.seconds - CMClockGetTime(host).seconds > 0.01 {
-                    // It starts silent: its sound takes a moment longer than its picture to get going, so
-                    // the old one's carries on until then and the two cross over (see `crossfade`).
-                    next.volume = 0
                     next.setRate(1, time: CompositionBuilder.time(target), atHostTime: at)
                     self.swapAt = at.seconds
                     return
@@ -375,25 +406,46 @@ final class PlaybackEngine {
         return true
     }
 
+    /// The old edit's sound fades out and the new one's in over the same 40ms of the timeline, from `start`.
+    /// Without them (they couldn't be made), the sound simply passes over at the swap.
+    private func setHandoverFades(at start: Double, next item: AVPlayerItem) {
+        let envelope = (start: start, end: start + 0.04)
+        fadeEnds = envelope.end
+        guard let media = mediaStore, let new = spareProject, let old = currentProject,
+              let oldItem = player.currentItem else { return }
+        func mix(_ p: Project, rising: Bool, for item: AVPlayerItem) -> AVAudioMix? {
+            guard let built = CompositionBuilder.build(project: p, media: media, renderSize: CompositionBuilder.previewSize(for: p),
+                                                       keepAllTracks: true, soundEnvelope: SoundEnvelope(start: envelope.start, end: envelope.end, rising: rising)),
+                  let mix = built.audioMix else { return nil }
+            // Made again from the same edit, its tracks should be the item's own; anything else is left alone.
+            let ids = Set(((item.asset as? AVComposition)?.tracks ?? []).filter { $0.mediaType == .audio }.map(\.trackID))
+            return mix.inputParameters.allSatisfy { ids.contains($0.trackID) } ? mix : nil
+        }
+        guard let rising = mix(new, rising: true, for: item), let falling = mix(old, rising: false, for: oldItem) else { return }
+        item.audioMix = rising
+        oldItem.audioMix = falling
+    }
+
     /// A hand-over still waiting is finished at once: the new edit goes in at the playhead.
     private func settleHandoff() {
         guard handingOff, let item = spare.currentItem, let output = spareOutput, let sig = spareSignature else { return }
+        let project = spareProject, mix = spareMix
         let t = player.currentTime().seconds
         handingOff = false
         priming += 1
         swapAt = nil
         spare.pause()
-        spare.volume = 1
         spare.replaceCurrentItem(with: nil)
         spareOutput = nil
         spareSignature = nil
-        install(item, output: output, signature: sig, at: t.isFinite ? t : targetTime)
+        install(item, output: output, signature: sig, project: project, mix: mix, at: t.isFinite ? t : targetTime)
     }
 
     /// The edit waiting to take over is out of date: it's dropped, and the player carries on as it was.
     private func abandonHandoff() {
         guard handingOff else { return }
-        spare.volume = 1
+        // The old edit plays on with its own sound, unfaded.
+        player.currentItem?.audioMix = currentMix
         handingOff = false
         swapAt = nil
         dropSpare()
@@ -414,6 +466,8 @@ final class PlaybackEngine {
         spare.replaceCurrentItem(with: nil)
         spareOutput = nil
         spareSignature = nil
+        spareProject = nil
+        spareMix = nil
     }
 
     /// Puts the spare at the loop's start, decoded and ready to go.
@@ -438,7 +492,7 @@ final class PlaybackEngine {
             spareSignature = signature
         }
         item.videoComposition = main.videoComposition
-        item.audioMix = main.audioMix
+        item.audioMix = restoreMix ?? main.audioMix
         item.forwardPlaybackEndTime = CompositionBuilder.time(span.end)
         let player = spare
         Task { @MainActor [weak self] in

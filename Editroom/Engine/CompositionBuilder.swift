@@ -28,6 +28,20 @@ enum BaseVideo {
     }
 }
 
+/// A fade over all the sound, at a moment of the timeline: how one edit hands over to the next while
+/// playing (PlaybackEngine), the old fading out as the new fades in, on the sound's own clock.
+struct SoundEnvelope {
+    var start: Double
+    var end: Double
+    /// Fading in (silent before `start`), or out (silent after `end`).
+    var rising: Bool
+
+    func gain(at t: Double) -> Float {
+        let x = Float(min(1, max(0, (t - start) / max(1e-6, end - start))))
+        return rising ? x : 1 - x
+    }
+}
+
 enum CompositionBuilder {
     static let timescale: CMTimeScale = 60000
 
@@ -56,7 +70,7 @@ enum CompositionBuilder {
     /// player takes that as it plays, with no new item and no pause.
     static func build(project: Project, media: MediaStore, renderSize: CGSize,
                       includeVideo: Bool = true, includeAudio: Bool = true, reframe: CGPoint? = nil,
-                      keepAllTracks: Bool = false) -> BuiltTimeline? {
+                      keepAllTracks: Bool = false, soundEnvelope: SoundEnvelope? = nil) -> BuiltTimeline? {
         // The sequence is laid out on `canvas`, then `offset` picks the output's window from it.
         var canvas = renderSize
         var offset = CGPoint.zero
@@ -214,18 +228,28 @@ enum CompositionBuilder {
                     hash(clip, into: &hasher)
 
                     let gain = Float(trackGain * dbToLinear(clip.gainDB))
-                    if let spans = duckSpans, !spans.isEmpty {
-                        // Fades and ducking together, as short linear pieces every 50ms.
-                        let step = 0.05
-                        var t0 = clip.start
+                    let spans = duckSpans ?? []
+                    if !spans.isEmpty || soundEnvelope.map({ $0.rising ? clip.start < $0.end : clip.end > $0.start }) == true {
+                        // Fades, ducking and a hand-over's fade together, as short linear pieces: every
+                        // 50ms, and every 5ms through the hand-over.
                         func level(_ t: Double) -> Float {
-                            gain * Float(clip.fadeGain(at: t) * AudioLevels.duckGain(at: t, spans: spans, low: duckLow))
+                            gain * Float(clip.fadeGain(at: t) * AudioLevels.duckGain(at: t, spans: spans, low: duckLow)) * (soundEnvelope?.gain(at: t) ?? 1)
                         }
-                        while t0 < clip.end - 1e-6 {
-                            let t1 = min(clip.end, t0 + step)
+                        var t0 = clip.start
+                        var stop = clip.end
+                        if let e = soundEnvelope {
+                            // Silent before a fade in, and after a fade out.
+                            if e.rising, t0 < e.start { p.setVolume(0, at: time(t0)); t0 = min(clip.end, e.start) }
+                            if !e.rising { stop = max(clip.start, min(clip.end, e.end)) }
+                        }
+                        while t0 < stop - 1e-6 {
+                            let fine = soundEnvelope.map { t0 >= $0.start - 1e-9 && t0 < $0.end } ?? false
+                            var t1 = min(stop, t0 + (fine ? 0.005 : 0.05))
+                            if let e = soundEnvelope { for b in [e.start, e.end] where b > t0 + 1e-9 && b < t1 { t1 = b } }
                             p.setVolumeRamp(fromStartVolume: level(t0), toEndVolume: level(t1), timeRange: CMTimeRange(start: time(t0), end: time(t1)))
                             t0 = t1
                         }
+                        if stop < clip.end { p.setVolume(0, at: time(stop)) }
                         continue
                     }
                     let start = time(clip.start), end = time(clip.end)
