@@ -1734,7 +1734,7 @@ extension View {
 }
 
 
-/// Shows or hides part of the captions' look: a bare eye, brighter on hover.
+/// Shows or hides part of the captions' look: a bare eye, a little brighter on hover.
 private struct CaptionEye: View {
     let on: Bool
     let action: () -> Void
@@ -1744,7 +1744,9 @@ private struct CaptionEye: View {
         Button(action: action) {
             // The tracks' eye (MiniKey), without its box.
             Glyph(symbol: on ? "eye" : "eye.slash", size: 9.5, weight: .semibold)
-                .foregroundStyle(hovering ? Theme.text : (on ? Theme.textDim : Theme.textFaint))
+                .foregroundStyle(on ? Theme.textDim : Theme.textFaint)
+                // Hovered: a touch brighter than it is, on or off.
+                .brightness(hovering ? 0.1 : 0)
                 .frame(width: 20, height: 20)
                 .contentShape(Rectangle())
         }
