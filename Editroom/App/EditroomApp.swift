@@ -114,6 +114,33 @@ enum MenuCleanup {
     }
 }
 
+/// Editroom › About Editroom: the standard panel, with one quiet line of credits under the version.
+enum AboutPanel {
+    @MainActor static func show() {
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        let base: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+            .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: style,
+        ]
+        let credits = NSMutableAttributedString()
+        func add(_ text: String, link: String? = nil) {
+            var attributes = base
+            if let link { attributes[.link] = URL(string: link) }
+            credits.append(NSAttributedString(string: text, attributes: attributes))
+        }
+        add("Uses ")
+        add("FFmpeg", link: "https://ffmpeg.org")
+        add(", licensed under the ")
+        add("LGPL 2.1", link: "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html")
+        add(" (")
+        add("source", link: "https://ffmpeg.org/releases/")
+        add(")")
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
+        NSApp.activate()
+    }
+}
+
 @main
 struct EditroomApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
@@ -156,7 +183,8 @@ struct EditroomApp: App {
         .defaultSize(width: 1480, height: 940)
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
-            CommandGroup(after: .appInfo) {
+            CommandGroup(replacing: .appInfo) {
+                Button("About Editroom") { AboutPanel.show() }
                 Button("Check for Updates…") { Updates.shared.check() }
             }
             CommandGroup(replacing: .newItem) {
