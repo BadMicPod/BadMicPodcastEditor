@@ -172,7 +172,8 @@ enum LocalBrain {
     /// No title unless they ask (a title over every cut gets in the way more often than it helps).
     static func titleAsked(_ request: String) -> String? {
         let t = request.lowercased()
-        let asks = ["title", "caption", "heading", "text on", "words on", "add text", "put text", "some text", "call it", "name it",
+        let quoted = request.range(of: #"(^|\s)["“'‘][^"”'’]{1,60}["”'’]"#, options: .regularExpression) != nil
+        let asks = (quoted && t.contains("caption")) || ["title", "heading", "text on", "words on", "add text", "put text", "some text", "call it", "name it",
                     "text saying", "text that says"].contains { t.contains($0) }
         let refuses = ["no title", "without a title", "without title", "no text", "without text", "remove the title", "take out the title"]
             .contains { t.contains($0) }

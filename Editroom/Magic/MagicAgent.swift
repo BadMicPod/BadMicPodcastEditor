@@ -235,7 +235,9 @@ final class MagicAgent: ObservableObject {
         2. list_media says what each clip "shows" (seen on this Mac): a quick guide to find shots by what's in \
         them, and search_media finds shots by what they show or what's said in them, with times. Look at the footage with look_at_media to see what's in each shot, then save what you saw with note_media. A clip whose list_media "notes" already say what's in it needn't be looked at again unless you need an exact frame. If people talk in it (list_media \
         says "speech"), get_transcript gives what's said with times: cut pauses, retakes and filler between \
-        sentences, keep sentences whole, and put other shots over the talking where it helps. analyze_media finds a clip's best \
+        sentences, keep sentences whole, and put other shots over the talking where it helps. For captions or subtitles, use \
+        set_captions, never add_title: it captions what's said, timed to the speech, and keeps up with every later edit; its \
+        edit option fixes a misheard word or takes a caption out. analyze_media finds a clip's best \
         moments, or a song's tempo and bar starts.
         3. Choose. Leave out shots that are blurry, dark, shaky, accidental, near-duplicates of a better one, or \
         screenshots. Find an order that tells something: an opening that sets the scene, a build, the best moments, \

@@ -6,14 +6,18 @@ import Foundation
 enum LocalTitle {
     /// A title for the edit on the timeline, not a new cut that happens to have one.
     static func asks(_ request: String, project p: Project) -> Bool {
-        let t = request.lowercased()
         let hasEdit = p.clips.contains { $0.kind == .video || $0.kind == .image }
-        let newCut = ["new cut", "new edit", "new video", "montage", "recut", "re-cut", "from scratch", "start over"].contains { t.contains($0) }
+        return hasEdit && !newCut(request) && LocalBrain.titleAsked(request) != nil
+    }
+
+    /// A new cut to make ("make a 18s video…", "a new montage"), not a change to the edit that's there.
+    static func newCut(_ request: String) -> Bool {
+        let t = request.lowercased()
+        return ["new cut", "new edit", "new video", "montage", "recut", "re-cut", "from scratch", "start over"].contains { t.contains($0) }
             || LocalBrain.wantsLibrary(request)
             // "make a 18s video…", "create an edit…": a cut to make, with a title in it.
             || (["make a", "make an", "make me", "create", "build a", "cut a", "edit a"].contains { t.contains($0) }
                 && ["video", "cut", "edit", "montage", "reel", "recap", "vlog", "movie", "film"].contains { t.contains($0) })
-        return hasEdit && !newCut && LocalBrain.titleAsked(request) != nil
     }
 
     enum Spot { case start, end, playhead, at(Double) }

@@ -655,6 +655,36 @@ enum SelfTest {
             log("LOCAL TITLE \(good ? "OK" : "FAIL") end=\(endOK) start=\(startOK) newCut=\(newCut)")
             ok = ok && good
         }
+        // Local captions: "add captions" captions everyone talking (not a title); quoted words are still a title.
+        do {
+            var p = Project()
+            let file = MediaAsset(path: "/tmp/Talk.mov", name: "Talk.mov", kind: .video, duration: 5, width: 1920, height: 1080, fps: 30, hasAudio: true)
+            p.assets = [file]
+            let link = UUID()
+            var v = Clip(trackID: p.videoTracks[0].id, kind: .video, assetID: file.id, start: 0, duration: 5)
+            v.linkID = link
+            var a = Clip(trackID: p.audioTracks[0].id, kind: .audio, assetID: file.id, start: 0, duration: 5)
+            a.linkID = link
+            p.clips = [v, a]
+            let pointers = MagicPointers(playhead: 0, selected: [], range: nil)
+            let reads = LocalCaptions.asks("add captions", project: p) && LocalCaptions.asks("can you put subtitles on this", project: p)
+                && !LocalCaptions.asks("add a caption saying 'Day one'", project: p) && !LocalCaptions.asks("make a new montage with captions", project: p)
+                && LocalCaptions.asks("add captions to Robbie's clip", project: p)
+            let notTitle = LocalBrain.titleAsked("add captions") == nil && LocalBrain.titleAsked("add a caption saying 'Day one'") == "Day one"
+            func applied(_ request: String, to base: Project) -> Project? {
+                guard let plan = LocalCaptions.plan(request: request, pointers: pointers, project: base, transcript: { _ in nil }).plan else { return nil }
+                var q = plan.base
+                for t in plan.tasks { t.edit.apply(&q, 1) }
+                return q
+            }
+            let added = applied("add captions", to: p)
+            let addOK = added.map { $0.captions != nil && $0.captionedClips.map(\.id) == [a.id] } ?? false
+            let removed = added.flatMap { applied("remove the captions", to: $0) }
+            let removeOK = removed.map { $0.captions == nil } ?? false
+            let good = reads && notTitle && addOK && removeOK
+            log("LOCAL CAPTIONS \(good ? "OK" : "FAIL") reads=\(reads) notTitle=\(notTitle) add=\(addOK) remove=\(removeOK)")
+            ok = ok && good
+        }
         // Typed timecodes.
         do {
             let cases: [(String, Double?)] = [("1000", 10), ("1:02:03", 62.1), ("00:00:02:15", 2.5), ("12", 0.4), ("abc", nil)]

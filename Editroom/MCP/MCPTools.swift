@@ -81,13 +81,17 @@ enum MCPTools {
                   "around": num("The speed before and after (default 1)."),
                   "remove": ["type": "boolean", "description": "Take the clip's ramp away (its speed stays)."]],
                  required: ["clip_id"]),
-            tool("set_captions", "Set captions", "Captions from what's said: a caption track above the video shows the words of each captioned clip in short phrases, timed to the speech, and follows every trim and move of those clips. Give clip_ids to caption those clips' speech (a video's sound is its linked audio clip); with none, every clip of people talking is captioned (sound from video files and voiceover tracks, not music). Also sets the captions' style. remove: true takes captions off clip_ids, or removes the caption track with none. Returns the captions.",
+            tool("set_captions", "Set captions", "Captions from what's said: a caption track above the video shows the words of each captioned clip in short phrases, timed to the speech, and follows every trim and move of those clips. Give clip_ids to caption those clips' speech (a video's sound is its linked audio clip); with none, every clip of people talking is captioned (sound from video files and voiceover tracks, not music). Also sets the captions' style, and with edit fixes captions: a misheard word, a name spelled right, or a caption taken out. remove: true takes captions off clip_ids, or removes the caption track with none. Returns the captions.",
                  ["clip_ids": ["type": "array", "items": ["type": "string"], "description": "Clips whose speech to caption (or un-caption with remove)."],
                   "remove": ["type": "boolean", "description": "Take captions off instead."],
                   "size": num("Text size, 28...140 (default 64)."),
                   "position": num("Where they sit, 0.1 (top) to 0.95 (bottom) of the frame (default 0.78)."),
                   "highlight": ["type": "boolean", "description": "Light up each word as it's said (default true)."],
-                  "hidden": ["type": "boolean", "description": "Hide or show the caption track (hidden captions aren't exported)."]]),
+                  "hidden": ["type": "boolean", "description": "Hide or show the caption track (hidden captions aren't exported)."],
+                  "edit": ["type": "array", "description": "Captions to change, each found by a timeline time inside it (as set_captions or get_project return them): the words it should say, or \"\" to take it out. The caption keeps its time.",
+                           "items": ["type": "object", "properties": ["at": ["type": "number", "description": "Timeline seconds inside the caption."],
+                                                                     "text": ["type": "string", "description": "What it should say."]],
+                                     "required": ["at", "text"]]]]),
             tool("split_clip", "Split clip", "Cuts a clip (and its linked clip) in two with the blade. Returns the new right-hand pieces.", ["clip_id": str("A clip's id."), "at": num("Timeline time inside the clip.")], required: ["clip_id", "at"]),
             tool("delete_clips", "Delete clips", "Deletes clips and anything linked to them.", ["clip_ids": ["type": "array", "items": ["type": "string"]], "ripple": ["type": "boolean", "description": "Close the gap left behind (default false)."]], required: ["clip_ids"]),
             tool("set_grade", "Set grade", "Colour for video, photo and title clips. Leave out what shouldn't change.",
@@ -343,9 +347,26 @@ enum MCPTools {
             let targets = p.unlocked(given.isEmpty ? (p.captions == nil ? p.defaultCaptionTargets : []) : p.captionTargets(given))
             if !given.isEmpty, targets.isEmpty { throw MCPToolError("Those clips have no sound to caption.") }
             if p.captions == nil, targets.isEmpty { throw MCPToolError("There's no one talking to caption: give clip_ids of clips with speech.") }
+            if args["edit"] != nil, p.captions == nil, targets.isEmpty { throw MCPToolError("There are no captions to edit.") }
             // What's said in them, heard first, so the captions are there when this returns.
             for c in p.clips where targets.contains(c.id) {
                 if let id = c.assetID, let url = model.media.soundURL(id) { _ = await Transcripts.shared.ready(url) }
+            }
+            // Captions to fix, found on the captions as they'll be once these clips are captioned.
+            var after = p
+            after.addCaptions(targets)
+            let shown = CaptionLayout.blocks(after) { model.media.transcript($0.id) }
+            var fixes: [(CaptionBlock, String)] = []
+            for e in args["edit"] as? [[String: Any]] ?? [] {
+                guard let at = (e["at"] as? Double) ?? (e["at"] as? Int).map(Double.init), let text = e["text"] as? String else {
+                    throw MCPToolError("Each edit needs at (timeline seconds) and text.")
+                }
+                let near = shown.first { at >= $0.start && at < $0.end }
+                    ?? shown.min { abs(($0.start + $0.end) / 2 - at) < abs(($1.start + $1.end) / 2 - at) }.flatMap { b in
+                        at >= b.start - 0.5 && at < b.end + 0.5 ? b : nil
+                    }
+                guard let b = near else { throw MCPToolError("No caption at \(String(format: "%.2f", at))s.") }
+                fixes.append((b, text))
             }
             let size = number("size").map { $0.clamped(to: CaptionStyle.sizeRange) }
             let position = number("position").map { $0.clamped(to: 0.1...0.95) }
@@ -356,6 +377,7 @@ enum MCPTools {
                 if let position { proj.captions?.style.y = position }
                 if let highlight { proj.captions?.style.highlight = highlight }
                 if let hidden { proj.captions?.hidden = hidden }
+                for (b, text) in fixes { proj.setCaptionText(b, to: text) }
             }], model, who, draft)
             return json(["captions": captionsJSON(draft?.project ?? model.project, model)])
 

@@ -438,6 +438,14 @@ final class EditorModel: ObservableObject {
                                     try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: args[k + 2]))
                                 }
                             }
+                            // The AI's fix: the second caption retyped, the third taken out.
+                            if blocks.count >= 3 {
+                                let out = try? await MCPTools.call("set_captions", ["edit": [["at": (blocks[1].start + blocks[1].end) / 2, "text": "We made Editroom"],
+                                                                                            ["at": blocks[2].start + 0.01, "text": ""]]], model: self, client: nil)
+                                let now = self.captionBlocks
+                                log += "CAPTIONS edit via set_captions: \(out == nil ? "failed" : "ok")\n"
+                                for b in now.prefix(4) { log += String(format: "  %.2f-%.2f  ", b.start, b.end) + b.text + "\n" }
+                            }
                             FileHandle.standardError.write(log.data(using: .utf8)!)
                         }
                     }

@@ -1095,6 +1095,25 @@ enum LocalMagic {
                 await perform(outcome, model: model, run: run)
                 return
             }
+            // Captions from what's said (heard on this Mac first), or taking them off.
+            if LocalCaptions.asks(request, project: model.project) {
+                let p = model.project
+                if !LocalCaptions.removes(request) {
+                    state.status = "Listening"
+                    for c in p.clips where LocalCaptions.targets(pointers: pointers, project: p).contains(c.id) {
+                        if let id = c.assetID, let url = model.media.soundURL(id) { _ = await Transcripts.shared.ready(url, limit: 60) }
+                        guard run == MagicShow.runID else { return }
+                    }
+                }
+                state.busy = false
+                state.status = nil
+                let outcome = LocalCaptions.plan(request: request, pointers: pointers, project: model.project) { model.media.transcript($0.id) }
+                if CommandLine.arguments.contains("--magic-local") {
+                    FileHandle.standardError.write("MAGIC LOCAL captions: \(outcome.said) (\(outcome.plan?.tasks.count ?? 0) edits)\n".data(using: .utf8)!)
+                }
+                await perform(outcome, model: model, run: run)
+                return
+            }
             // A title on the edit that's there: at the start, the end or the playhead, nothing else changed.
             if LocalTitle.asks(request, project: model.project) {
                 state.busy = false
