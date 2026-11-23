@@ -15,3 +15,4 @@ claude_desktop_config.json
 *.p12
 *.key
 secrets*
+dist/

@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { Updates.shared.start() }
         NotificationCenter.default.addObserver(forName: NSMenu.didAddItemNotification, object: nil, queue: .main) { note in
             // Tidied once SwiftUI has finished updating the menus, never in the middle of it.
             MainActor.assumeIsolated { MenuCleanup.scheduleTidy() }
@@ -150,6 +151,9 @@ struct EditroomApp: App {
         .defaultSize(width: 1480, height: 940)
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { Updates.shared.check() }
+            }
             CommandGroup(replacing: .newItem) {
                 Button("New") { model.newProject() }.keyboardShortcut(keys.menu(.new))
                 Button("Open…") { model.openProject() }.keyboardShortcut(keys.menu(.open))

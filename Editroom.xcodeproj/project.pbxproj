@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		CA0000000000000000000102 /* ffmpeg in Copy ffmpeg */ = {isa = PBXBuildFile; fileRef = CA0000000000000000000101 /* ffmpeg */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		CA0000000000000000000203 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = CA0000000000000000000202 /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -42,6 +43,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CA0000000000000000000203 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -86,6 +88,7 @@
 			);
 			name = Editroom;
 			packageProductDependencies = (
+				CA0000000000000000000202 /* Sparkle */,
 			);
 			productName = Editroom;
 			productReference = CA0000000000000000000001 /* Editroom.app */;
@@ -115,6 +118,9 @@
 			);
 			mainGroup = CA0000000000000000000004;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				CA0000000000000000000201 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = CA0000000000000000000005 /* Products */;
 			projectDirPath = "";
@@ -286,6 +292,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		CA0000000000000000000201 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.6.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		CA0000000000000000000202 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CA0000000000000000000201 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = CA0000000000000000000009 /* Project object */;
 }

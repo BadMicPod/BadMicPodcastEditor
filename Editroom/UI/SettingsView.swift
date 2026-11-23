@@ -712,10 +712,15 @@ private struct AppRow: View {
 
 // MARK: Updates
 
-/// Which version this is, and (once public releases begin) checking for new ones.
+/// Which version this is, and checking for new ones (Updates).
 private struct UpdateSettings: View {
     private var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development" }
     private var build: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—" }
+    @ObservedObject private var updates = Updates.shared
+    private var checked: String {
+        guard let d = updates.lastCheck else { return "Never" }
+        return d.formatted(date: .abbreviated, time: .shortened)
+    }
 
     var body: some View {
         ScrollView {
@@ -723,50 +728,30 @@ private struct UpdateSettings: View {
                 Card(title: "Software Update") {
                     VStack(alignment: .leading, spacing: 12) {
                         Row(name: "Installed version", value: "\(version) (\(build))")
-                        Row(name: "Release channel", value: "Development")
+                        Row(name: "Last checked", value: checked)
                         Divider().overlay(Theme.stroke)
-                        Text("Automatic updates aren't connected yet.")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Theme.text)
-                        Text("Sparkle will check for and install updates once public releases begin. This build has no update feed.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(Theme.textDim)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Toggle("Check for updates automatically", isOn: .constant(false))
+                        Toggle("Check for updates automatically", isOn: Binding(get: { updates.automatic }, set: { updates.automatic = $0 }))
                             .toggleStyle(.checkbox)
                             .font(.system(size: 12))
-                            .disabled(true)
-                        PillButton(title: "Check for Updates…", prominent: false) {}
-                            .disabled(true)
+                            .disabled(!updates.running)
+                        PillButton(title: "Check for Updates…", prominent: false) { updates.check() }
+                            .disabled(!updates.canCheck)
+                        if !updates.running {
+                            Text("This build doesn't check for updates.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Theme.textFaint)
+                        }
                     }
                 }
                 Card(title: "Release Notes") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Latest public release notes")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Theme.text)
-                        Text("Release notes will appear here once a public release feed is connected.")
+                        Text("Each update lists what's new before you install it. Every version's notes are on GitHub.")
                             .font(.system(size: 12))
                             .foregroundStyle(Theme.textDim)
+                            .fixedSize(horizontal: false, vertical: true)
                         PillButton(title: "View GitHub Releases", prominent: false) {
                             NSWorkspace.shared.open(URL(string: "https://github.com/robbietilton/Editroom/releases")!)
                         }
-                        Divider().overlay(Theme.stroke)
-                        Text("Current development changes")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Theme.text)
-                        Text("""
-                        • Magic: a quick cut on this Mac, or Claude or ChatGPT edits from what you ask
-                        • Edit with Claude or ChatGPT from their own apps, with their own cursor
-                        • Editable keyboard shortcuts
-                        • Settings for Magic and AI apps
-                        """)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Theme.text)
-                            .lineSpacing(3)
-                        Text("These describe this build; they aren't published release notes.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Theme.textFaint)
                     }
                 }
             }
