@@ -154,23 +154,25 @@ final class MagicShow: NSObject {
         show.begin()
     }
 
-    /// What a new cut is, in terms of what they asked: "Made a 12-second cut of the little girl eating
-    /// from 5 moments in IMG_1838, cut to the beat."
+    /// What a new cut is, in terms of what they asked and in the app's own words (clips on the
+    /// timeline, from files in Media): "Made a 12-second cut of the little girl eating: 5 clips from
+    /// IMG_1838, cut to the beat."
     static func madeNote(_ d: EditDecision, length: Double, recipe: LocalRecipe) -> String {
         var names: [String] = []
         for s in d.shots where !names.contains(s.asset.name) { names.append(s.asset.name) }
         let of = recipe.asked.isEmpty ? "" : " of " + (recipe.asked.hasPrefix("the ") ? "" : "the ") + recipe.asked
         let n = d.shots.count
+        let clips = n == 1 ? "1 clip" : "\(n) clips"
         let from: String
         if names.count == 1 {
-            // One file: the moments taken from it, not "shots" (it's one shot, cut up).
-            from = n == 1 ? " from \(names[0])" : " from \(n) moments in \(names[0])"
+            from = " from \(names[0])"
         } else if names.count <= 3 || ((!recipe.asked.isEmpty || !recipe.keepOnly.isEmpty) && names.count <= 5) {
-            from = " from \(n) shots of " + names.dropLast().joined(separator: ", ") + " and " + names.last!
+            from = " from " + names.dropLast().joined(separator: ", ") + " and " + names.last!
         } else {
-            from = " from \(n) shots across \(names.count) clips"
+            let videos = d.shots.allSatisfy { $0.asset.kind == .video } ? "videos" : "files"
+            from = " from \(names.count) \(videos) in your Media"
         }
-        return String(format: "Made a %.0f-second cut", length) + of + from + (d.music == nil ? "" : ", cut to the beat") + "."
+        return String(format: "Made a %.0f-second cut", length) + of + ": " + clips + from + (d.music == nil ? "" : ", cut to the beat") + "."
     }
 
     /// Looks at the media, plans a cut, and plays it. `fromMouse` spawns the cursors from where the

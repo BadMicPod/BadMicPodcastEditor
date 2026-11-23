@@ -247,7 +247,7 @@ extension LocalPointed {
         edits.append(.place(group, asset: id))
         let whereSaid = playhead == nil ? "at the end" : p.clips.isEmpty ? "" : "at the playhead"
         return Outcome(plan: MCPDraft.plan(base: p, edits: edits),
-                       said: "Added a \(Int(length.rounded()))-second shot of " + (recipe.asked.isEmpty ? asset.name : "the \(recipe.asked) from \(asset.name)") + (whereSaid.isEmpty ? "." : " \(whereSaid)."))
+                       said: "Added a \(Int(length.rounded()))-second clip of " + (recipe.asked.isEmpty ? asset.name : "the \(recipe.asked) from \(asset.name)") + (whereSaid.isEmpty ? "." : " \(whereSaid)."))
     }
 
     static func reorder(request: String, project p: Project) -> Outcome? {
