@@ -675,6 +675,7 @@ final class MagicShow: NSObject {
         var cardLast: [UUID: Double] = [:]
         for t in tasks where t.edit.isGradeCard { if let id = t.edit.clipID { cardLeft[id, default: 0] += 1 } }
 
+        few = tasks.count <= 6
         let count = agentMode ? 1 : min(64, max(14, Int(Double(tasks.count) / 2.4)))
         var rng = SeededRandom(seed: UInt64(tasks.count))
         for i in 0..<count {
@@ -786,12 +787,17 @@ final class MagicShow: NSObject {
         }
         // Stretched to last about targetLength, but not the first steps: those play in real time.
         quickEnd = min(showEnd, firstDone)
-        pace = agentMode || showEnd <= quickEnd ? 1 : max(1, (Self.targetLength - quickEnd) / (showEnd - quickEnd))
+        // A few cursors (an AI's small edit, a clip added) aren't stretched: that only slowed one cursor
+        // down, the trip back to the button included. A swarm is, so it reads as a show.
+        pace = agentMode || few || showEnd <= quickEnd ? 1 : max(1, (Self.targetLength - quickEnd) / (showEnd - quickEnd))
     }
+
+    /// A small edit (a handful of steps, so only a cursor or three ever work on it).
+    private var few = false
 
     /// How slow things are at a moment: the show starts unhurried and speeds up; an agent works at
     /// a steady, quick pace.
-    private func pace(at t: Double) -> Double { agentMode ? 0.85 : Self.tempo(t) }
+    private func pace(at t: Double) -> Double { agentMode || few ? 0.85 : Self.tempo(t) }
 
     // MARK: Overlay
 
