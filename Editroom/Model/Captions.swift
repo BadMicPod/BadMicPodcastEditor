@@ -16,8 +16,27 @@ struct CaptionStyle: Codable, Hashable {
     var y: Double = 0.78
     /// The word being said lights up.
     var highlight = true
+    var textColor = RGBA.white
+    var highlightColor = RGBA(r: 1, g: 0.84, b: 0.25, a: 1)
+    /// A dark edge around the letters, so they read over anything.
+    var outline = true
+    var outlineColor = RGBA.black
 
     static let sizeRange = 28.0...140.0
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = CaptionStyle()
+        size = try c.decodeIfPresent(Double.self, forKey: .size) ?? d.size
+        y = try c.decodeIfPresent(Double.self, forKey: .y) ?? d.y
+        highlight = try c.decodeIfPresent(Bool.self, forKey: .highlight) ?? d.highlight
+        textColor = try c.decodeIfPresent(RGBA.self, forKey: .textColor) ?? d.textColor
+        highlightColor = try c.decodeIfPresent(RGBA.self, forKey: .highlightColor) ?? d.highlightColor
+        outline = try c.decodeIfPresent(Bool.self, forKey: .outline) ?? d.outline
+        outlineColor = try c.decodeIfPresent(RGBA.self, forKey: .outlineColor) ?? d.outlineColor
+    }
 }
 
 /// A change to one word of a file's transcript, made on a caption: new text, or "" to leave it out.
@@ -79,15 +98,20 @@ extension Project {
         for i in clips.indices where ids.contains(clips[i].id) { clips[i].captioned = true }
     }
 
-    /// Turns captions off for these clips; the track goes when nothing's captioned any more.
+    /// Turns captions off for these clips; the track goes when nothing's captioned any more. Words fixed or
+    /// left out in a file no captioned clip uses any more go too, so captioning it again starts afresh.
     mutating func removeCaptions(_ ids: Set<UUID>) {
         for i in clips.indices where ids.contains(clips[i].id) { clips[i].captioned = nil }
-        if !clips.contains(where: { $0.captioned == true }) { captions = nil }
+        if !clips.contains(where: { $0.captioned == true }) { return removeCaptionTrack() }
+        let still = Set(clips.filter { $0.captioned == true }.compactMap(\.assetID))
+        captionFixes = captionFixes?.filter { still.contains($0.key) }
+        if captionFixes?.isEmpty == true { captionFixes = nil }
     }
 
-    /// Removes the caption track and every clip's captions.
+    /// Removes the caption track, every clip's captions, and every word fixed or left out.
     mutating func removeCaptionTrack() {
         captions = nil
+        captionFixes = nil
         for i in clips.indices { clips[i].captioned = nil }
     }
 
@@ -101,7 +125,8 @@ extension Project {
             fixes.append(CaptionFix(start: source, text: t))
         }
         if new.count == block.words.count {
-            for (w, t) in zip(block.words, new) where w.text != t { set(w.source, t) }
+            // Every word set, so words an earlier edit left out come back.
+            for (w, t) in zip(block.words, new) { set(w.source, t) }
         } else {
             for (i, w) in block.words.enumerated() { set(w.source, i == 0 ? new.joined(separator: " ") : "") }
         }

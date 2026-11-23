@@ -473,7 +473,7 @@ final class TimelineCanvas: NSView {
         }
 
         guard let h = hit(at: p) else {
-            if !extend { model.selection = [] }
+            if !extend { model.selection = []; model.releaseCaptions() }
             drag = .marquee(origin: CGPoint(x: p.x + view.scrollX, y: p.y + view.scrollY), base: model.selection)
             return
         }

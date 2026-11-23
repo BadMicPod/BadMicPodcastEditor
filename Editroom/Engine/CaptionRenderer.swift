@@ -18,9 +18,6 @@ struct CaptionLayer {
 }
 
 enum CaptionRenderer {
-    /// The lit word's colour.
-    static let litColor = NSColor(srgbRed: 1, green: 0.84, blue: 0.25, alpha: 1)
-
     /// Each caption, split by word when the word being said lights up.
     static func layers(_ blocks: [CaptionBlock], style: CaptionStyle) -> [CaptionLayer] {
         var out: [CaptionLayer] = []
@@ -43,7 +40,8 @@ enum CaptionRenderer {
     private struct Key: Hashable {
         let words: [String]
         let lit: Int?
-        let size: Double
+        /// The style, less its height in the frame (placed after drawing).
+        let style: CaptionStyle
         let w: Int
         let h: Int
     }
@@ -54,11 +52,13 @@ enum CaptionRenderer {
     /// The caption, centred across the frame at the style's height. Drawn once and kept.
     static func image(words: [String], lit: Int?, style: CaptionStyle, output: CGSize) -> CIImage? {
         guard !words.isEmpty, output.width > 0, output.height > 0 else { return nil }
-        let key = Key(words: words, lit: lit, size: style.size, w: Int(output.width), h: Int(output.height))
+        var look = style
+        look.y = 0
+        let key = Key(words: words, lit: lit, style: look, w: Int(output.width), h: Int(output.height))
         lock.lock()
         let hit = cache[key]
         lock.unlock()
-        let drawn = hit ?? draw(words: words, lit: lit, size: style.size, output: output)
+        let drawn = hit ?? draw(words: words, lit: lit, style: style, output: output)
         guard let drawn else { return nil }
         if hit == nil {
             lock.lock()
@@ -73,9 +73,10 @@ enum CaptionRenderer {
         return drawn.transformed(by: CGAffineTransform(translationX: ((output.width - e.width) / 2).rounded(), y: y.rounded()))
     }
 
-    /// Bold white words with a dark outline, the lit one in yellow, at the bottom left of the image.
-    private static func draw(words: [String], lit: Int?, size: Double, output: CGSize) -> CIImage? {
-        let pt = CGFloat(size) * min(output.width, output.height) / 1080
+    /// Heavy words in the text colour, with an outline if it has one, the lit one in the highlight colour.
+    private static func draw(words: [String], lit: Int?, style: CaptionStyle, output: CGSize) -> CIImage? {
+        let pt = CGFloat(style.size) * min(output.width, output.height) / 1080
+        let ns = { (c: RGBA) in NSColor(srgbRed: c.r, green: c.g, blue: c.b, alpha: c.a) }
         let font = NSFont.systemFont(ofSize: pt, weight: .heavy)
         let para = NSMutableParagraphStyle()
         para.alignment = .center
@@ -87,10 +88,10 @@ enum CaptionRenderer {
                 if i > 0 { s.append(NSAttributedString(string: " ", attributes: [.font: font, .kern: pt * 0.06])) }
                 var attrs: [NSAttributedString.Key: Any] = [.font: font, .paragraphStyle: para]
                 if fill {
-                    attrs[.foregroundColor] = i == lit ? litColor : NSColor.white
+                    attrs[.foregroundColor] = ns(i == lit ? style.highlightColor : style.textColor)
                 } else {
-                    attrs[.foregroundColor] = NSColor.black
-                    attrs[.strokeColor] = NSColor(white: 0, alpha: 0.9)
+                    attrs[.foregroundColor] = ns(style.outlineColor)
+                    attrs[.strokeColor] = ns(style.outlineColor)
                     attrs[.strokeWidth] = 22.0
                 }
                 s.append(NSAttributedString(string: w, attributes: attrs))
@@ -114,7 +115,7 @@ enum CaptionRenderer {
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = g
         let r = CGRect(x: pad, y: pad, width: tw, height: th)
-        outline.draw(with: r, options: opts)
+        if style.outline { outline.draw(with: r, options: opts) }
         fill.draw(with: r, options: opts)
         NSGraphicsContext.restoreGraphicsState()
         guard let cg = ctx.makeImage() else { return nil }

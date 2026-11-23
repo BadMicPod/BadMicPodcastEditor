@@ -1837,9 +1837,18 @@ enum SelfTest {
                 }
             }
             p.removeCaptions([ca.id])
-            let removed = p.captions == nil && !p.clips.contains { $0.captioned == true }
-            let good = picksSound && phrases && placed && follows && fixed && drawn && removed
-            log("CAPTIONS \(good ? "OK" : "FAIL") sound=\(picksSound) phrases=\(phrases) \(texts) placed=\(placed) follows=\(follows) \(moved.map { String(format: "%.3f", $0.start) }) fixed=\(fixed) drawn=\(drawn) removed=\(removed)")
+            let removed = p.captions == nil && !p.clips.contains { $0.captioned == true } && p.captionFixes == nil
+            // Captioned again: every word is back, the earlier edits gone.
+            p.addCaptions([ca.id])
+            let afresh = CaptionLayout.blocks(p, transcript: heard).map(\.text) == ["so here's the thing.", "we made it"]
+            // Typing: fewer words (the first takes them all), then the same words again.
+            blocks = CaptionLayout.blocks(p, transcript: heard)
+            p.setCaptionText(blocks[1], to: "we did")
+            let fewer = CaptionLayout.blocks(p, transcript: heard).last?.text == "we did"
+            p.setCaptionText(blocks[1], to: "we made it")
+            let back = CaptionLayout.blocks(p, transcript: heard).last?.text == "we made it"
+            let good = picksSound && phrases && placed && follows && fixed && drawn && removed && afresh && fewer && back
+            log("CAPTIONS \(good ? "OK" : "FAIL") sound=\(picksSound) phrases=\(phrases) \(texts) placed=\(placed) follows=\(follows) \(moved.map { String(format: "%.3f", $0.start) }) fixed=\(fixed) drawn=\(drawn) removed=\(removed) afresh=\(afresh) typing=\(fewer)/\(back)")
             ok = ok && good
         }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")

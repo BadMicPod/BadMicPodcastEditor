@@ -113,26 +113,35 @@ struct InspectorView: View {
                          format: { "\(Int($0.rounded()))%" },
                          onEditing: { if !$0 { model.commitLive() } },
                          onChange: { v in model.setCaptionStyle(live: true) { $0.y = (v / 100 * 1000).rounded() / 1000 } })
-                HStack(spacing: 8) {
-                    Chip(label: "Word highlight", active: track.style.highlight) {
-                        model.setCaptionStyle { $0.highlight.toggle() }
-                    }
-                    Spacer()
+                captionColorRow("Text", on: nil, color: track.style.textColor) { s, c in s.textColor = c }
+                captionColorRow("Word highlight", on: track.style.highlight, color: track.style.highlightColor,
+                                toggle: { $0.highlight.toggle() }) { s, c in s.highlightColor = c }
+                captionColorRow("Outline", on: track.style.outline, color: track.style.outlineColor,
+                                toggle: { $0.outline.toggle() }) { s, c in s.outlineColor = c }
+                if model.captionsWaiting {
+                    Text("Listening for what's said in the captioned clips…")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.textFaint)
                 }
             }
-            InspectorSection("Track") {
-                HStack(spacing: 8) {
-                    Chip(label: track.hidden ? "Show captions" : "Hide captions", active: track.hidden) {
-                        model.setCaptionsHidden(!track.hidden)
-                    }
-                    Chip(label: "Delete track", active: false) { model.removeCaptionTrack() }
-                    Spacer()
-                }
-                Text(model.captionsWaiting ? "Listening for what's said in the captioned clips…"
-                     : "\(blocks.count) caption\(blocks.count == 1 ? "" : "s") from \(Set(model.project.captionedClips.compactMap(\.assetID)).count) file\(Set(model.project.captionedClips.compactMap(\.assetID)).count == 1 ? "" : "s").")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Theme.textFaint)
+        }
+    }
+
+    /// A caption colour: its well, and for a part that can be off (highlight, outline) a chip to turn it on.
+    private func captionColorRow(_ label: String, on: Bool?, color: RGBA, toggle: ((inout CaptionStyle) -> Void)? = nil,
+                                 set: @escaping (inout CaptionStyle, RGBA) -> Void) -> some View {
+        HStack(spacing: 8) {
+            if let on, let toggle {
+                Chip(label: label, active: on) { model.setCaptionStyle(toggle) }
+            } else {
+                Text(label)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textDim)
             }
+            Spacer()
+            ColorField(color: color) { c in model.setCaptionStyle(live: true, settles: true) { set(&$0, c) } }
+                .frame(width: 44)
+                .opacity(on == false ? 0.4 : 1)
         }
     }
 
@@ -1731,6 +1740,9 @@ private struct CaptionTextField: View {
     @ObservedObject var model: EditorModel
     let block: CaptionBlock
     @State private var text = ""
+    /// The caption as it was when typing began: its words are the ones retyped, however the text changes.
+    @State private var editing: CaptionBlock?
+    @State private var cancelled = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -1746,9 +1758,26 @@ private struct CaptionTextField: View {
             .onAppear { text = block.text; takeRequest() }
             .onChange(of: block) { _, b in if !focused { text = b.text } }
             .onChange(of: model.captionEditRequest) { _, _ in takeRequest() }
-            .onChange(of: focused) { _, now in if !now { commit() } }
-            .onSubmit { commit(); focused = false }
-            .onExitCommand { text = block.text; focused = false }
+            // Shown in the viewer as it's typed (the playhead goes to the caption if it's elsewhere).
+            .onChange(of: text) { _, t in
+                guard focused, let b = editing else { return }
+                model.typeCaptionText(b, t)
+            }
+            .onChange(of: focused) { _, now in
+                if now {
+                    editing = block
+                    if model.playhead < block.start || model.playhead >= block.end { model.seek(to: (block.start + block.end) / 2) }
+                } else {
+                    commit()
+                }
+            }
+            .onSubmit { focused = false }
+            .onExitCommand {
+                cancelled = true
+                model.discardLive()
+                text = block.text
+                focused = false
+            }
     }
 
     private func takeRequest() {
@@ -1757,9 +1786,15 @@ private struct CaptionTextField: View {
         DispatchQueue.main.async { focused = true }
     }
 
+    /// Typing ends: what was typed is one undo step. Emptied, the caption's words are left out.
     private func commit() {
-        let new = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        guard new != block.text else { return }
-        model.setCaptionText(block, to: new)
+        defer { editing = nil; cancelled = false }
+        guard !cancelled, let b = editing else { return }
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            model.discardLive()
+            model.setCaptionText(b, to: "")
+        } else {
+            model.commitLive()
+        }
     }
 }

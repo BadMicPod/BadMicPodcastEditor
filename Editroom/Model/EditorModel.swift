@@ -1524,6 +1524,12 @@ final class EditorModel: ObservableObject {
         captionsFocused = false
     }
 
+    /// Clicking elsewhere on the timeline lets go of captions.
+    func releaseCaptions() {
+        if !captionSelection.isEmpty { captionSelection = [] }
+        if captionsFocused { captionsFocused = false }
+    }
+
     /// The caption track's header: shows the caption style in the inspector.
     func focusCaptions() {
         if !selection.isEmpty { selection = [] }
@@ -1543,15 +1549,23 @@ final class EditorModel: ObservableObject {
         mutate { $0.setCaptionText(block, to: text) }
     }
 
+    /// A caption's words as they're typed, shown at once; one undo step when typing ends (commitLive),
+    /// or put back with discardLive. Empty text waits for more typing rather than removing the caption.
+    func typeCaptionText(_ block: CaptionBlock, _ text: String) {
+        guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        live(autoCommit: false) { $0.setCaptionText(block, to: text) }
+    }
+
     func setCaptionsHidden(_ hidden: Bool) {
         mutate { $0.captions?.hidden = hidden }
     }
 
     /// Style changes; `live` for a slider being dragged.
-    func setCaptionStyle(live: Bool = false, _ change: (inout CaptionStyle) -> Void) {
+    /// `settles`: a live change that becomes an undo step by itself once it stops (colour wells).
+    func setCaptionStyle(live: Bool = false, settles: Bool = false, _ change: (inout CaptionStyle) -> Void) {
         guard project.captions != nil else { return }
         if live {
-            self.live(autoCommit: false) { p in if p.captions != nil { change(&p.captions!.style) } }
+            self.live(autoCommit: settles) { p in if p.captions != nil { change(&p.captions!.style) } }
         } else {
             mutate { p in if p.captions != nil { change(&p.captions!.style) } }
         }
