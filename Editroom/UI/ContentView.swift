@@ -286,6 +286,7 @@ struct MagicButton: View {
         return ai.ready ?? state.status ?? state.stage
     }
     private static func sentence(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
+    private static func clipped(_ s: String) -> String { s.count > 40 ? String(s.prefix(39)) + "…" : s }
     /// Who's working, in the button: Claude or ChatGPT, or Local for Editroom's own cut.
     private var worker: String? {
         if ai.running { return ai.agent?.name }
@@ -317,20 +318,21 @@ struct MagicButton: View {
     var body: some View {
         HStack(spacing: 8) {
             // Right-aligned, so it grows to the left, away from the button.
-            Text(status ?? "")
+            // Kept at its own size (long ones cut short by hand): in the toolbar, anything that can
+            // shrink is shrunk, and the button must never be.
+            Text(Self.clipped(status ?? ""))
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.text.opacity(0.6))
                 .monospacedDigit()
                 .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: 260, alignment: .trailing)
-                .fixedSize(horizontal: status == nil, vertical: false)
+                .fixedSize()
                 .id(status ?? "")
                 .transition(.opacity)
                 .animation(.easeOut(duration: 0.2), value: status)
                 .allowsHitTesting(false)
-            button
+            button.fixedSize().layoutPriority(1)
         }
+        .fixedSize()
     }
 
     private var button: some View {
@@ -366,6 +368,7 @@ struct MagicButton: View {
             }
             .padding(.horizontal, 11)
             .frame(height: 26)
+            .fixedSize()
             .background(Capsule().fill(Theme.ink.opacity(hovering ? 0.14 : 0.08)))
             .overlay(Capsule().strokeBorder(Theme.ink.opacity(0.05)))
             .contentShape(Capsule())
