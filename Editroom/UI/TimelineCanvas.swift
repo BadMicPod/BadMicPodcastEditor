@@ -458,8 +458,13 @@ final class TimelineCanvas: NSView {
                 model.selectCaptions([b.id])
             }
             if event.clickCount == 2 {
+                model.selectCaptions([b.id])
                 model.seek(to: (b.start + b.end) / 2)
                 model.captionEditRequest = b.id
+            } else {
+                // Captions don't move, so a drag from one boxes in more.
+                drag = .captionMarquee(origin: CGPoint(x: p.x + view.scrollX, y: p.y + view.scrollY),
+                                       base: extend ? model.captionSelection : [])
             }
             needsDisplay = true
             return
@@ -590,7 +595,14 @@ final class TimelineCanvas: NSView {
                 if let cr = rect(for: c), cr.intersects(r) { ids.insert(c.id) }
             }
             ids = model.project.unlocked(model.project.linked(ids))
-            if ids != model.selection { model.selection = ids }
+            // A box drawn up over the caption track, touching no clips, picks the captions in it.
+            let captions = Set(model.captionBlocks.filter { captionRect($0)?.intersects(r) == true }.map(\.id))
+            if ids == base, !captions.isEmpty {
+                if captions != model.captionSelection { model.selectCaptions(captions) }
+            } else {
+                if !model.captionSelection.isEmpty, ids != base { model.releaseCaptions() }
+                if ids != model.selection { model.selection = ids }
+            }
             needsDisplay = true
         case .captionMarquee(let origin, let base):
             let current = CGPoint(x: p.x + view.scrollX, y: p.y + view.scrollY)
