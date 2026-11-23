@@ -298,8 +298,7 @@ struct MagicButton: View {
     /// thinking show, or the swarm.
     private var working: Bool { ai.running || state.busy || state.stage != nil }
 
-    /// One of the button's faces. The button is as wide as the widest of them all, so it never changes
-    /// size while it works.
+    /// One of the button's faces.
     private func face(_ text: String, spinning: Bool = false, icon: String = "wand.and.sparkles") -> some View {
         HStack(spacing: 5) {
             if spinning {
@@ -345,8 +344,10 @@ struct MagicButton: View {
             }
         } label: {
             ZStack {
-                // The widest faces, unseen, set the width.
-                ForEach(["ChatGPT", "Claude", "Local", "Magic"], id: \.self) { face($0, spinning: true).hidden() }
+                // Sized for who's working (or Magic), with room for Stop: it changes size only when a run
+                // starts or ends, never during one.
+                face(worker ?? "Magic", spinning: worker != nil).hidden()
+                face("Stop", icon: "stop.fill").hidden()
                 Group {
                     if let worker {
                         face(worker, spinning: true)
