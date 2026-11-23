@@ -1118,7 +1118,7 @@ enum LocalMagic {
             if LocalAdd.asks(request, project: model.project) {
                 state.busy = false
                 state.status = nil
-                let outcome = LocalAdd.plan(request: request, typed: typed, project: model.project)
+                let outcome = LocalAdd.plan(request: request, typed: typed, pointers: pointers, project: model.project)
                 if CommandLine.arguments.contains("--magic-local") {
                     FileHandle.standardError.write("MAGIC LOCAL add: \(outcome.said) (\(outcome.plan?.tasks.count ?? 0) edits)\n".data(using: .utf8)!)
                 }
