@@ -26,7 +26,7 @@ extension RGBA {
     }
 }
 
-/// The app's looks, picked in Settings > Appearance. Dark is the original; Auto is Light or Dark, as
+/// The app's looks, picked in Settings > General. Dark is the original; Auto is Light or Dark, as
 /// macOS is.
 enum AppTheme: String, CaseIterable, Identifiable {
     case auto, dark, grey, amber, light
@@ -119,7 +119,7 @@ struct Palette {
         sheet: 0xF4F4F2, sheetField: 0xFFFFFF, sheetFieldHover: 0xF8F8F6, sheetFieldStroke: 0xD3D3CE, sheetLabel: 0x5F5F5B)
 }
 
-/// The palette in use, shared by SwiftUI and the AppKit timeline. Changing it (Settings > Appearance)
+/// The palette in use, shared by SwiftUI and the AppKit timeline. Changing it (Settings > General)
 /// redraws the windows.
 enum Theme {
     /// The theme being drawn (never Auto: that's resolved to Light or Dark).

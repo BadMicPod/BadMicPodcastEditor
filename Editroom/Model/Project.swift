@@ -851,7 +851,7 @@ extension Project {
 
 // MARK: - Helpers
 
-/// How times are shown (Settings > Appearance): full timecode with frames, or plain minutes and seconds.
+/// How times are shown (Settings > General): full timecode with frames, or plain minutes and seconds.
 enum TimeStyle: String, CaseIterable, Identifiable {
     case timecode, simple
     var id: Self { self }

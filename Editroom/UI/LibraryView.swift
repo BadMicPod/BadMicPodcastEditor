@@ -6,7 +6,7 @@ struct LibraryView: View {
     @ObservedObject var media: MediaStore
     @State private var dropTargeted = false
     @State private var search = ""
-    /// Thumbnails (the default) or a list, from Settings > Appearance.
+    /// Thumbnails (the default) or a list, from Settings > General.
     @AppStorage(MediaLayout.key) private var layout = MediaLayout.thumbnails
     /// How wide the panel is, so a list's pictures can grow a little when it's widened.
     @State private var panelWidth: CGFloat = 252

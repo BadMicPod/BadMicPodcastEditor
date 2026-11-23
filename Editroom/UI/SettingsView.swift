@@ -6,17 +6,17 @@ struct SettingsView: View {
     @ObservedObject var model: EditorModel
 
     enum Tab: String, CaseIterable, Identifiable {
-        case appearance = "Appearance", shortcuts = "Shortcuts", magic = "Magic", updates = "Updates"
+        case general = "General", shortcuts = "Shortcuts", magic = "Magic", updates = "Updates"
         var id: Self { self }
         var symbol: String {
             switch self {
-            case .appearance: "paintpalette"
+            case .general: "gearshape"
             case .shortcuts: "keyboard"
             case .magic: "wand.and.sparkles"
             case .updates: "arrow.down.circle"
             }
         }
-        /// The tab's name kept in UserDefaults ("appearance", "shortcuts", "magic", "updates").
+        /// The tab's name kept in UserDefaults ("general", "shortcuts", "magic", "updates").
         var key: String { rawValue.lowercased() }
     }
 
@@ -24,7 +24,8 @@ struct SettingsView: View {
     @State private var hovered: Tab?
     /// A new theme rebuilds these views, so every colour is read again.
     @ObservedObject private var themes = ThemeStore.shared
-    private var tab: Tab { Tab.allCases.first { $0.key == tabKey } ?? .shortcuts }
+    /// General was called Appearance, and may still be the tab kept from then.
+    private var tab: Tab { tabKey == "appearance" ? .general : Tab.allCases.first { $0.key == tabKey } ?? .shortcuts }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -45,7 +46,7 @@ struct SettingsView: View {
                     .padding(.top, 20)
                     .padding(.bottom, 4)
                 switch tab {
-                case .appearance: AppearanceSettings()
+                case .general: GeneralSettings()
                 case .shortcuts: ShortcutSettings()
                 case .magic: MagicSettings(model: model)
                 case .updates: UpdateSettings()
@@ -87,12 +88,14 @@ private struct SectionLabel: View {
     }
 }
 
-// MARK: Appearance
+// MARK: General
 
-/// The themes, each shown as a small picture of the editor in its colours.
-private struct AppearanceSettings: View {
+/// The themes, each shown as a small picture of the editor in its colours; how media and times are shown;
+/// and whether projects save themselves.
+private struct GeneralSettings: View {
     @ObservedObject var themes = ThemeStore.shared
     @AppStorage(MediaLayout.key) private var mediaLayout = MediaLayout.thumbnails
+    @AppStorage(EditorModel.autosaveKey) private var autosave = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -114,6 +117,16 @@ private struct AppearanceSettings: View {
                 SettingsRow("Show time as") {
                     SegmentedChoice(options: [(TimeStyle.timecode, "00:00:05:15"), (TimeStyle.simple, "0:05.50")],
                                     selection: $themes.timeStyle, mono: true)
+                }
+            }
+            SettingsSection("Saving") {
+                SettingsRow("Auto-save", detail: autosave ? "Saved projects save themselves as you edit."
+                                                          : "Projects change only when you save (⌘S).") {
+                    Toggle("", isOn: $autosave)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .controlSize(.small)
+                        .tint(Theme.accent)
                 }
             }
         }

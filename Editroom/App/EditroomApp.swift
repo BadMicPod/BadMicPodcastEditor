@@ -40,6 +40,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// With Auto-save off, unsaved changes ask Save, Don't Save or Cancel before Editroom quits.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated { model?.confirmDiscard(quitting: true) ?? true } ? .terminateNow : .terminateCancel
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated { model?.autosaveNow() }
     }

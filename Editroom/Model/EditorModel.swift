@@ -481,8 +481,18 @@ final class EditorModel: ObservableObject {
         }
     }
 
+    /// Settings > General > Auto-save. On (the default), a saved project is written in place as you edit.
+    /// Off, the project file changes only on Save; edits still go to the recovery copy, so a crash loses nothing.
+    static let autosaveKey = "autosave"
+    static var autosaves: Bool { UserDefaults.standard.object(forKey: autosaveKey) as? Bool ?? true }
+    /// The project file the recovery copy holds unsaved changes to, when Auto-save is off.
+    private var recoveryFor: String? {
+        get { UserDefaults.standard.string(forKey: "recoveryFor") }
+        set { UserDefaults.standard.set(newValue, forKey: "recoveryFor") }
+    }
+
     /// Two seconds after the last change, and never in the middle of a drag: a saved project is
-    /// saved in place, and untitled work goes to the recovery copy.
+    /// saved in place (or, with Auto-save off, kept in the recovery copy), and untitled work goes to the recovery copy.
     private func autosaveIfIdle() {
         guard isDirty, liveSnapshot == nil, Date().timeIntervalSince(lastEdit) > 2 else { return }
         autosaveNow()
@@ -490,21 +500,40 @@ final class EditorModel: ObservableObject {
 
     func autosaveNow() {
         commitLive()
-        if let url = fileURL {
+        if let url = fileURL, Self.autosaves {
             guard isDirty else { return }
             write(to: url)
             lastSession = url.path
+        } else if let url = fileURL {
+            // Auto-save off: the file is left alone, and the changes wait in the recovery copy.
+            guard isDirty, lastRecovered != project else { return }
+            if let data = try? JSONEncoder().encode(SavedDocument(project: project)) {
+                try? data.write(to: Self.recoveryURL, options: .atomic)
+                lastRecovered = project
+                recoveryFor = url.path
+                lastSession = url.path
+            }
         } else if project.clips.isEmpty && project.assets.isEmpty {
             try? FileManager.default.removeItem(at: Self.recoveryURL)
             if lastSession == "untitled" { lastSession = nil }
-        } else if lastRecovered != project {
+        } else if isDirty, lastRecovered != project {
             let encoder = JSONEncoder()
             if let data = try? encoder.encode(SavedDocument(project: project)) {
                 try? data.write(to: Self.recoveryURL, options: .atomic)
                 lastRecovered = project
+                recoveryFor = nil
                 lastSession = "untitled"
             }
         }
+    }
+
+    /// Unsaved changes are let go: the recovery copy is removed, and the project counts as unchanged.
+    func dropUnsaved() {
+        try? FileManager.default.removeItem(at: Self.recoveryURL)
+        recoveryFor = nil
+        lastRecovered = nil
+        isDirty = false
+        if fileURL == nil, lastSession == "untitled" { lastSession = nil }
     }
 
     /// Opens whatever was being worked on last time: the project file, or untitled work from the
@@ -518,7 +547,16 @@ final class EditorModel: ObservableObject {
             lastRecovered = doc.project
             isDirty = true
         } else if FileManager.default.fileExists(atPath: last) {
-            open(url: URL(fileURLWithPath: last))
+            let url = URL(fileURLWithPath: last)
+            open(url: url)
+            // Unsaved changes to it from last time (Auto-save off) come back, still unsaved.
+            if recoveryFor == last, let data = try? Data(contentsOf: Self.recoveryURL),
+               var doc = try? JSONDecoder().decode(SavedDocument.self, from: data) {
+                doc.project.resolveMovedMedia(projectDir: url.deletingLastPathComponent())
+                load(doc.project, url: url, offerLocate: true)
+                lastRecovered = doc.project
+                isDirty = true
+            }
         }
     }
 
@@ -1603,14 +1641,42 @@ final class EditorModel: ObservableObject {
 
     // MARK: Files
 
-    private func confirmDiscard() -> Bool {
-        guard isDirty, !project.clips.isEmpty else { return true }
+    /// Before the project is closed (another opened, a new one, or quitting). With Auto-save on, a saved project
+    /// is already on disk; untitled work asks before it's thrown away. With it off, any unsaved changes ask to be saved.
+    func confirmDiscard(quitting: Bool = false) -> Bool {
+        if Self.autosaves {
+            // Quitting keeps untitled work in the recovery copy, which reopens next time.
+            guard !quitting, isDirty, !project.clips.isEmpty else { return true }
+            if fileURL != nil { autosaveNow(); return true }
+            let alert = NSAlert()
+            alert.messageText = "Discard unsaved changes?"
+            alert.informativeText = "Your changes to “\(title)” will be lost."
+            alert.addButton(withTitle: "Discard")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return false }
+            dropUnsaved()
+            return true
+        }
+        commitLive()
+        guard isDirty, !(project.clips.isEmpty && project.assets.isEmpty) else { return true }
         let alert = NSAlert()
-        alert.messageText = "Discard unsaved changes?"
-        alert.informativeText = "Your changes to “\(title)” will be lost."
-        alert.addButton(withTitle: "Discard")
+        alert.messageText = "Save changes to “\(title)”?"
+        alert.informativeText = "Your changes will be lost if you don't save them."
+        alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn
+        let dont = alert.addButton(withTitle: "Don't Save")
+        dont.keyEquivalent = "d"
+        dont.keyEquivalentModifierMask = .command
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            save()
+            return !isDirty
+        case .alertThirdButtonReturn:
+            dropUnsaved()
+            return true
+        default:
+            return false
+        }
     }
 
     /// Projects are saved as `.room`; `.cutplay` is the name from before the app was called Editroom.
@@ -1693,7 +1759,9 @@ final class EditorModel: ObservableObject {
             var saved = project
             saved.stampRelativePaths(projectDir: url.deletingLastPathComponent())
             try encoder.encode(SavedDocument(project: saved)).write(to: url, options: .atomic)
-            if fileURL == nil { try? FileManager.default.removeItem(at: Self.recoveryURL) }
+            if fileURL == nil || recoveryFor != nil { try? FileManager.default.removeItem(at: Self.recoveryURL) }
+            recoveryFor = nil
+            lastRecovered = nil
             fileURL = url
             isDirty = false
             lastSession = url.path
