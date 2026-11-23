@@ -411,6 +411,17 @@ final class EditorModel: ObservableObject {
                             let t0 = CACurrentMediaTime()
                             var moved = false
                             while CACurrentMediaTime() - t0 < 3.5 {
+                                if args.contains("--handoff-mute"), !moved, CACurrentMediaTime() - t0 > 1 {
+                                    // `--handoff-mute`: mutes and unmutes the first audio track instead.
+                                    moved = true
+                                    FileHandle.standardError.write("MUTE on\n".data(using: .utf8)!)
+                                    self.mutate { $0.audioTracks[0].muted = true }
+                                    Task { @MainActor in
+                                        try? await Task.sleep(nanoseconds: 700_000_000)
+                                        FileHandle.standardError.write("MUTE off\n".data(using: .utf8)!)
+                                        self.mutate { $0.audioTracks[0].muted = false }
+                                    }
+                                }
                                 if !moved, CACurrentMediaTime() - t0 > 1 {
                                     moved = true
                                     let second = self.project.clips.filter { $0.start > 0.5 }.map(\.id)
@@ -712,6 +723,8 @@ final class EditorModel: ObservableObject {
     }
 
     private func didChange() {
+        // Muting and soloing are heard at once, not after the rebuild.
+        engine.audio.setAudible(Dictionary(uniqueKeysWithValues: project.audioTracks.map { ($0.id, project.isAudible($0)) }))
         let valid = selection.intersection(Set(project.clips.map(\.id)))
         if valid != selection { selection = valid }
         isDirty = true

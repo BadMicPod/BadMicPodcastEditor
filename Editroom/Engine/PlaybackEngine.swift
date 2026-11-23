@@ -67,23 +67,33 @@ final class PlaybackEngine {
     func rebuild(project: Project, media: MediaStore, at time: Double) {
         fps = project.fps
         // The sound: read again only when something audible changed. Playing, the change is heard from
-        // just ahead of the playhead, with no break in the sound.
+        // just ahead of the playhead, with no break in the sound. Muting and soloing aren't such a change:
+        // each track's sound is silenced by its own lane, at once (unless a track ducks under another,
+        // whose sound then matters).
         let sound = project.duration > 0
-            ? CompositionBuilder.build(project: project, media: media, renderSize: CGSize(width: 16, height: 16), includeVideo: false, includeAudio: true)
+            ? CompositionBuilder.build(project: project, media: media, renderSize: CGSize(width: 16, height: 16),
+                                       includeVideo: false, includeAudio: true, keepAllTracks: true)
             : nil
-        let key = AudioKey(signature: sound?.signature, tracks: project.audioTracks,
+        let ducking = project.audioTracks.contains { $0.duckUnder != nil }
+        let key = AudioKey(signature: sound?.signature,
+                           tracks: ducking ? project.audioTracks : project.audioTracks.map { var t = $0; t.muted = false; t.solo = false; return t },
                            clips: project.clips.filter { $0.kind == .audio }, duration: project.duration)
         if key != audioKey {
             audioKey = key
-            // Read at the rate most of the edit's sound is in (by length), so it isn't resampled on the way.
-            var lengths: [Double: Double] = [:]
-            for c in key.clips {
-                guard let id = c.assetID, let rate = media.runtimes[id]?.audioRate, rate > 0 else { continue }
-                lengths[rate, default: 0] += c.duration
+            // Each track's sound is read at the rate most of it is in (by length), so it isn't resampled on the way.
+            var lanes: [UUID: (track: CMPersistentTrackID, rate: Double)] = [:]
+            for (id, compTrack) in sound?.audioTracks ?? [:] {
+                var lengths: [Double: Double] = [:]
+                for c in key.clips where c.trackID == id {
+                    guard let asset = c.assetID, let rate = media.runtimes[asset]?.audioRate, rate > 0 else { continue }
+                    lengths[rate, default: 0] += c.duration
+                }
+                let rate = lengths.max { $0.value < $1.value }.map(\.key).flatMap { (8000...192_000).contains($0) ? $0 : nil } ?? 48000
+                lanes[id] = (compTrack, rate)
             }
-            let rate = lengths.max { $0.value < $1.value }.map(\.key).flatMap { (8000...192_000).contains($0) ? $0 : nil } ?? 48000
-            audio.load(sound.flatMap { $0.hasAudio ? $0.composition : nil }, mix: sound?.audioMix, duration: project.duration, rate: rate)
+            audio.load(sound.flatMap { $0.hasAudio ? $0.composition : nil }, mix: sound?.audioMix, duration: project.duration, tracks: lanes)
         }
+        audio.setAudible(Dictionary(uniqueKeysWithValues: project.audioTracks.map { ($0.id, project.isAudible($0)) }))
         // The picture, silent.
         guard let built = CompositionBuilder.build(project: project, media: media,
                                                    renderSize: CompositionBuilder.previewSize(for: project), includeAudio: false, keepAllTracks: true) else {

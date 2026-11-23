@@ -1,18 +1,18 @@
 import AVFoundation
 import os
 
-/// Playback sound as one continuous stream. The edit's mixed sound is read from its composition
-/// (AVAssetReader, with the edit's audio mix) and queued on a single audio renderer a little ahead of
-/// what's being heard, so changes while playing never stop or swap anything: the next sound queued
-/// simply comes from the new edit, carrying on sample for sample. When nothing near the playhead
-/// changed, it's the same sound and the join can't be heard.
+/// Playback sound as continuous streams, one per audio track ("lanes"), all on one clock. Each track's
+/// sound is read from the edit's composition (AVAssetReader, with the edit's audio mix) and queued on
+/// its own audio renderer a little ahead of what's being heard, so changes while playing never stop or
+/// swap anything: the next sound queued simply comes from the new edit, carrying on sample for sample.
+/// When nothing near the playhead changed, it's the same sound and the join can't be heard. Muting or
+/// soloing a track sets its renderer's volume, heard at once.
 ///
-/// Times: the renderer runs on its own continuous clock ("render time"). Each queued buffer is stamped
-/// with render time = timeline time + an offset, which grows by the loop's length each time a loop
-/// goes round, so looping is gapless too.
+/// Times: the renderers run on the synchronizer's continuous clock ("render time"). Each queued buffer
+/// is stamped with render time = timeline time + an offset, which grows by the loop's length each time a
+/// loop goes round, so looping is gapless too.
 final class AudioStream: @unchecked Sendable {
     let synchronizer = AVSampleBufferRenderSynchronizer()
-    private let renderer = AVSampleBufferAudioRenderer()
     private let queue = DispatchQueue(label: "editroom.audio-stream", qos: .userInteractive)
     private var timer: DispatchSourceTimer?
 
@@ -23,22 +23,28 @@ final class AudioStream: @unchecked Sendable {
     /// dropped: a freshly started decoder and resampler take up to about 0.1s to settle, which would click.
     private static let lead = CMTime(seconds: 0.25, preferredTimescale: 48000)
 
-    // Only touched on `queue`.
-    private var composition: AVComposition?
-    private var mix: AVAudioMix?
-    /// The rate sound is read at: the edit's own (most of its sound's), so the reader doesn't resample.
-    /// AVFoundation's resampling can come out a few samples early or late from one reader to the next,
-    /// which would be heard where one takes over from another; the renderer resamples instead, once, as
-    /// the single stream it is.
-    private var rate = 48000.0
-    private var duration = CMTime.zero
-    private var loop: (start: CMTime, end: CMTime)?
-    private var feed: Feed?
-    /// Where the queued sound ends, in render and timeline time.
-    private var queuedEnd: (render: CMTime, media: CMTime)?
-    /// Where each stretch of render time starts, for telling which timeline time is being heard.
-    private var stretches: [(render: CMTime, offset: CMTime)] = []
-    private var playing = false
+    /// One audio track's sound: its own renderer, and what's queued on it.
+    private final class Lane {
+        let renderer = AVSampleBufferAudioRenderer()
+        /// Its sound in the composition.
+        var track: CMPersistentTrackID
+        /// The rate its sound is read at: its own (most of its clips'), so the reader doesn't resample.
+        /// AVFoundation's resampling can come out a few samples early or late from one reader to the
+        /// next, which would be heard where one takes over from another; the renderer resamples instead,
+        /// once, as the single stream it is.
+        var rate: Double
+        var feed: Feed?
+        /// Where the queued sound ends, in render and timeline time.
+        var queuedEnd: (render: CMTime, media: CMTime)?
+        /// Read but not yet queued: sound further ahead than `ahead` (after a silence), held back so an
+        /// edit made meanwhile still reaches it.
+        var held: (buffer: CMSampleBuffer, render: CMTime, media: CMTime, length: CMTime)?
+
+        init(track: CMPersistentTrackID, rate: Double) {
+            self.track = track
+            self.rate = rate
+        }
+    }
 
     private struct Feed {
         let reader: AVAssetReader
@@ -51,6 +57,19 @@ final class AudioStream: @unchecked Sendable {
         let until: CMTime
         let rate: Double
     }
+
+    // Only touched on `queue`.
+    private var composition: AVComposition?
+    private var mix: AVAudioMix?
+    private var duration = CMTime.zero
+    private var loop: (start: CMTime, end: CMTime)?
+    /// By timeline track.
+    private var lanes: [UUID: Lane] = [:]
+    /// Which tracks are heard (muted and unsoloed ones aren't); a track not listed is.
+    private var audible: [UUID: Bool] = [:]
+    /// Where each stretch of render time starts, for telling which timeline time is being heard.
+    private var stretches: [(render: CMTime, offset: CMTime)] = []
+    private var playing = false
 
     private static func settings(rate: Double) -> [String: Any] {
         [
@@ -65,7 +84,6 @@ final class AudioStream: @unchecked Sendable {
     }
 
     init() {
-        synchronizer.addRenderer(renderer)
         let t = DispatchSource.makeTimerSource(queue: queue)
         t.schedule(deadline: .now(), repeating: .milliseconds(10), leeway: .milliseconds(2))
         t.setEventHandler { [weak self] in self?.pump() }
@@ -78,15 +96,46 @@ final class AudioStream: @unchecked Sendable {
 
     // MARK: Called from the main thread
 
-    /// The edit's sound changed (nil: it has none). Playing, the next sound queued is the new edit's.
-    func load(_ composition: AVComposition?, mix: AVAudioMix?, duration: Double, rate: Double) {
+    /// The edit's sound changed (nil: it has none). `tracks` gives each timeline track's sound in the
+    /// composition and the rate to read it at. Playing, the next sound queued is the new edit's.
+    func load(_ composition: AVComposition?, mix: AVAudioMix?, duration: Double,
+              tracks: [UUID: (track: CMPersistentTrackID, rate: Double)]) {
         let mix = mix?.copy() as? AVAudioMix
         queue.async {
             self.composition = composition
             self.mix = mix
-            self.rate = rate
             self.duration = CompositionBuilder.time(duration)
-            if self.playing { self.continueWithNewSound() }
+            let tracks = composition == nil ? [:] : tracks
+            for (id, lane) in self.lanes where tracks[id] == nil {
+                lane.feed?.reader.cancelReading()
+                lane.renderer.flush()
+                self.synchronizer.removeRenderer(lane.renderer, at: .invalid)
+                self.lanes[id] = nil
+            }
+            for (id, t) in tracks {
+                if let lane = self.lanes[id] {
+                    lane.track = t.track
+                    lane.rate = t.rate
+                    if self.playing { self.continueWithNewSound(lane) }
+                } else {
+                    let lane = Lane(track: t.track, rate: t.rate)
+                    lane.renderer.volume = self.audible[id] == false ? 0 : 1
+                    self.synchronizer.addRenderer(lane.renderer)
+                    self.lanes[id] = lane
+                    if self.playing { self.join(lane) }
+                }
+            }
+        }
+    }
+
+    /// Which tracks are heard. Takes effect at once.
+    func setAudible(_ audible: [UUID: Bool]) {
+        queue.async {
+            self.audible = audible
+            for (id, lane) in self.lanes {
+                let volume: Float = audible[id] == false ? 0 : 1
+                if lane.renderer.volume != volume { lane.renderer.volume = volume }
+            }
         }
     }
 
@@ -96,22 +145,27 @@ final class AudioStream: @unchecked Sendable {
             let new = span.map { (start: CompositionBuilder.time($0.start), end: CompositionBuilder.time($0.end)) }
             guard new?.start != self.loop?.start || new?.end != self.loop?.end else { return }
             self.loop = new
-            if self.playing { self.continueWithNewSound() }
+            if self.playing { self.lanes.values.forEach(self.continueWithNewSound) }
         }
     }
 
     /// Starts the sound at timeline time `t`, heard from host time `host` (the picture starts then too).
     func start(at t: Double, host: CMTime) {
         queue.async {
-            self.feed?.reader.cancelReading()
-            self.renderer.flush()
+            for lane in self.lanes.values {
+                lane.feed?.reader.cancelReading()
+                lane.renderer.flush()
+            }
             let start = CompositionBuilder.time(t)
             // Render time is timeline time at the start.
             self.synchronizer.setRate(1, time: start, atHostTime: host)
             self.playing = true
-            self.queuedEnd = (start, start)
             self.stretches = [(start, .zero)]
-            self.feed = self.makeFeed(from: start, offset: .zero)
+            for lane in self.lanes.values {
+                lane.held = nil
+                lane.queuedEnd = (start, start)
+                lane.feed = self.makeFeed(lane, from: start, offset: .zero)
+            }
             self.pump()
         }
     }
@@ -120,10 +174,13 @@ final class AudioStream: @unchecked Sendable {
         queue.async {
             self.playing = false
             self.synchronizer.rate = 0
-            self.feed?.reader.cancelReading()
-            self.feed = nil
-            self.renderer.flush()
-            self.queuedEnd = nil
+            for lane in self.lanes.values {
+                lane.feed?.reader.cancelReading()
+                lane.feed = nil
+                lane.held = nil
+                lane.renderer.flush()
+                lane.queuedEnd = nil
+            }
             self.stretches = []
         }
     }
@@ -133,41 +190,63 @@ final class AudioStream: @unchecked Sendable {
         queue.sync {
             guard playing else { return nil }
             let render = CMSyncConvertTime(host, from: CMClockGetHostTimeClock(), to: synchronizer.timebase)
-            guard let stretch = stretches.last(where: { $0.render <= render }) ?? stretches.first else { return nil }
+            guard let stretch = stretch(at: render) else { return nil }
             return (render - stretch.offset).seconds
         }
     }
 
     // MARK: On the queue
 
-    /// The sound queued from here on is read from the current edit (and loop): what's already queued
-    /// plays out, and the new sound follows it exactly.
-    private func continueWithNewSound() {
-        guard let end = queuedEnd else { return }
-        feed?.reader.cancelReading()
-        feed = makeFeed(from: end.media, offset: end.render - end.media)
+    private func stretch(at render: CMTime) -> (render: CMTime, offset: CMTime)? {
+        stretches.last(where: { $0.render <= render }) ?? stretches.first
+    }
+
+    /// The sound queued on a lane from here on is read from the current edit (and loop): what's already
+    /// queued plays out, and the new sound follows it exactly.
+    private func continueWithNewSound(_ lane: Lane) {
+        lane.feed?.reader.cancelReading()
+        lane.feed = nil
+        lane.held = nil
+        // A lane that has run out (its sound ended) starts again just ahead of what's being heard.
+        guard let end = lane.queuedEnd, end.render > synchronizer.currentTime() + CMTime(seconds: 0.03, preferredTimescale: 48000) else {
+            join(lane)
+            return
+        }
+        lane.feed = makeFeed(lane, from: end.media, offset: end.render - end.media)
         pump()
     }
 
-    /// A reader of the edit's sound from timeline time `start`, to the loop's end or the edit's.
-    private func makeFeed(from start: CMTime, offset: CMTime) -> Feed? {
-        guard let composition else { return nil }
+    /// A lane joins in while playing: its sound starts a moment ahead of what's being heard.
+    private func join(_ lane: Lane) {
+        let at = synchronizer.currentTime() + CMTime(seconds: 0.1, preferredTimescale: 48000)
+        guard let stretch = stretch(at: at) else { return }
+        let media = at - stretch.offset
+        lane.feed?.reader.cancelReading()
+        lane.held = nil
+        lane.queuedEnd = (at, media)
+        lane.feed = makeFeed(lane, from: media, offset: stretch.offset)
+        pump()
+    }
+
+    /// A reader of a lane's sound from timeline time `start`, to the loop's end or the edit's.
+    private func makeFeed(_ lane: Lane, from start: CMTime, offset: CMTime) -> Feed? {
+        guard let composition, let track = composition.track(withTrackID: lane.track) else { return nil }
         var start = start
         var offset = offset
-        if let loop, start >= loop.end - CMTime(seconds: 1 / rate, preferredTimescale: 96000) {
+        if let loop, start >= loop.end - CMTime(seconds: 1 / lane.rate, preferredTimescale: 96000) {
             // At the loop's end: on round to its start.
             offset = offset + (loop.end - loop.start)
             start = loop.start
         }
         let end = loop.map { min($0.end, duration) } ?? duration
-        guard end > start else { return nil }
+        guard end > start, let reader = try? AVAssetReader(asset: composition) else { return nil }
         // Read on a little past a loop's end and cut there here: a reader's last moments before the end
         // of what it's asked for come out slightly differently, which would differ from a join's.
         let readEnd = min(duration, end + Self.lead)
-        let tracks = composition.tracks.filter { $0.mediaType == .audio }
-        guard !tracks.isEmpty, let reader = try? AVAssetReader(asset: composition) else { return nil }
-        let output = AVAssetReaderAudioMixOutput(audioTracks: tracks, audioSettings: Self.settings(rate: rate))
-        output.audioMix = mix
+        let output = AVAssetReaderAudioMixOutput(audioTracks: [track], audioSettings: Self.settings(rate: lane.rate))
+        let own = AVMutableAudioMix()
+        own.inputParameters = mix?.inputParameters.filter { $0.trackID == lane.track } ?? []
+        output.audioMix = own
         output.audioTimePitchAlgorithm = .spectral
         // Queued buffers stay with the renderer while the reader reads on, so each gets its own copy.
         output.alwaysCopiesSampleData = true
@@ -180,30 +259,35 @@ final class AudioStream: @unchecked Sendable {
         guard reader.startReading() else { return nil }
         if stretches.last?.offset != offset { stretches.append((start + offset, offset)) }
         if stretches.count > 8 { stretches.removeFirst(stretches.count - 8) }
-        return Feed(reader: reader, output: output, offset: offset, from: start, until: end, rate: rate)
+        return Feed(reader: reader, output: output, offset: offset, from: start, until: end, rate: lane.rate)
     }
 
-    /// Keeps the renderer topped up to `ahead` of what's being heard.
+    /// Keeps every lane topped up to `ahead` of what's being heard.
     private func pump() {
         guard playing else { return }
         let limit = synchronizer.currentTime() + Self.ahead
-        while let feed, renderer.isReadyForMoreMediaData, let end = queuedEnd, end.render < limit {
-            guard let read = feed.output.copyNextSampleBuffer().flatMap({ Self.cut($0, at: feed.until, rate: feed.rate) }) else {
-                // This stretch is done: round the loop, or that's the end.
-                if let loop {
-                    self.feed = makeFeed(from: loop.end, offset: feed.offset)
-                } else {
-                    self.feed = nil
+        for lane in lanes.values {
+            while lane.renderer.isReadyForMoreMediaData {
+                if let h = lane.held {
+                    guard h.render < limit else { break }
+                    lane.renderer.enqueue(h.buffer)
+                    lane.queuedEnd = (h.render + h.length, h.media + h.length)
+                    lane.held = nil
+                    continue
                 }
-                continue
+                guard let feed = lane.feed, let end = lane.queuedEnd, end.render < limit else { break }
+                guard let read = feed.output.copyNextSampleBuffer().flatMap({ Self.cut($0, at: feed.until, rate: feed.rate) }) else {
+                    // This stretch is done: round the loop, or that's the end of this track's sound.
+                    lane.feed = loop.flatMap { makeFeed(lane, from: $0.end, offset: feed.offset) }
+                    continue
+                }
+                // The reader's settling-in sound, before where it was wanted, is dropped.
+                guard let buffer = Self.trimmed(read, from: feed.from, rate: feed.rate) else { continue }
+                let media = CMSampleBufferGetPresentationTimeStamp(buffer)
+                let length = CMSampleBufferGetDuration(buffer)
+                guard media.isNumeric, length.isNumeric, let stamped = Self.retimed(buffer, by: feed.offset) else { continue }
+                lane.held = (stamped, media + feed.offset, media, length)
             }
-            // The reader's settling-in sound, before where it was wanted, is dropped.
-            guard let buffer = Self.trimmed(read, from: feed.from, rate: feed.rate) else { continue }
-            let media = CMSampleBufferGetPresentationTimeStamp(buffer)
-            let length = CMSampleBufferGetDuration(buffer)
-            guard media.isNumeric, length.isNumeric, let stamped = Self.retimed(buffer, by: feed.offset) else { continue }
-            renderer.enqueue(stamped)
-            queuedEnd = (media + length + feed.offset, media + length)
         }
     }
 

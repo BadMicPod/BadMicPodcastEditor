@@ -9,6 +9,8 @@ struct BuiltTimeline {
     let duration: Double
     let signature: Int
     let hasAudio: Bool
+    /// Each timeline audio track's composition track (only tracks with sound on them).
+    var audioTracks: [UUID: CMPersistentTrackID] = [:]
 }
 
 /// A tiny black movie stretched under everything so the composition always has video to drive rendering.
@@ -51,9 +53,10 @@ enum CompositionBuilder {
     @MainActor
     /// With `reframe`, the sequence is scaled to cover `renderSize` and cropped around that point
     /// (0...1 across and down), for outputs of a different shape.
-    /// With `keepAllTracks` (the player), hidden and silent tracks stay in the composition, left out of the picture
-    /// and at no volume, so hiding, muting or soloing one changes only the mix and the layers: the
-    /// player takes that as it plays, with no new item and no pause.
+    /// With `keepAllTracks` (the player), hidden tracks stay in the composition, left out of the picture,
+    /// so hiding one changes only the layers and the player takes that as it plays, with no new item
+    /// and no pause. Muted and unsoloed tracks keep their sound at their own level: the player silences
+    /// each track's sound itself (AudioStream), at once.
     static func build(project: Project, media: MediaStore, renderSize: CGSize,
                       includeVideo: Bool = true, includeAudio: Bool = true, reframe: CGPoint? = nil,
                       keepAllTracks: Bool = false) -> BuiltTimeline? {
@@ -171,10 +174,11 @@ enum CompositionBuilder {
 
         // Audio
         var mixParams: [AVMutableAudioMixInputParameters] = []
+        var audioTracks: [UUID: CMPersistentTrackID] = [:]
         if includeAudio {
             for track in project.audioTracks where keepAllTracks || project.isAudible(track) {
                 hasher.combine(track.id)
-                let audible = project.isAudible(track)
+                let audible = keepAllTracks || project.isAudible(track)
                 let clips = project.clips.filter { $0.trackID == track.id && $0.kind == .audio }.sorted { $0.start < $1.start }
                 var compTrack: AVMutableCompositionTrack?
                 var params: AVMutableAudioMixInputParameters?
@@ -208,6 +212,7 @@ enum CompositionBuilder {
                             p.audioTimePitchAlgorithm = .spectral
                             params = p
                             mixParams.append(p)
+                            audioTracks[track.id] = ct.trackID
                         }
                     }
                     guard let ct = compTrack, let p = params, insert(clip, source: src, range: sourceRange, into: ct, cursor: &cursor) else { continue }
@@ -263,7 +268,7 @@ enum CompositionBuilder {
         }
 
         return BuiltTimeline(composition: comp.copy() as! AVComposition, videoComposition: vc, audioMix: mix,
-                             duration: total, signature: hasher.finalize(), hasAudio: !mixParams.isEmpty)
+                             duration: total, signature: hasher.finalize(), hasAudio: !mixParams.isEmpty, audioTracks: audioTracks)
     }
 
     /// Volume ramps are linear, so curved fades are approximated with short linear pieces.
