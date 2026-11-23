@@ -1040,12 +1040,28 @@ final class MagicShow: NSObject {
         guard let asset else {
             return MagicAnchors.rect("addText").map { toOverlay($0) } ?? CGRect(x: library.maxX - 90, y: library.minY + 10, width: 26, height: 26)
         }
-        guard var r = MagicAnchors.rect(asset.uuidString).map({ toOverlay($0) }) else {
-            return CGRect(x: library.minX + 16, y: library.minY + 90, width: 64, height: 36)
+        // The list of thumbnails (under the search field).
+        let list = MagicAnchors.rect("libraryList").map { toOverlay($0) }
+            ?? CGRect(x: library.minX, y: library.minY + 80, width: library.width, height: library.height - 80)
+        let r = MagicAnchors.rect(asset.uuidString).map { toOverlay($0) }
+        // In sight: its own thumbnail.
+        if let r, list.contains(CGPoint(x: r.midX, y: r.midY)) { return r }
+        // Out of sight: from the middle of the list's top (under the search field) or bottom edge,
+        // whichever side it's scrolled past, never from another clip's thumbnail.
+        let below: Bool
+        if let r {
+            below = r.midY > list.midY
+        } else {
+            // Not drawn at all (far out of sight): after the last one in sight is below.
+            let order = model.project.assets.map(\.id)
+            let shown = order.indices.filter { i in
+                MagicAnchors.rect(order[i].uuidString).map { list.contains(CGPoint(x: toOverlay($0).midX, y: toOverlay($0).midY)) } ?? false
+            }
+            below = (order.firstIndex(of: asset) ?? 0) > (shown.max() ?? -1)
         }
-        // Scrolled out of sight: come from the nearest edge of the list.
-        r.origin.y = min(max(r.minY, library.minY + 80), library.maxY - r.height - 8)
-        return r
+        let size = CGSize(width: 64, height: 36)
+        return CGRect(x: list.midX - size.width / 2, y: below ? list.maxY - size.height - 6 : list.minY + 42,
+                      width: size.width, height: size.height)
     }
 
     private func cardFrame(_ c: Card) -> CGRect {
