@@ -21,7 +21,7 @@ enum LocalCaptions {
             && t.range(of: #"(^|\s)["“'‘][^"”'’]{1,60}["”'’]"#, options: .regularExpression) == nil
     }
 
-    /// Captions everyone talking in the edit as it is now (heard first), as one more undo step. Says what it did.
+    /// Captions everyone talking in the edit as it is now (heard first), in the same undo step as the cut. Says what it did.
     static func addToCut(model: EditorModel) async -> String {
         let p = model.project
         let targets = p.unlocked(p.defaultCaptionTargets)
@@ -29,7 +29,7 @@ enum LocalCaptions {
         for c in p.clips where targets.contains(c.id) {
             if let id = c.assetID, let url = model.media.soundURL(id) { _ = await Transcripts.shared.ready(url, limit: 60) }
         }
-        model.mutate { $0.addCaptions(targets) }
+        model.amendLastStep { $0.addCaptions(targets) }
         let count = model.captionBlocks.count
         return count == 0 ? "Added a caption track, but no speech was heard in the cut."
             : "Captioned what's said: \(count) caption\(count == 1 ? "" : "s")."

@@ -710,6 +710,21 @@ final class EditorModel: ObservableObject {
         didChange()
     }
 
+    /// A change that belongs to the last undo step (Magic's captions on the cut it just made): one Undo takes
+    /// back both. With nothing to undo, it's a step of its own.
+    func amendLastStep(_ body: (inout Project) -> Void) {
+        commitLive()
+        guard !undoStack.isEmpty else { return mutate(body) }
+        var p = project
+        body(&p)
+        p.sanitize()
+        guard p != project else { return }
+        redoStack.removeAll()
+        redoKnown.removeAll()
+        project = p
+        didChange()
+    }
+
     /// Continuous change (drag, slider). Coalesces into a single undo step.
     func live(autoCommit: Bool = true, _ body: (inout Project) -> Void) {
         var p = project

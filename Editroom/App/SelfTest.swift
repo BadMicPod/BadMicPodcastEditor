@@ -685,6 +685,25 @@ enum SelfTest {
             log("LOCAL CAPTIONS \(good ? "OK" : "FAIL") reads=\(reads) notTitle=\(notTitle) add=\(addOK) remove=\(removeOK)")
             ok = ok && good
         }
+        // Magic's captions join the cut's undo step: one Undo takes both back.
+        do {
+            var p = Project()
+            p.assets = project.assets
+            let m = EditorModel()
+            m.load(p, url: nil)
+            let before = m.project
+            let a = Clip(trackID: m.project.audioTracks[0].id, kind: .audio, assetID: video.id, start: 0, duration: 2)
+            m.mutate { $0.clips.append(a) }
+            m.amendLastStep { $0.addCaptions([a.id]) }
+            let both = m.project.clips.count == 1 && m.project.captions != nil
+            m.undo()
+            let back = m.project.clips.isEmpty && m.project.captions == nil && m.project == before
+            m.redo()
+            let again = m.project.clips.count == 1 && m.project.captions != nil
+            let good = both && back && again
+            log("CAPTION UNDO \(good ? "OK" : "FAIL") both=\(both) oneUndo=\(back) redo=\(again)")
+            ok = ok && good
+        }
         // Typed timecodes.
         do {
             let cases: [(String, Double?)] = [("1000", 10), ("1:02:03", 62.1), ("00:00:02:15", 2.5), ("12", 0.4), ("abc", nil)]
