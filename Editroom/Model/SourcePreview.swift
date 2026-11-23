@@ -24,7 +24,9 @@ final class SourcePreviewState: ObservableObject {
     /// into the viewer, the overlay just naming it; without them, frames decoded from the file one after
     /// another (never a small, differently coloured stand-in in between, which made the colours flicker).
     func hover(_ asset: MediaAsset, at time: Double, media: MediaStore) {
-        if let engine, let still = media.scrubCache.image(asset.id, at: time), let rt = media.runtimes[asset.id] {
+        // Only with something on the timeline: an empty one has no player to draw into, so the frame
+        // is drawn here instead.
+        if let engine, engine.duration > 0, let still = media.scrubCache.image(asset.id, at: time), let rt = media.runtimes[asset.id] {
             engine.showStill(still, orientation: rt.orientation, time: time)
             drawing = true
             wanted = nil
