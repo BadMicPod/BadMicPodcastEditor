@@ -8,7 +8,7 @@ Editroom has the pro editing tools you need — color grading, speed ramps, tran
 
 Because it's open source, you can download the Xcode project and add, remove, or modify any feature to fit your workflow.
 
-![Editroom](docs/screenshot.jpg)
+![Editroom](docs/screenshot.webp)
 
 ## Installation
 
