@@ -26,6 +26,11 @@ final class PlaybackEngine {
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] note in
             MainActor.assumeIsolated {
                 guard let self, (note.object as? AVPlayerItem) === self.player.currentItem else { return }
+                // A hand-over: the old edit was set to end where the new one starts.
+                if self.handingOff, self.swapAt != nil {
+                    self.swapToSpare()
+                    return
+                }
                 // Looping with the spare ready: it takes over, with no seek.
                 if self.loopsItself {
                     if self.swapAt == nil { self.startSpare(in: 0) }
@@ -192,7 +197,10 @@ final class PlaybackEngine {
     var loopSpan: (start: Double, end: Double)? {
         didSet {
             guard loopSpan?.start != oldValue?.start || loopSpan?.end != oldValue?.end else { return }
-            player.currentItem?.forwardPlaybackEndTime = loopSpan.map { CompositionBuilder.time($0.end) } ?? .invalid
+            // (A hand-over that's set to start keeps the old edit's end where the new one takes over.)
+            if !(handingOff && swapAt != nil) {
+                player.currentItem?.forwardPlaybackEndTime = loopSpan.map { CompositionBuilder.time($0.end) } ?? .invalid
+            }
             if handingOff {
                 spare.currentItem?.forwardPlaybackEndTime = loopSpan.map { CompositionBuilder.time($0.end) } ?? .invalid
                 return
@@ -307,10 +315,15 @@ final class PlaybackEngine {
                 guard generation == self.priming else { return }
                 guard ready, self.isPlaying else { break }
                 self.handoffPrep = min(0.5, CACurrentMediaTime() - asked)
-                let left = target - self.player.currentTime().seconds
-                if left > 0.01 {
-                    let at = CMTimeAdd(CMClockGetTime(CMClockGetHostTimeClock()), CMTime(seconds: left, preferredTimescale: 1_000_000_000))
+                // The moment the playing one reaches `target`, read off its own clock (exact, where
+                // the time it reports is only near enough), so the sound carries on with no skip.
+                let host = CMClockGetHostTimeClock()
+                let at = self.player.currentItem?.timebase.map { CMSyncConvertTime(CompositionBuilder.time(target), from: $0, to: host) }
+                    ?? CMTimeAdd(CMClockGetTime(host), CMTime(seconds: target - self.player.currentTime().seconds, preferredTimescale: 1_000_000_000))
+                if at.isNumeric, at.seconds - CMClockGetTime(host).seconds > 0.01 {
                     next.setRate(1, time: CompositionBuilder.time(target), atHostTime: at)
+                    // The old one ends at that same frame, rather than playing on underneath until the swap.
+                    self.player.currentItem?.forwardPlaybackEndTime = CompositionBuilder.time(target)
                     self.swapAt = at.seconds
                     return
                 }
@@ -339,6 +352,7 @@ final class PlaybackEngine {
     /// The edit waiting to take over is out of date: it's dropped, and the player carries on as it was.
     private func abandonHandoff() {
         guard handingOff else { return }
+        player.currentItem?.forwardPlaybackEndTime = loopSpan.map { CompositionBuilder.time($0.end) } ?? .invalid
         handingOff = false
         swapAt = nil
         dropSpare()
