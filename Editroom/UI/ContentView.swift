@@ -268,38 +268,72 @@ struct MagicButton: View {
     @ObservedObject var ai = MagicAgent.shared
     @ObservedObject var connections = AgentConnect.shared
     @State private var hovering = false
-    /// The button's width as its text needs, and the width it keeps while the pointer is on it during
-    /// work: the status changes width as it goes, and a button that shrank out from under the pointer
-    /// would lose its hover, show the status again, grow back, and so on.
-    @State private var natural: CGFloat = 0
-    @State private var held: CGFloat?
 
     private var hasMedia: Bool { model.project.assets.contains { $0.kind != .audio } || !model.project.clips.isEmpty }
-    /// The same stage words as the cursors' tags ("Claude is thinking", "Analyzing 3 of 5", "Editing").
+    /// What Magic is doing, shown beside the button ("Looking at kareoke", "Analyzing 3 of 5", "Editing");
+    /// the button itself names who is working.
     private var status: String? {
         if ai.running {
-            if let stage = state.stage, let name = ai.agent?.name {
+            if let stage = state.stage {
                 // What it's doing right now, while the thinking show runs; the swarm says "Editing".
-                if stage != "Editing", let doing = state.activity { return "\(name) is \(doing)" }
-                return "\(name) is \(stage.lowercased())"
+                if stage != "Editing", let doing = state.activity { return Self.sentence(doing) }
+                return stage
             }
-            return ai.status
+            guard let s = ai.status else { return nil }
+            if let name = ai.agent?.name, s.hasPrefix("\(name) is ") { return Self.sentence(String(s.dropFirst(name.count + 4))) }
+            return s
         }
         return ai.ready ?? state.status ?? state.stage
     }
-    /// While the AI works, hovering offers Stop in the same space (the button keeps its width while
-    /// hovered, so the pointer never slips off it).
+    private static func sentence(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
+    /// Who's working, in the button: Claude or ChatGPT, or Local for Editroom's own cut.
+    private var worker: String? {
+        if ai.running { return ai.agent?.name }
+        return state.busy || state.stage != nil ? "Local" : nil
+    }
+    /// While Magic works, hovering offers Stop in the same space.
     private var offerStop: Bool { working && hovering }
     /// Anything Magic is doing that Stop (or esc) can stop: an AI working, Local reading or studying, the
     /// thinking show, or the swarm.
     private var working: Bool { ai.running || state.busy || state.stage != nil }
 
-    /// Hovered while Magic works: keep today's width; otherwise fit the text again (eased).
-    private func hold() {
-        held = hovering && working ? (held ?? natural) : nil
+    /// One of the button's faces. The button is as wide as the widest of them all, so it never changes
+    /// size while it works.
+    private func face(_ text: String, spinning: Bool = false, icon: String = "wand.and.sparkles") -> some View {
+        HStack(spacing: 5) {
+            if spinning {
+                ProgressView().controlSize(.small).scaleEffect(0.55).frame(width: 12, height: 12)
+            } else {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+            }
+            Text(text)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(Theme.text)
+        }
     }
 
     var body: some View {
+        HStack(spacing: 8) {
+            // Right-aligned, so it grows to the left, away from the button.
+            Text(status ?? "")
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.text.opacity(0.6))
+                .monospacedDigit()
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 260, alignment: .trailing)
+                .fixedSize(horizontal: status == nil, vertical: false)
+                .id(status ?? "")
+                .transition(.opacity)
+                .animation(.easeOut(duration: 0.2), value: status)
+                .allowsHitTesting(false)
+            button
+        }
+    }
+
+    private var button: some View {
         Button {
             if working { MagicShow.stopAll() }
             else {
@@ -309,23 +343,15 @@ struct MagicButton: View {
             }
         } label: {
             ZStack {
-                HStack(spacing: 5) {
-                    // In the toolbar's own colours, like Export; orange only for Stop.
-                    if ai.ready != nil {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Theme.text)
-                    } else if status != nil {
-                        ProgressView().controlSize(.small).scaleEffect(0.55).frame(width: 12, height: 12)
+                // The widest faces, unseen, set the width.
+                ForEach(["ChatGPT", "Claude", "Local", "Magic"], id: \.self) { face($0, spinning: true).hidden() }
+                Group {
+                    if let worker {
+                        face(worker, spinning: true)
                     } else {
-                        Image(systemName: "wand.and.sparkles")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Theme.text)
+                        // Finished while away: sparkles until they're back.
+                        face("Magic", icon: ai.ready != nil ? "sparkles" : "wand.and.sparkles")
                     }
-                    Text(status ?? "Magic")
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(Theme.text)
-                        .monospacedDigit()
                 }
                 .opacity(offerStop ? 0 : 1)
                 HStack(spacing: 5) {
@@ -339,29 +365,17 @@ struct MagicButton: View {
                 .opacity(offerStop ? 1 : 0)
             }
             .padding(.horizontal, 11)
-            .background(GeometryReader { g in
-                Color.clear
-                    .onAppear { natural = g.size.width }
-                    .onChange(of: g.size.width) { _, w in natural = w }
-            })
-            .frame(width: held)
             .frame(height: 26)
             .background(Capsule().fill(Theme.ink.opacity(hovering ? 0.14 : 0.08)))
             .overlay(Capsule().strokeBorder(Theme.ink.opacity(0.05)))
             .contentShape(Capsule())
-            .animation(.easeOut(duration: 0.15), value: status)
         }
         .buttonStyle(.plain)
         .background(MagicAnchor(key: "magicButton"))
         .disabled(!working && (!hasMedia || MagicShow.isRunning))
         .opacity(hasMedia || working ? 1 : 0.4)
-        .onHover { on in
-            hovering = on
-            hold()
-        }
-        .onChange(of: working) { _, _ in hold() }
+        .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
-        .animation(.easeOut(duration: 0.2), value: held)
         // Which AIs are connected can change in AI Agents or in the apps themselves.
         .onAppear { connections.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
