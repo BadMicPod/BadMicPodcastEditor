@@ -22,9 +22,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppDelegate.shared = self
     }
 
+    /// The very first time Editroom opens, its window fills the screen (less the menu bar and Dock).
+    /// After that macOS remembers whatever size the person leaves it at.
+    private func fillScreenOnFirstLaunch() {
+        let key = "filledScreenOnFirstLaunch"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        var token: NSObjectProtocol?
+        let fill: (NSWindow) -> Void = { window in
+            guard !UserDefaults.standard.bool(forKey: key),
+                  window.identifier?.rawValue.hasPrefix("main") == true,
+                  let screen = window.screen ?? NSScreen.main else { return }
+            window.setFrame(screen.visibleFrame, display: true, animate: false)
+            UserDefaults.standard.set(true, forKey: key)
+            if let token { NotificationCenter.default.removeObserver(token) }
+        }
+        token = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeMainNotification, object: nil, queue: .main) { note in
+            MainActor.assumeIsolated { if let w = note.object as? NSWindow { fill(w) } }
+        }
+        DispatchQueue.main.async { NSApp.windows.forEach(fill) }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Files that open the app arrive just before this; any after it are dropped on a running Editroom.
         DispatchQueue.main.async { self.launching = false }
+        fillScreenOnFirstLaunch()
         // macOS adds Services to the app menu, and Writing Tools, AutoFill, Start Dictation and Emoji &
         // Symbols to the Edit menu. None of them help with editing video, so they come out once the menus
         // exist, and again whenever they're put back (SwiftUI rebuilds menus as commands change).
