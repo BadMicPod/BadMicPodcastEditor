@@ -64,6 +64,16 @@ final class PlaybackEngine {
         instruction = built.videoComposition.instructions.first as? TimelineInstruction
         renderSize = built.videoComposition.renderSize
 
+        if handingOff {
+            // The edit waiting to take over changed again: a tweak goes to it, anything else starts over.
+            if built.signature == spareSignature, let s = spare.currentItem {
+                s.videoComposition = built.videoComposition
+                s.audioMix = built.audioMix
+                return
+            }
+            abandonHandoff()
+        }
+
         if built.signature == signature, let item = player.currentItem {
             item.videoComposition = built.videoComposition
             item.audioMix = built.audioMix
@@ -84,13 +94,19 @@ final class PlaybackEngine {
             kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
         ])
         item.add(output)
+        if let span = loopSpan { item.forwardPlaybackEndTime = CompositionBuilder.time(span.end) }
+        // Playing: the new edit takes over in step with the playhead, with no pause.
+        if isPlaying, handOff(item, output: output, signature: built.signature) { return }
+        install(item, output: output, signature: built.signature, at: time)
+    }
 
+    /// The new edit becomes the player's at once, at `time` (a seek, so a moment's pause while playing).
+    private func install(_ item: AVPlayerItem, output: AVPlayerItemVideoOutput, signature: Int, at time: Double) {
         let wasPlaying = isPlaying
         dropSpare()
-        if let span = loopSpan { item.forwardPlaybackEndTime = CompositionBuilder.time(span.end) }
         player.replaceCurrentItem(with: item)
         videoOutput = output
-        signature = built.signature
+        self.signature = signature
         isSeeking = false
         seek(to: time)
         if wasPlaying { player.playImmediately(atRate: 1) }
@@ -104,6 +120,7 @@ final class PlaybackEngine {
 
     func pause() {
         player.pause()
+        settleHandoff()
         cancelSwap()
     }
 
@@ -113,6 +130,7 @@ final class PlaybackEngine {
     /// footage (a 4K screen recording, a phone clip) takes long enough to fall seconds behind a quick
     /// drag. The exact frame follows as soon as the scrub rests (`seek(to:)` again, not fast).
     func seek(to time: Double, fast: Bool = false) {
+        settleHandoff()
         targetTime = clamp(time)
         exactWanted = !fast
         cancelSwap()
@@ -175,6 +193,10 @@ final class PlaybackEngine {
         didSet {
             guard loopSpan?.start != oldValue?.start || loopSpan?.end != oldValue?.end else { return }
             player.currentItem?.forwardPlaybackEndTime = loopSpan.map { CompositionBuilder.time($0.end) } ?? .invalid
+            if handingOff {
+                spare.currentItem?.forwardPlaybackEndTime = loopSpan.map { CompositionBuilder.time($0.end) } ?? .invalid
+                return
+            }
             if loopSpan == nil { dropSpare() } else { primeSpare() }
         }
     }
@@ -218,16 +240,103 @@ final class PlaybackEngine {
     private func swapToSpare() {
         guard swapAt != nil else { return }
         swapAt = nil
-        wrapped = true
-        let old = player, oldOutput = videoOutput
+        let handover = handingOff
+        handingOff = false
+        if !handover { wrapped = true }
+        let old = player, oldOutput = videoOutput, oldSignature = signature
+        if handover { signature = spareSignature }
         player = spare
         videoOutput = spareOutput
         spare = old
         spareOutput = oldOutput
-        spareSignature = signature
+        spareSignature = oldSignature
         old.pause()
         isSeeking = false
-        primeSpare()
+        if handover {
+            // The old edit is no use to loop with.
+            if loopSpan == nil { dropSpare() } else { primeSpare() }
+        } else {
+            primeSpare()
+        }
+    }
+
+    // MARK: Seamless edits while playing
+
+    /// The spare holds a new edit, getting ready to take over from the player (see `handOff`).
+    private var handingOff = false
+
+    /// An edit that changes the timeline's structure (a clip moved, added, trimmed) needs a new player
+    /// item. While playing, it's readied on the spare a little ahead of the playhead, then started at
+    /// the moment the playhead gets there and swapped in, as a loop is: playback never stops. False
+    /// when there isn't room ahead to do that (the end is too close); the edit is installed at once.
+    private func handOff(_ item: AVPlayerItem, output: AVPlayerItemVideoOutput, signature sig: Int) -> Bool {
+        if swapAt != nil { cancelSwap() }
+        let now = player.currentTime().seconds
+        guard now.isFinite else { return false }
+        let end = min(duration, loopSpan?.end ?? .infinity)
+        guard now + 0.6 < end - 0.1 else { return false }
+        priming += 1
+        let generation = priming
+        spareReady = false
+        spare.pause()
+        spare.replaceCurrentItem(with: item)
+        spareOutput = output
+        spareSignature = sig
+        handingOff = true
+        let next = spare
+        Task { @MainActor [weak self] in
+            for _ in 0..<150 where item.status != .readyToPlay || next.status != .readyToPlay {
+                if item.status == .failed { break }
+                try? await Task.sleep(nanoseconds: 10_000_000)
+            }
+            guard let self, generation == self.priming else { return }
+            // Long enough ahead for the seek and decode to finish before the playhead gets there.
+            var lead = 0.35
+            for _ in 0..<3 {
+                guard item.status == .readyToPlay, self.isPlaying else { break }
+                let target = self.player.currentTime().seconds + lead
+                guard target < end - 0.1 else { break }
+                let landed = await next.seek(to: CompositionBuilder.time(target), toleranceBefore: .zero, toleranceAfter: .zero)
+                guard generation == self.priming else { return }
+                guard landed else { break }
+                let ready = await next.preroll(atRate: 1)
+                guard generation == self.priming else { return }
+                guard ready, self.isPlaying else { break }
+                let left = target - self.player.currentTime().seconds
+                if left > 0.01 {
+                    let at = CMTimeAdd(CMClockGetTime(CMClockGetHostTimeClock()), CMTime(seconds: left, preferredTimescale: 1_000_000_000))
+                    next.setRate(1, time: CompositionBuilder.time(target), atHostTime: at)
+                    self.swapAt = at.seconds
+                    return
+                }
+                lead *= 2
+            }
+            // Couldn't get ahead of the playhead (or playback stopped): put the edit in place now.
+            self.settleHandoff()
+        }
+        return true
+    }
+
+    /// A hand-over still waiting is finished at once: the new edit goes in at the playhead.
+    private func settleHandoff() {
+        guard handingOff, let item = spare.currentItem, let output = spareOutput, let sig = spareSignature else { return }
+        let t = player.currentTime().seconds
+        handingOff = false
+        priming += 1
+        swapAt = nil
+        spare.pause()
+        spare.replaceCurrentItem(with: nil)
+        spareOutput = nil
+        spareSignature = nil
+        install(item, output: output, signature: sig, at: t.isFinite ? t : targetTime)
+    }
+
+    /// The edit waiting to take over is out of date: it's dropped, and the player carries on as it was.
+    private func abandonHandoff() {
+        guard handingOff else { return }
+        handingOff = false
+        swapAt = nil
+        dropSpare()
     }
 
     /// Stopped or moved before the spare took over: it goes back to waiting.

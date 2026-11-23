@@ -389,6 +389,41 @@ final class EditorModel: ObservableObject {
                     FileHandle.standardError.write("TRANSCRIBE \(String(format: "%.1f", Date().timeIntervalSince(t0)))s [\(t?.language ?? "-")] \(words)\n".data(using: .utf8)!)
                 }
                 if args.contains("--play") { self.play() }
+                // `--handoff-test <file>` (testing): plays two copies of a clip, moves the second while playing,
+                // and logs how evenly the playhead kept moving (the longest it stood still).
+                if let k = args.firstIndex(of: "--handoff-test"), args.count > k + 1 {
+                    self.importFiles([URL(fileURLWithPath: args[k + 1])], offerMatch: false) { assets in
+                        guard let a = assets.first else { return }
+                        let v = self.project.videoTracks[0].id, au = self.project.audioTracks[0].id
+                        let len = min(a.duration, 4)
+                        var clips = self.makeClips(.asset(a.id), at: 0, videoTrack: v, audioTrack: au)
+                        clips += self.makeClips(.asset(a.id), at: a.duration, videoTrack: v, audioTrack: au)
+                        self.insert(clips)
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 1_500_000_000)
+                            self.play()
+                            var samples: [(wall: Double, head: Double)] = []
+                            let t0 = CACurrentMediaTime()
+                            var moved = false
+                            while CACurrentMediaTime() - t0 < 3.5 {
+                                if !moved, CACurrentMediaTime() - t0 > 1 {
+                                    moved = true
+                                    let second = self.project.clips.filter { $0.start > 0.5 }.map(\.id)
+                                    self.mutate { p in for id in second { if let i = p.index(of: id) { p.clips[i].start += 0.5 } } }
+                                }
+                                if CACurrentMediaTime() - t0 > 0.5 { samples.append((CACurrentMediaTime(), self.playhead)) }
+                                try? await Task.sleep(nanoseconds: 8_000_000)
+                            }
+                            var stall = 0.0, since = samples[0].wall
+                            for i in 1..<samples.count {
+                                if samples[i].head > samples[i - 1].head + 1e-6 { since = samples[i].wall } else { stall = max(stall, samples[i].wall - since) }
+                            }
+                            let drift = (samples.last!.head - samples[0].head) - (samples.last!.wall - samples[0].wall)
+                            FileHandle.standardError.write(String(format: "HANDOFF longest still %.0f ms, drift %.0f ms, playing=%@ len=%.1f\n",
+                                                                  stall * 1000, drift * 1000, self.isPlaying ? "yes" : "no", len).data(using: .utf8)!)
+                        }
+                    }
+                }
                 if args.contains("--magic") {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
                     LocalMagic.run("", model: self)
