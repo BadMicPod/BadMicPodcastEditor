@@ -264,6 +264,8 @@ final class PlaybackEngine {
 
     /// The spare holds a new edit, getting ready to take over from the player (see `handOff`).
     private var handingOff = false
+    /// How long the last hand-over's seek and decode took, to judge how far ahead the next one starts.
+    private var handoffPrep = 0.03
 
     /// An edit that changes the timeline's structure (a clip moved, added, trimmed) needs a new player
     /// item. While playing, it's readied on the spare a little ahead of the playhead, then started at
@@ -290,10 +292,12 @@ final class PlaybackEngine {
                 try? await Task.sleep(nanoseconds: 10_000_000)
             }
             guard let self, generation == self.priming else { return }
-            // Long enough ahead for the seek and decode to finish before the playhead gets there.
-            var lead = 0.35
+            // Just long enough ahead for the seek and decode to finish before the playhead gets
+            // there: what they took last time, with room to spare. Footage that's slower to ready gets more.
+            var lead = max(0.06, self.handoffPrep * 1.5 + 0.03)
             for _ in 0..<3 {
                 guard item.status == .readyToPlay, self.isPlaying else { break }
+                let asked = CACurrentMediaTime()
                 let target = self.player.currentTime().seconds + lead
                 guard target < end - 0.1 else { break }
                 let landed = await next.seek(to: CompositionBuilder.time(target), toleranceBefore: .zero, toleranceAfter: .zero)
@@ -302,6 +306,7 @@ final class PlaybackEngine {
                 let ready = await next.preroll(atRate: 1)
                 guard generation == self.priming else { return }
                 guard ready, self.isPlaying else { break }
+                self.handoffPrep = min(0.5, CACurrentMediaTime() - asked)
                 let left = target - self.player.currentTime().seconds
                 if left > 0.01 {
                     let at = CMTimeAdd(CMClockGetTime(CMClockGetHostTimeClock()), CMTime(seconds: left, preferredTimescale: 1_000_000_000))
