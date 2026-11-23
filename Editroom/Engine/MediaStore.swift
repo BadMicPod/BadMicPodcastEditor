@@ -11,6 +11,8 @@ final class MediaRuntime {
     var audioTrack: AVAssetTrack?
     var videoRange = CMTimeRange.zero
     var audioRange = CMTimeRange.zero
+    /// The sound's sample rate (0 unknown), for playing it back without resampling.
+    var audioRate = 0.0
     var orientation = CGImagePropertyOrientation.up
     var naturalSize = CGSize.zero
     /// How the picture is encoded: standard, HDR or Log.
@@ -291,10 +293,11 @@ final class MediaStore: ObservableObject {
                 rt.orientation = orientation(for: tf)
                 rt.sourceColor = SourceColor.of(t)
             } else if t.mediaType == .audio, rt.audioTrack == nil {
-                guard let (decodable, range) = try? await t.load(.isDecodable, .timeRange),
+                guard let (decodable, range, scale) = try? await t.load(.isDecodable, .timeRange, .naturalTimeScale),
                       decodable, range.duration.seconds > 0 else { continue }
                 rt.audioTrack = t
                 rt.audioRange = range
+                rt.audioRate = Double(scale)
             }
         }
         guard rt.videoTrack != nil || rt.audioTrack != nil else { return nil }

@@ -401,6 +401,11 @@ final class EditorModel: ObservableObject {
                         self.insert(clips)
                         Task { @MainActor in
                             try? await Task.sleep(nanoseconds: 1_500_000_000)
+                            if args.contains("--handoff-loop") {
+                                self.project.inPoint = 0.5
+                                self.project.outPoint = 2.0
+                                self.loop = true
+                            }
                             self.play()
                             var samples: [(wall: Double, head: Double)] = []
                             let t0 = CACurrentMediaTime()
