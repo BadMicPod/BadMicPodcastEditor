@@ -1432,8 +1432,25 @@ final class TimelineCanvas: NSView {
         }
     }
 
+    /// The captions as they'll be: while clips are dragged or trimmed, laid out from where they are now.
+    private var shownCaptions: [CaptionBlock] {
+        guard !overrides.isEmpty else { return model.captionBlocks }
+        var q = model.project
+        for (id, c) in overrides {
+            if duplicating {
+                // ⌥-drag: the copies, as well as the originals where they were.
+                var copy = c
+                copy.id = UUID()
+                q.clips.append(copy)
+            } else if let i = q.index(of: id) {
+                q.clips[i] = c
+            }
+        }
+        return CaptionLayout.blocks(q) { model.media.transcript($0.id) }
+    }
+
     private func drawCaptions(_ ctx: CGContext, lane: CGRect, dim: Bool) {
-        let blocks = model.captionBlocks
+        let blocks = shownCaptions
         if blocks.isEmpty {
             let note = model.captionsWaiting ? "Listening for what's said…" : "No speech heard in the captioned clips"
             let hint = NSAttributedString(string: note, attributes: Self.hintAttrs)
