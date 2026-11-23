@@ -1720,8 +1720,14 @@ enum SelfTest {
                                                party.id: SceneTags(tags: [tag("people"), tag("cake")])]
                 let asked = Transcript.tokens("show little girl eating").filter { $0.count >= 3 && !LocalBrain.notThings.contains($0) }
                 let picked = LocalBrain.showing(asked, in: [party, dogClip], shows: { seen[$0] }).map(\.name)
-                let pickOK = picked == ["dog"]
-                log("SHOWING \(pickOK ? "OK" : "FAIL") \(picked)")
+                // "little girl": a clip Vision is sure shows a child beats one where it's only a guess.
+                let beach = MediaAsset(path: "/tmp/beach.mov", name: "beach", kind: .video, duration: 6, width: 1920, height: 1080, fps: 30, hasAudio: false)
+                var seen2 = seen
+                seen2[beach.id] = SceneTags(tags: [tag("people"), SceneTags.Tag(name: "child", confidence: 0.41, times: [1])])
+                let girl = Transcript.tokens("add the little girl").filter { $0.count >= 3 && !LocalBrain.notThings.contains($0) }
+                let girlPick = LocalBrain.showing(girl, in: [beach, party, dogClip], shows: { seen2[$0] }).map(\.name)
+                let pickOK = girlPick == ["dog"] && picked == ["dog"] && LocalBrain.askedPhrase("show little girl eating", matched: ["girl", "eating"]) == "little girl eating"
+                log("SHOWING \(pickOK ? "OK" : "FAIL") \(picked) girl=\(girlPick)")
                 let spans = { (d: EditDecision?) in (d?.shots ?? []).map { String(format: "%.2f+%.2f", $0.source, $0.duration) }.joined(separator: ",") }
                 log("MOMENTS \(momentOK ? "OK" : "FAIL") plain=\(spans(plainDog)) wanted=\(spans(wantDog))")
                 let mOK = pickOK && momentOK && rampOK && countOK && tagOK && speechOK && cutOK && timeOK && typedOK && clipOK && moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK

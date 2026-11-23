@@ -814,9 +814,7 @@ private struct MentionOption: Identifiable {
         var pointers: [MentionOption] = [selected > 0
             ? MentionOption(id: "selected", name: "selected", detail: "\(selected) clip\(selected == 1 ? "" : "s")")
             : MentionOption(id: "selected", name: "selected", detail: "Select clips first", enabled: false)]
-        if !p.clips.isEmpty {
-            pointers.append(MentionOption(id: "playhead", name: "playhead", detail: clock(model.playhead)))
-        }
+        pointers.append(MentionOption(id: "playhead", name: "playhead", detail: clock(model.playhead)))
         if let r = p.playRange {
             pointers.append(MentionOption(id: "in-out", name: "in-out", detail: "\(clock(r.start)) to \(clock(r.end))"))
         }

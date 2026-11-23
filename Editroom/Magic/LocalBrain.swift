@@ -30,6 +30,8 @@ struct LocalRecipe: Equatable {
     var moments: [UUID: [Double]] = [:]
     /// The files that show what they asked for, best match first.
     var shown: [UUID] = []
+    /// What they asked to see, in their words ("little girl eating"), for the note.
+    var asked = ""
     /// Asks for nothing Local can do (no setting, no media): it shouldn't edit anything.
     var isEmpty: Bool {
         seconds == nil && pace == .unchanged && look == nil && music == .unchanged && frame == .unchanged
@@ -311,9 +313,33 @@ enum LocalBrain {
     /// The files that show what's asked for: those matching the most of its words ("girl eating" is
     /// the clip with a child eating, not every clip with a person in it).
     static func showing(_ words: [String], in media: [MediaAsset], shows: (UUID) -> SceneTags?) -> [MediaAsset] {
-        let scored = media.map { a in (a, shows(a.id).map { t in words.filter { t.shows($0) }.count } ?? 0) }
+        // Ties go to the file with the more particular label: "girl" is a "child" in one clip and an
+        // "adult" or "people" in every clip with a person in it.
+        let general: Set<String> = ["people", "person", "adult"]
+        let scored = media.map { a -> (MediaAsset, Double) in
+            guard let t = shows(a.id) else { return (a, 0) }
+            let score = words.reduce(0.0) { sum, w in
+                let tags = t.matching(w)
+                guard t.shows(w) else { return sum }
+                // A particular label counts for more the surer Vision is of it.
+                let particular = tags.filter { !general.contains($0.name) }.map(\.confidence).max() ?? (tags.isEmpty ? 1 : 0)
+                return sum + 1 + 0.5 * particular
+            }
+            return (a, score)
+        }
         guard let best = scored.map(\.1).max(), best > 0 else { return [] }
         return scored.filter { $0.1 == best }.map(\.0)
+    }
+
+    /// Their words from the first thing found to the last ("show little girl eating" with "girl" and
+    /// "eating" found: "little girl eating"), with a describing word just before it kept.
+    static func askedPhrase(_ request: String, matched: [String]) -> String {
+        let words = request.lowercased().split { !$0.isLetter && $0 != "-" && $0 != "'" }.map(String.init)
+        let hits = words.indices.filter { matched.contains(words[$0]) }
+        guard var first = hits.first, let last = hits.last else { return "" }
+        let describing: Set<String> = ["little", "small", "big", "young", "old", "baby", "red", "blue", "white", "black", "happy", "funny", "cute"]
+        if first > 0, describing.contains(words[first - 1]) { first -= 1 }
+        return words[first...last].joined(separator: " ")
     }
 
     /// The times in each file where one of these words shows, by its labels.
@@ -360,6 +386,9 @@ enum LocalBrain {
                 applyMedia(&r, named: named, action: out.mediaAction, request: request, pointed: pointed, hasEdit: hasEdit)
                 let showing = showing(words, in: media, shows: shows)
                 r.shown = showing.map(\.id)
+                if let best = showing.first, let tags = shows(best.id) {
+                    r.asked = askedPhrase(request, matched: words.filter { tags.shows($0) })
+                }
                 r.moments = moments(of: words, in: showing, shows: shows)
                 return r
             } catch {
