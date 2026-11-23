@@ -126,6 +126,10 @@ enum AutoPlanner {
             let limit = min(a.duration, s.asset.duration)
             guard limit >= length + 0.1 else { return nil }
             var best: (Double, Double)?
+            // Where what they asked for shows: the best window with one of those moments inside it
+            // (not right at its edge) wins over any window without one.
+            let wanted = recipe.moments[s.asset.id] ?? []
+            var bestWanted: (Double, Double)?
             var start = 0.05
             while start + length <= limit - 0.05 {
                 let end = start + length
@@ -137,11 +141,13 @@ enum AutoPlanner {
                         // The average, held down by the worst moment in it.
                         let v = vals.reduce(0, +) / Double(vals.count) * 0.75 + (vals.min() ?? 0) * 0.25
                         if best == nil || v > best!.1 { best = (start, v) }
+                        if wanted.contains(where: { $0 >= start + min(0.3, length / 4) && $0 <= end - min(0.3, length / 4) }),
+                           bestWanted == nil || v > bestWanted!.1 { bestWanted = (start, v) }
                     }
                 }
                 start += 0.25
             }
-            return best
+            return bestWanted ?? best
         }
 
         var shots: [EditDecision.Shot] = []

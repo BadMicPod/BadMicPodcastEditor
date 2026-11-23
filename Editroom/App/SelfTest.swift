@@ -1701,7 +1701,21 @@ enum SelfTest {
                     && Set(montage?.shots.map(\.asset.id) ?? []).count == 20 && montageLength <= 10.2 && montageLength > 8
                 let countOK = everyOK && LocalBrain.shotCount("create 7 second montage with at least 10 clips") == 10
                     && LocalBrain.shotCount("twelve quick cuts") == 12 && LocalBrain.shotCount("make it 7 seconds") == nil
-                let mOK = rampOK && countOK && tagOK && speechOK && cutOK && timeOK && typedOK && clipOK && moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
+                // What they asked for shows late in a file whose best-looking part is early: the shot
+                // goes where it shows.
+                let dogClip = MediaAsset(path: "/tmp/dog.mov", name: "dog", kind: .video, duration: 12, width: 1920, height: 1080, fps: 30, hasAudio: false)
+                let dogLook = ClipAnalysis(duration: 12, created: nil,
+                                           samples: (0..<24).map { k in .init(time: Double(k) * 0.5, luma: 0.5, sharpness: 80 - Double(k) * 2, motion: 0.01, color: 0.3, faces: 0) })
+                var dogRecipe = LocalRecipe()
+                dogRecipe.seconds = 2
+                let plainDog = AutoPlanner.decide(project: Project(), clips: [(dogClip, dogLook)], music: nil, recipe: dogRecipe)
+                dogRecipe.moments = [dogClip.id: [9]]
+                let wantDog = AutoPlanner.decide(project: Project(), clips: [(dogClip, dogLook)], music: nil, recipe: dogRecipe)
+                let momentOK = !(plainDog?.shots.contains { $0.source <= 10 && $0.source + $0.duration >= 8 } ?? true)
+                    && (wantDog?.shots.contains { $0.source <= 10 && $0.source + $0.duration >= 8 } ?? false)
+                let spans = { (d: EditDecision?) in (d?.shots ?? []).map { String(format: "%.2f+%.2f", $0.source, $0.duration) }.joined(separator: ",") }
+                log("MOMENTS \(momentOK ? "OK" : "FAIL") plain=\(spans(plainDog)) wanted=\(spans(wantDog))")
+                let mOK = momentOK && rampOK && countOK && tagOK && speechOK && cutOK && timeOK && typedOK && clipOK && moveOK && keepOK && findOK && plainOK && removeOK && endOK && rangeOK && lookOK && wholeOK && briefOK
                 log("MENTIONS \(mOK ? "OK" : "FAIL") every=\(everyOK) (\(Set(montage?.shots.map(\.asset.id) ?? []).count) clips, \(String(format: "%.1f", montageLength))s) ramp=\(rampOK) \(moment.said) / \(cutsPlan.said) count=\(countOK) tags=\(tagOK) speech=\(speechOK) cut=\(cutOK) \(cutPlan.said) time=\(timeOK) typed=\(typedOK) clip=\(clipOK) \(labels) move=\(moveOK) keep=\(keepOK) find=\(findOK) plain=\(plainOK) remove=\(removeOK) end=\(endOK) range=\(rangeOK) look=\(lookOK) whole=\(wholeOK) brief=\(briefOK)")
                 good = good && mOK
             }

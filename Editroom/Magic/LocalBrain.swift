@@ -25,6 +25,9 @@ struct LocalRecipe: Equatable {
     var mediaNames: [String] = []
     /// "Nothing else on the timeline": with keepOnly, titles, overlays and music go too.
     var clearRest = false
+    /// Where the things they asked for show in each file ("the dog", "the pool"), from Media's labels:
+    /// its shots are taken from around these times when it can.
+    var moments: [UUID: [Double]] = [:]
     /// Asks for nothing Local can do (no setting, no media): it shouldn't edit anything.
     var isEmpty: Bool {
         seconds == nil && pace == .unchanged && look == nil && music == .unchanged && frame == .unchanged
@@ -299,6 +302,17 @@ enum LocalBrain {
         }
     }
 
+    /// The times in each file where one of these words shows, by its labels.
+    static func moments(of words: [String], in media: [MediaAsset], shows: (UUID) -> SceneTags?) -> [UUID: [Double]] {
+        var out: [UUID: [Double]] = [:]
+        for a in media where a.kind == .video {
+            guard let tags = shows(a.id) else { continue }
+            let times = Set(words.flatMap { tags.matching($0) }.flatMap(\.times)).sorted()
+            if !times.isEmpty { out[a.id] = times }
+        }
+        return out
+    }
+
     /// Reads a request into a recipe. `media` is the library, so named items can be picked out.
     static func recipe(for request: String, media: [MediaAsset] = [], pointed: Set<UUID> = [], hasEdit: Bool = false,
                        shows: (UUID) -> SceneTags? = { _ in nil }) async throws -> LocalRecipe {
@@ -332,6 +346,7 @@ enum LocalBrain {
                 r.cannotDo = out.cannotDo.trimmingCharacters(in: .whitespacesAndNewlines)
                 r = checked(r, against: request)
                 applyMedia(&r, named: named, action: out.mediaAction, request: request, pointed: pointed, hasEdit: hasEdit)
+                r.moments = moments(of: words, in: media, shows: shows)
                 return r
             } catch {
                 throw Failure(message: "Apple Intelligence couldn't read that: \(error.localizedDescription)")
