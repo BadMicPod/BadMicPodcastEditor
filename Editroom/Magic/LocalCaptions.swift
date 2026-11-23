@@ -14,6 +14,27 @@ enum LocalCaptions {
         return removes(request) || p.clips.contains { $0.kind == .audio }
     }
 
+    /// A new cut asked for with captions ("make a 12s edit with captions"): captioned once it's made.
+    static func wantedWithCut(_ request: String) -> Bool {
+        let t = request.lowercased()
+        return ["caption", "subtitle"].contains(where: { t.contains($0) }) && !removes(request)
+            && t.range(of: #"(^|\s)["“'‘][^"”'’]{1,60}["”'’]"#, options: .regularExpression) == nil
+    }
+
+    /// Captions everyone talking in the edit as it is now (heard first), as one more undo step. Says what it did.
+    static func addToCut(model: EditorModel) async -> String {
+        let p = model.project
+        let targets = p.unlocked(p.defaultCaptionTargets)
+        guard !targets.isEmpty else { return "No one talks in the cut, so there are no captions." }
+        for c in p.clips where targets.contains(c.id) {
+            if let id = c.assetID, let url = model.media.soundURL(id) { _ = await Transcripts.shared.ready(url, limit: 60) }
+        }
+        model.mutate { $0.addCaptions(targets) }
+        let count = model.captionBlocks.count
+        return count == 0 ? "Added a caption track, but no speech was heard in the cut."
+            : "Captioned what's said: \(count) caption\(count == 1 ? "" : "s")."
+    }
+
     static func removes(_ request: String) -> Bool {
         let t = request.lowercased()
         return ["remove", "delete", "take off", "take away", "get rid", "no caption", "no subtitle", "without caption",

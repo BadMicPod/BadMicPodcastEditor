@@ -1157,6 +1157,11 @@ enum LocalMagic {
                     recipe.cannotDo = recipe.cannotDo.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
                         .filter { p in !["title", "text", "caption", "heading", "name"].contains { p.lowercased().contains($0) } }.joined(separator: ", ")
                 }
+                if LocalCaptions.wantedWithCut(request) {
+                    // Captions are added once the cut is made, so they aren't something it couldn't do.
+                    recipe.cannotDo = recipe.cannotDo.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                        .filter { p in !["caption", "subtitle"].contains { p.lowercased().contains($0) } }.joined(separator: ", ")
+                }
                 if LocalBrain.wantsLevels(request) {
                     recipe.levelAudio = true
                     // Every audio clip on a track that's on, measured now, so they all read the same on the output meters.
@@ -1260,11 +1265,23 @@ enum LocalMagic {
                 return
             }
             let started = Date()
+            let captions = LocalCaptions.wantedWithCut(request)
             MagicShow.start(model: model, fromMouse: false, recipe: recipe) { said, changed in
-                if CommandLine.arguments.contains("--magic-local") {
-                    FileHandle.standardError.write("MAGIC LOCAL said: \(said)\n".data(using: .utf8)!)
+                // Captions asked for with the cut: put on the cut once it's made.
+                Task { @MainActor in
+                    var said = said
+                    if captions, changed {
+                        state.status = "Listening"
+                        said += (said.isEmpty ? "" : " ") + (await LocalCaptions.addToCut(model: model))
+                        state.status = nil
+                    }
+                    if CommandLine.arguments.contains("--magic-local") {
+                        FileHandle.standardError.write("MAGIC LOCAL said: \(said)\n".data(using: .utf8)!)
+                        logTitles(model)
+                        FileHandle.standardError.write("MAGIC LOCAL captions \(model.captionBlocks.count)\n".data(using: .utf8)!)
+                    }
+                    note(said, changed: changed, detail: ["On this Mac", "\(Int(Date().timeIntervalSince(started).rounded()))s"])
                 }
-                note(said, changed: changed, detail: ["On this Mac", "\(Int(Date().timeIntervalSince(started).rounded()))s"])
             }
         }
     }
