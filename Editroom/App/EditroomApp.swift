@@ -133,9 +133,6 @@ enum AboutPanel {
         add("FFmpeg", link: "https://ffmpeg.org")
         add(", licensed under the ")
         add("LGPL 2.1", link: "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html")
-        add(" (")
-        add("source", link: "https://ffmpeg.org/releases/")
-        add(")")
         NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
         NSApp.activate()
     }
