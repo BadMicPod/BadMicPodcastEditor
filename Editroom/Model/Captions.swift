@@ -45,6 +45,8 @@ struct CaptionFix: Codable, Hashable {
     /// The word's start in the file, which identifies it.
     var start: Double
     var text: String
+    /// Joined to the word before: its time goes to that word, whose text says them both.
+    var merged: Bool?
 }
 
 /// One caption: a few words shown together.
@@ -56,6 +58,8 @@ struct CaptionBlock: Hashable, Identifiable {
         var text: String
         /// The word's start in its file, for fixes.
         var source: Double
+        /// The words in the file it stands for (more than one when a retyped caption has new words).
+        var covers: [Double]
     }
 
     /// The clip it comes from and its first word's time in the file: steady through trims and moves.
@@ -67,6 +71,13 @@ struct CaptionBlock: Hashable, Identifiable {
     var words: [Word]
 
     var text: String { words.map(\.text).joined(separator: " ") }
+
+    /// The words in the file the caption stands for, in order.
+    var covered: [Double] {
+        var out: [Double] = []
+        for w in words { for c in w.covers where out.last != c && !out.contains(c) { out.append(c) } }
+        return out
+    }
 }
 
 extension Project {
@@ -115,20 +126,24 @@ extension Project {
         for i in clips.indices { clips[i].captioned = nil }
     }
 
-    /// Sets what a caption says. The same number of words replaces them one for one; otherwise the
-    /// first word takes the whole text and the rest are left out. Empty text leaves them all out.
+    /// Sets what a caption says. As many words as were said replace them one for one; otherwise the first
+    /// word takes the whole text and the rest join it, so the caption keeps its time and the new words share
+    /// it out. Empty text leaves them all out.
     mutating func setCaptionText(_ block: CaptionBlock, to text: String) {
         let new = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        let said = block.covered
         var fixes = captionFixes?[block.assetID] ?? []
-        func set(_ source: Double, _ t: String) {
+        func set(_ source: Double, _ t: String, merged: Bool = false) {
             fixes.removeAll { abs($0.start - source) < 0.0005 }
-            fixes.append(CaptionFix(start: source, text: t))
+            fixes.append(CaptionFix(start: source, text: t, merged: merged ? true : nil))
         }
-        if new.count == block.words.count {
-            // Every word set, so words an earlier edit left out come back.
-            for (w, t) in zip(block.words, new) { set(w.source, t) }
+        if new.isEmpty {
+            for source in said { set(source, "") }
+        } else if new.count == said.count {
+            // Every word set, so words an earlier edit left out or joined come back.
+            for (source, t) in zip(said, new) { set(source, t) }
         } else {
-            for (i, w) in block.words.enumerated() { set(w.source, i == 0 ? new.joined(separator: " ") : "") }
+            for (i, source) in said.enumerated() { set(source, i == 0 ? new.joined(separator: " ") : "", merged: i > 0) }
         }
         if captionFixes == nil { captionFixes = [:] }
         captionFixes?[block.assetID] = fixes.sorted { $0.start < $1.start }
@@ -178,14 +193,17 @@ enum CaptionLayout {
         for k in 1..<n {
             let target = Double(total) * Double(k) / Double(n)
             // Cut after word i (from ... run.count - (n - k) - 1, leaving a word for each phrase to come).
-            var best = from, bestScore = Double.infinity
-            for i in from...(run.count - (n - k) - 1) {
+            // Never inside a retyped word's new words: they're one edit.
+            var best: Int?, bestScore = Double.infinity
+            for i in from...(run.count - (n - k) - 1) where run[i].source != run[i + 1].source {
                 var score = abs(Double(ends[i]) - target)
                 if run[i].text.hasSuffix(",") { score -= 6 }
                 if score < bestScore { bestScore = score; best = i }
             }
+            guard let best else { break }
             cuts.append(best)
             from = best + 1
+            if from > run.count - 1 { break }
         }
         var out: [[CaptionBlock.Word]] = []
         var start = 0
@@ -199,17 +217,40 @@ enum CaptionLayout {
     private static func blocks(for clip: Clip, asset: MediaAsset, words: [Transcript.Word], fixes: [CaptionFix]) -> [CaptionBlock] {
         let s0 = clip.sourceStart, s1 = s0 + clip.sourceLength
         let at = { (s: Double) in min(clip.end, max(clip.start, clip.start + clip.timelineSpan(from: s0, to: s))) }
-        // The words heard in the clip (most of the word inside it), on the timeline, with any fixes.
-        var heard: [CaptionBlock.Word] = []
+        // The words heard in the clip (most of the word inside it), on the timeline, with any fixes. A word
+        // joined to the one before lends it its time.
+        var entries: [CaptionBlock.Word] = []
+        var previous: Double?
         for w in words {
             let mid = (w.start + w.end) / 2
             guard mid >= s0, mid < s1 else { continue }
-            var text = w.text
-            if let fix = fixes.first(where: { abs($0.start - w.start) < 0.0005 }) { text = fix.text }
-            guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+            defer { previous = w.start }
+            let fix = fixes.first { abs($0.start - w.start) < 0.0005 }
             let a = at(max(w.start, s0)), b = at(min(w.end, s1))
-            guard b > a else { continue }
-            heard.append(CaptionBlock.Word(start: a, end: b, text: text, source: w.start))
+            if fix?.merged == true {
+                if let p = previous, let last = entries.last, last.covers.last == p {
+                    entries[entries.count - 1].end = max(last.end, b)
+                    entries[entries.count - 1].covers.append(w.start)
+                }
+                continue
+            }
+            let text = fix?.text ?? w.text
+            guard !text.trimmingCharacters(in: .whitespaces).isEmpty, b > a else { continue }
+            entries.append(CaptionBlock.Word(start: a, end: b, text: text, source: w.start, covers: [w.start]))
+        }
+        // A retyped word with several words in it: they share its time, by length.
+        var heard: [CaptionBlock.Word] = []
+        for e in entries {
+            let parts = e.text.split(whereSeparator: \.isWhitespace).map(String.init)
+            guard parts.count > 1 else { heard.append(e); continue }
+            let weights = parts.map { Double($0.count + 1) }
+            let total = weights.reduce(0, +)
+            var t = e.start
+            for (part, wt) in zip(parts, weights) {
+                let d = (e.end - e.start) * wt / total
+                heard.append(CaptionBlock.Word(start: t, end: t + d, text: part, source: e.source, covers: e.covers))
+                t += d
+            }
         }
 
         // Runs of talking: broken by a pause or the end of a sentence. Each run is then cut into as few

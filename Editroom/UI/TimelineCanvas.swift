@@ -73,6 +73,8 @@ final class TimelineCanvas: NSView {
         case fade(id: UUID, fadeIn: Bool)
         case gain(id: UUID, startY: CGFloat, startNorm: CGFloat, height: CGFloat)
         case marquee(origin: CGPoint, base: Set<UUID>)
+        /// Dragging out a box on the caption track: picks the captions it touches.
+        case captionMarquee(origin: CGPoint, base: Set<String>)
         /// A marker's flag: a click opens its panel, a drag moves it.
         case marker(id: UUID, startX: CGFloat, moved: Bool)
         /// One end of the in/out range.
@@ -445,6 +447,7 @@ final class TimelineCanvas: NSView {
             drag = .none
             guard let b = captionHit(at: p) else {
                 if !extend { model.selectCaptions([]) }
+                drag = .captionMarquee(origin: CGPoint(x: p.x + view.scrollX, y: p.y + view.scrollY), base: model.captionSelection)
                 return
             }
             if extend {
@@ -512,7 +515,7 @@ final class TimelineCanvas: NSView {
         lastDragPoint = p
         handleDrag(at: p)
         switch drag {
-        case .scrub, .move, .trim, .marquee: updateAutoscroll(p)
+        case .scrub, .move, .trim, .marquee, .captionMarquee: updateAutoscroll(p)
         default: break
         }
     }
@@ -588,6 +591,16 @@ final class TimelineCanvas: NSView {
             }
             ids = model.project.unlocked(model.project.linked(ids))
             if ids != model.selection { model.selection = ids }
+            needsDisplay = true
+        case .captionMarquee(let origin, let base):
+            let current = CGPoint(x: p.x + view.scrollX, y: p.y + view.scrollY)
+            let r = CGRect(x: min(origin.x, current.x), y: min(origin.y, current.y),
+                           width: abs(origin.x - current.x), height: abs(origin.y - current.y))
+                .offsetBy(dx: -view.scrollX, dy: -view.scrollY)
+            marquee = r
+            var ids = base
+            for b in model.captionBlocks { if let br = captionRect(b), br.intersects(r) { ids.insert(b.id) } }
+            if ids != model.captionSelection { model.selectCaptions(ids) }
             needsDisplay = true
         }
     }

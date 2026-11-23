@@ -1845,8 +1845,14 @@ enum SelfTest {
             blocks = CaptionLayout.blocks(p, transcript: heard)
             p.setCaptionText(blocks[1], to: "we did")
             let fewer = CaptionLayout.blocks(p, transcript: heard).last?.text == "we did"
+            // More words than were said: the caption keeps its time, the words share it.
+            p.setCaptionText(blocks[1], to: "and then we finally made it work")
+            let longer = CaptionLayout.blocks(p, transcript: heard).filter { $0.start >= blocks[1].start - 1e-9 }
+            let kept = longer.map(\.text).joined(separator: " ") == "and then we finally made it work"
+                && abs((longer.first?.start ?? 0) - blocks[1].start) < 1e-6 && abs((longer.last?.end ?? 0) - blocks[1].end) < 1e-6
+                && longer.flatMap(\.words).count == 7
             p.setCaptionText(blocks[1], to: "we made it")
-            let back = CaptionLayout.blocks(p, transcript: heard).last?.text == "we made it"
+            let back = CaptionLayout.blocks(p, transcript: heard).last?.text == "we made it" && kept
             let good = picksSound && phrases && placed && follows && fixed && drawn && removed && afresh && fewer && back
             log("CAPTIONS \(good ? "OK" : "FAIL") sound=\(picksSound) phrases=\(phrases) \(texts) placed=\(placed) follows=\(follows) \(moved.map { String(format: "%.3f", $0.start) }) fixed=\(fixed) drawn=\(drawn) removed=\(removed) afresh=\(afresh) typing=\(fewer)/\(back)")
             ok = ok && good
