@@ -1009,14 +1009,16 @@ final class TimelineCanvas: NSView {
 
     // MARK: Drag & drop
 
-    private func payload(from sender: NSDraggingInfo) -> DragPayload? {
+    /// What's being dragged in from the Media panel: one item, or several picked ones, which land end to end.
+    private func payloads(from sender: NSDraggingInfo) -> [DragPayload] {
         if let s = sender.draggingPasteboard.string(forType: .string), s.hasPrefix("editroom:") {
             let body = String(s.dropFirst("editroom:".count))
-            if body == "solid" { return .solid }
-            if body == "text" { return .text }
-            if let id = UUID(uuidString: body) { return .asset(id) }
+            if body == "solid" { return [.solid] }
+            if body == "text" { return [.text] }
+            let ids = body.split(separator: ",").compactMap { UUID(uuidString: String($0)) }
+            if !ids.isEmpty { return ids.map { .asset($0) } }
         }
-        return model.dragPayload
+        return model.dragPayload.map { [$0] } ?? []
     }
 
     private func fileURLs(from sender: NSDraggingInfo) -> [URL] {
@@ -1026,8 +1028,8 @@ final class TimelineCanvas: NSView {
     private func updateDrop(_ sender: NSDraggingInfo) -> NSDragOperation {
         let p = convert(sender.draggingLocation, from: nil)
         let hasFiles = sender.draggingPasteboard.types?.contains(.fileURL) ?? false
-        let payload = hasFiles ? nil : self.payload(from: sender)
-        guard hasFiles || payload != nil else { return [] }
+        let payloads = hasFiles ? [] : self.payloads(from: sender)
+        guard hasFiles || !payloads.isEmpty else { return [] }
 
         let project = model.project
         let vTracks = project.videoTracks, aTracks = project.audioTracks
@@ -1061,7 +1063,7 @@ final class TimelineCanvas: NSView {
         vTrack = open(vTrack, .video)
         aTrack = open(aTrack, .audio)
 
-        let duration = payload.map { model.payloadDuration($0) } ?? 5
+        let duration = payloads.isEmpty ? 5 : payloads.reduce(0) { $0 + model.payloadDuration($1) }
         var start = max(0, time(atX: p.x))
         if let s = snap([start, start + duration], to: project.snapTargets(excluding: []) + [model.playhead]), start + s.delta >= -1e-9 {
             start = max(0, start + s.delta)
@@ -1071,8 +1073,13 @@ final class TimelineCanvas: NSView {
             start = project.snapFrame(start)
         }
 
-        if let payload {
-            ghosts = model.makeClips(payload, at: start, videoTrack: vTrack, audioTrack: aTrack)
+        if !payloads.isEmpty {
+            var t = start
+            ghosts = []
+            for payload in payloads {
+                ghosts += model.makeClips(payload, at: t, videoTrack: vTrack, audioTrack: aTrack)
+                t = project.snapFrame(t + model.payloadDuration(payload))
+            }
         } else {
             ghosts = [Clip(trackID: overAudio ? aTrack : vTrack, kind: overAudio ? .audio : .video, start: start, duration: duration)]
         }

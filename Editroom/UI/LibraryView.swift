@@ -328,7 +328,11 @@ private struct AssetActions: ViewModifier {
             .onTapGesture(count: 2) { model.addAtPlayhead(.asset(asset.id)) }
             .onDrag {
                 model.dragPayload = .asset(asset.id)
-                return NSItemProvider(object: ("editroom:" + asset.id.uuidString) as NSString)
+                // Dragging one of several picked items takes them all, in the Media panel's order.
+                let ids = picked && pickedCount > 1
+                    ? model.project.assets.map(\.id).filter { model.mediaSelection.contains($0) }
+                    : [asset.id]
+                return NSItemProvider(object: ("editroom:" + ids.map(\.uuidString).joined(separator: ",")) as NSString)
             }
             .contextMenu {
                 if offline {
