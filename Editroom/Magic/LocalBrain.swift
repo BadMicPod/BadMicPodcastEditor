@@ -28,6 +28,8 @@ struct LocalRecipe: Equatable {
     /// Where the things they asked for show in each file ("the dog", "the pool"), from Media's labels:
     /// its shots are taken from around these times when it can.
     var moments: [UUID: [Double]] = [:]
+    /// The files that show what they asked for, best match first.
+    var shown: [UUID] = []
     /// Asks for nothing Local can do (no setting, no media): it shouldn't edit anything.
     var isEmpty: Bool {
         seconds == nil && pace == .unchanged && look == nil && music == .unchanged && frame == .unchanged
@@ -236,7 +238,10 @@ enum LocalBrain {
         let everyday = named.allSatisfy { a in (a.name as NSString).deletingPathExtension.allSatisfy { $0.isLetter || $0 == " " } }
         if everyday, !explicit, !only, !remove { return }
         let amongOthers = ["also", " too", "include", "as well", "most", "all ", "every", "the rest", "other"].contains { text.contains($0) }
-        let fallback = hasEdit ? "unchanged" : !explicit ? action : !amongOthers && action != "remove" ? "only" : "unchanged"
+        // Asked for by what they show ("show the girl eating", "add the dog"): never taken out unless
+        // the words say so (Apple's model sometimes reads "add" as "remove").
+        let picked = !explicit && action == "remove" && !remove ? "only" : action
+        let fallback = hasEdit ? "unchanged" : !explicit ? picked : !amongOthers && action != "remove" ? "only" : "unchanged"
         let mode = only && !remove ? "only" : remove && !only ? "remove" : fallback
         let ids = Set(named.map(\.id))
         if mode == "only" { r.keepOnly = ids } else if mode == "remove" { r.takeOut = ids } else { return }
@@ -353,7 +358,9 @@ enum LocalBrain {
                 r.cannotDo = out.cannotDo.trimmingCharacters(in: .whitespacesAndNewlines)
                 r = checked(r, against: request)
                 applyMedia(&r, named: named, action: out.mediaAction, request: request, pointed: pointed, hasEdit: hasEdit)
-                r.moments = moments(of: words, in: media, shows: shows)
+                let showing = showing(words, in: media, shows: shows)
+                r.shown = showing.map(\.id)
+                r.moments = moments(of: words, in: showing, shows: shows)
                 return r
             } catch {
                 throw Failure(message: "Apple Intelligence couldn't read that: \(error.localizedDescription)")

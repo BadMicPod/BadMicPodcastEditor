@@ -120,8 +120,9 @@ struct PreviewView: View {
                         .frame(width: w, height: h)
                         .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(Theme.ink.opacity(0.06)))
-                    // Nothing on the timeline yet: say how to start, and take a click as "import".
-                    if model.project.clips.isEmpty {
+                    // Nothing on the timeline yet: say how to start, and take a click as "import". Not while
+                    // a Media item is hovered: its frame is drawn underneath, by the player, once skimming rests.
+                    if model.project.clips.isEmpty, source.current == nil {
                         EmptyViewerPrompt(hasMedia: !model.project.assets.isEmpty) { model.showImportPanel() }
                             .frame(width: w, height: h)
                     }

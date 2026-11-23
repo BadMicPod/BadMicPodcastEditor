@@ -27,6 +27,7 @@ enum LocalPointed {
         let range = typedSpan != nil || mentions.contains(.range) || says(["in/out", "in-out", "in and out points", "marked range", "the range"])
         let playhead = mentions.contains(.playhead) || says(["playhead"])
         if let moved = reorder(request: request, project: p) { return moved }
+        if let added = addShown(request: request, recipe: recipe, project: p) { return added }
         guard selection || range || playhead else { return nil }
 
         let remove = says(["remove", "delete", "take out", "take it out", "take them out", "get rid", "cut out", "cut it", "cut them", "drop",
@@ -178,6 +179,45 @@ extension LocalPointed {
     /// Moving shots around the edit by name: "put @b in front of @a", "swap @a and @b", "move @a to the
     /// end", "open on @a". The shots on the main picture track are put in the new order, back to back,
     /// each with its own sound; nothing else changes.
+    /// "Add video of the girl eating" on an edit that's already made: a shot of the file that shows it,
+    /// from around where it shows, put on the end of the edit. Nil when it isn't that kind of request.
+    static func addShown(request: String, recipe: LocalRecipe, project p: Project) -> Outcome? {
+        let text = request.lowercased()
+        let adding = ["add ", "include", "put in", "insert", "throw in", "stick in", "append"].contains { text.contains($0) }
+        let edit = p.clips.filter { ($0.kind == .video || $0.kind == .image) && !p.isLocked($0.trackID) }
+        guard adding, !recipe.wholeLibrary, !edit.isEmpty, let id = recipe.shown.first, let asset = p.asset(id),
+              asset.kind == .video || asset.kind == .image else { return nil }
+        func frames(_ t: Double) -> Double { p.fps > 0 ? (t * p.fps).rounded() / p.fps : t }
+        // Already in the edit: say so rather than add it again.
+        if p.clips.contains(where: { $0.assetID == id }) {
+            return Outcome(said: "\(asset.name) is already in your edit.")
+        }
+        let last = edit.max { $0.end < $1.end }!
+        let at = frames(last.end)
+        let length = frames(min(3, asset.kind == .image ? 3 : asset.duration))
+        // Centred on the middle of where it shows.
+        let times = recipe.moments[id] ?? []
+        let middle = times.isEmpty ? asset.duration / 2 : times[times.count / 2]
+        var v = Clip(trackID: last.trackID, kind: asset.kind == .image ? .image : .video, assetID: id, start: at, duration: length)
+        v.sourceStart = asset.kind == .image ? 0 : frames(max(0, min(middle - length / 2, asset.duration - length)))
+        var group = [v]
+        if asset.kind == .video, asset.hasAudio {
+            // Its sound under it, on the track the edit's own sound is on (or the first audio track).
+            let sound = last.linkID.flatMap { l in p.clips.first { $0.linkID == l && $0.kind == .audio } }?.trackID
+                ?? p.audioTracks.first { !p.isLocked($0.id) }?.id
+            if let sound {
+                let link = UUID()
+                group[0].linkID = link
+                var a = Clip(trackID: sound, kind: .audio, assetID: id, start: at, duration: length)
+                a.sourceStart = v.sourceStart
+                a.linkID = link
+                group.append(a)
+            }
+        }
+        return Outcome(plan: MCPDraft.plan(base: p, edits: [.place(group, asset: id)]),
+                       said: "Added a \(Int(length.rounded()))-second shot of \(asset.name) at the end.")
+    }
+
     static func reorder(request: String, project p: Project) -> Outcome? {
         let text = request.lowercased()
         func says(_ words: [String]) -> Bool { words.contains { text.contains($0) } }
