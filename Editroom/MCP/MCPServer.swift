@@ -272,7 +272,7 @@ enum MCPHandler {
                 ? MagicState.shared.begin(activity: describe(name, args, in: model.project)) : nil
             defer {
                 if let activity { MagicState.shared.finish(activity: activity) }
-                let edits: Set<String> = ["add_clip", "add_title", "move_clip", "trim_clip", "split_clip", "delete_clips", "set_speed", "set_speed_ramp",
+                let edits: Set<String> = ["add_clip", "add_title", "move_clip", "trim_clip", "split_clip", "delete_clips", "set_speed", "set_speed_ramp", "set_captions",
                                           "set_grade", "set_audio", "set_transition", "set_sequence", "add_track", "history", "download_media",
                                           "set_marker", "delete_markers", "set_in_out", "set_transform", "set_title_style", "freeze_frame",
                                           "reverse_clip", "detach_audio", "duplicate_clip", "set_track", "add_solid", "set_solid_color"]

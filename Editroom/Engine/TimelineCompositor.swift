@@ -102,12 +102,16 @@ final class TimelineInstruction: NSObject, AVVideoCompositionInstructionProtocol
     /// (the same as the output, unless exporting to a different shape).
     let canvas: CGSize
     let offset: CGPoint
+    /// Captions, drawn over everything in the output's own frame.
+    let captions: [CaptionLayer]
 
-    init(timeRange: CMTimeRange, layers: [RenderLayer], trackIDs: [CMPersistentTrackID], canvas: CGSize, offset: CGPoint = .zero) {
+    init(timeRange: CMTimeRange, layers: [RenderLayer], trackIDs: [CMPersistentTrackID], canvas: CGSize, offset: CGPoint = .zero,
+         captions: [CaptionLayer] = []) {
         self.timeRange = timeRange
         self.canvas = canvas
         self.offset = offset
         self.layers = layers
+        self.captions = captions
         self.requiredSourceTrackIDs = trackIDs.map { NSNumber(value: $0) }
     }
 }
@@ -255,6 +259,10 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
         }
         if instruction.offset != .zero || output != size {
             out = out.transformed(by: CGAffineTransform(translationX: -instruction.offset.x, y: -instruction.offset.y))
+        }
+        out = out.cropped(to: CGRect(origin: .zero, size: output))
+        for caption in instruction.captions where t >= caption.start && t < caption.end {
+            if let image = caption.image(output: output) { out = image.composited(over: out) }
         }
         return out.cropped(to: CGRect(origin: .zero, size: output))
     }

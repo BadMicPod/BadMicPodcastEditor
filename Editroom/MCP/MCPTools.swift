@@ -81,6 +81,13 @@ enum MCPTools {
                   "around": num("The speed before and after (default 1)."),
                   "remove": ["type": "boolean", "description": "Take the clip's ramp away (its speed stays)."]],
                  required: ["clip_id"]),
+            tool("set_captions", "Set captions", "Captions from what's said: a caption track above the video shows the words of each captioned clip in short phrases, timed to the speech, and follows every trim and move of those clips. Give clip_ids to caption those clips' speech (a video's sound is its linked audio clip); with none, every clip of people talking is captioned (sound from video files and voiceover tracks, not music). Also sets the captions' style. remove: true takes captions off clip_ids, or removes the caption track with none. Returns the captions.",
+                 ["clip_ids": ["type": "array", "items": ["type": "string"], "description": "Clips whose speech to caption (or un-caption with remove)."],
+                  "remove": ["type": "boolean", "description": "Take captions off instead."],
+                  "size": num("Text size, 28...140 (default 64)."),
+                  "position": num("Where they sit, 0.1 (top) to 0.95 (bottom) of the frame (default 0.78)."),
+                  "highlight": ["type": "boolean", "description": "Light up each word as it's said (default true)."],
+                  "hidden": ["type": "boolean", "description": "Hide or show the caption track (hidden captions aren't exported)."]]),
             tool("split_clip", "Split clip", "Cuts a clip (and its linked clip) in two with the blade. Returns the new right-hand pieces.", ["clip_id": str("A clip's id."), "at": num("Timeline time inside the clip.")], required: ["clip_id", "at"]),
             tool("delete_clips", "Delete clips", "Deletes clips and anything linked to them.", ["clip_ids": ["type": "array", "items": ["type": "string"]], "ripple": ["type": "boolean", "description": "Close the gap left behind (default false)."]], required: ["clip_ids"]),
             tool("set_grade", "Set grade", "Colour for video, photo and title clips. Leave out what shouldn't change.",
@@ -320,6 +327,37 @@ enum MCPTools {
             let label = speed >= 1 ? String(format: "Speed ×%g", speed) : String(format: "Slow ×%g", speed)
             try await perform([.change(c.id, label) { proj in proj.setSpeed(ids: ids, speed: speed) }], model, who, draft)
             return json(clipsJSON(Array(ids), now()))
+
+        case "set_captions":
+            func number(_ k: String) -> Double? { (args[k] as? Double) ?? (args[k] as? Int).map(Double.init) }
+            let given = Set((args["clip_ids"] as? [String] ?? []).compactMap(UUID.init(uuidString:)))
+            if !(args["clip_ids"] as? [String] ?? []).isEmpty, given.isEmpty { throw MCPToolError("clip_ids aren't clip ids from get_project.") }
+            if args["remove"] as? Bool == true {
+                let targets = p.captionTargets(given)
+                try await perform([.change(targets.first, given.isEmpty ? "No captions" : "Remove captions") { proj in
+                    if given.isEmpty { proj.removeCaptionTrack() } else { proj.removeCaptions(targets) }
+                }], model, who, draft)
+                return json(["captions": captionsJSON(draft?.project ?? model.project, model)])
+            }
+            guard Transcripts.available else { throw MCPToolError("Captions need speech recognition, which needs macOS 26 on this Mac.") }
+            let targets = p.unlocked(given.isEmpty ? (p.captions == nil ? p.defaultCaptionTargets : []) : p.captionTargets(given))
+            if !given.isEmpty, targets.isEmpty { throw MCPToolError("Those clips have no sound to caption.") }
+            if p.captions == nil, targets.isEmpty { throw MCPToolError("There's no one talking to caption: give clip_ids of clips with speech.") }
+            // What's said in them, heard first, so the captions are there when this returns.
+            for c in p.clips where targets.contains(c.id) {
+                if let id = c.assetID, let url = model.media.soundURL(id) { _ = await Transcripts.shared.ready(url) }
+            }
+            let size = number("size").map { $0.clamped(to: CaptionStyle.sizeRange) }
+            let position = number("position").map { $0.clamped(to: 0.1...0.95) }
+            let highlight = args["highlight"] as? Bool, hidden = args["hidden"] as? Bool
+            try await perform([.change(targets.first, "Captions") { proj in
+                proj.addCaptions(targets)
+                if let size { proj.captions?.style.size = size }
+                if let position { proj.captions?.style.y = position }
+                if let highlight { proj.captions?.style.highlight = highlight }
+                if let hidden { proj.captions?.hidden = hidden }
+            }], model, who, draft)
+            return json(["captions": captionsJSON(draft?.project ?? model.project, model)])
 
         case "set_speed_ramp":
             let c = try clipArg(args, p)
@@ -734,7 +772,21 @@ enum MCPTools {
             "clips": clips,
             "markers": p.markerList.map { ["id": $0.id.uuidString, "time": round3($0.time), "name": $0.name, "color": $0.tint.rawValue] },
             "in_out": p.playRange.map { ["in": round3($0.start), "out": round3($0.end)] } ?? NSNull(),
+            "captions": p.captions.map { c in
+                ["hidden": c.hidden, "size": c.style.size, "position": c.style.y, "highlight": c.style.highlight,
+                 "clip_ids": p.captionedClips.map(\.id.uuidString)] as [String: Any]
+            } ?? NSNull(),
         ]
+    }
+
+    /// The caption track and its captions, as set_captions returns them.
+    @MainActor private static func captionsJSON(_ p: Project, _ model: EditorModel) -> Any {
+        guard let track = p.captions else { return NSNull() }
+        let blocks = CaptionLayout.blocks(p) { model.media.transcript($0.id) }
+        return ["hidden": track.hidden, "size": track.style.size, "position": track.style.y, "highlight": track.style.highlight,
+                "clip_ids": p.captionedClips.map(\.id.uuidString),
+                "count": blocks.count,
+                "captions": blocks.prefix(60).map { ["start": round3($0.start), "end": round3($0.end), "text": $0.text] }] as [String: Any]
     }
 }
 

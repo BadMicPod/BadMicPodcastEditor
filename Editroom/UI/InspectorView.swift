@@ -39,7 +39,9 @@ struct InspectorView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    if clips.isEmpty {
+                    if clips.isEmpty, showsCaptions {
+                        captionSection
+                    } else if clips.isEmpty {
                         sequenceSection
                     } else {
                         clipSections(clips)
@@ -57,7 +59,16 @@ struct InspectorView: View {
         clips.first { $0.kind != .audio } ?? clips.first
     }
 
+    /// Captions picked, or the caption track's header clicked.
+    private var showsCaptions: Bool {
+        model.project.captions != nil && (model.captionsFocused || !model.captionSelection.isEmpty)
+    }
+
     private func title(_ clips: [Clip]) -> String {
+        if clips.isEmpty, showsCaptions {
+            let n = model.captionSelection.count
+            return n > 1 ? "\(n) captions" : n == 1 ? "Caption" : "Captions"
+        }
         if clips.isEmpty { return "Sequence" }
         let groups = Set(clips.map { $0.linkID ?? $0.id })
         if groups.count == 1, let c = primary(clips) { return model.project.name(of: c) }
@@ -65,6 +76,7 @@ struct InspectorView: View {
     }
 
     private func headerSymbol(_ clips: [Clip]) -> String {
+        if clips.isEmpty, showsCaptions { return "captions.bubble" }
         guard let c = primary(clips) else { return "rectangle.on.rectangle" }
         if Set(clips.map { $0.linkID ?? $0.id }).count > 1 { return "square.stack" }
         switch c.kind {
@@ -73,6 +85,54 @@ struct InspectorView: View {
         case .image: return "photo"
         case .text: return "textformat"
         case .solid: return "square.fill"
+        }
+    }
+
+    // MARK: Captions
+
+    /// The picked caption's words, to retype, and the style every caption shares.
+    @ViewBuilder private var captionSection: some View {
+        let blocks = model.captionBlocks
+        let picked = blocks.filter { model.captionSelection.contains($0.id) }
+        if let track = model.project.captions {
+            if picked.count == 1, let b = picked.first {
+                InspectorSection("Caption") {
+                    CaptionTextField(model: model, block: b)
+                    Text("Fixed here, a word stays fixed wherever this clip is used. Delete leaves the caption's words out.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.textFaint)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            InspectorSection("Style") {
+                ParamRow(icon: .symbol("textformat.size"), label: "Size", value: track.style.size, range: CaptionStyle.sizeRange,
+                         format: { "\(Int($0.rounded()))" },
+                         onEditing: { if !$0 { model.commitLive() } },
+                         onChange: { v in model.setCaptionStyle(live: true) { $0.size = v.rounded() } })
+                ParamRow(icon: .symbol("arrow.up.and.down"), label: "Position", value: track.style.y * 100, range: 10...95,
+                         format: { "\(Int($0.rounded()))%" },
+                         onEditing: { if !$0 { model.commitLive() } },
+                         onChange: { v in model.setCaptionStyle(live: true) { $0.y = (v / 100 * 1000).rounded() / 1000 } })
+                HStack(spacing: 8) {
+                    Chip(label: "Word highlight", active: track.style.highlight) {
+                        model.setCaptionStyle { $0.highlight.toggle() }
+                    }
+                    Spacer()
+                }
+            }
+            InspectorSection("Track") {
+                HStack(spacing: 8) {
+                    Chip(label: track.hidden ? "Show captions" : "Hide captions", active: track.hidden) {
+                        model.setCaptionsHidden(!track.hidden)
+                    }
+                    Chip(label: "Delete track", active: false) { model.removeCaptionTrack() }
+                    Spacer()
+                }
+                Text(model.captionsWaiting ? "Listening for what's said in the captioned clips…"
+                     : "\(blocks.count) caption\(blocks.count == 1 ? "" : "s") from \(Set(model.project.captionedClips.compactMap(\.assetID)).count) file\(Set(model.project.captionedClips.compactMap(\.assetID)).count == 1 ? "" : "s").")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.textFaint)
+            }
         }
     }
 
@@ -1661,5 +1721,45 @@ extension View {
     /// ↑/↓ step a number field while it's being typed in (see `ArrowSteps`).
     func arrowSteps(_ active: Bool, step: @escaping (Bool, Bool) -> Void) -> some View {
         modifier(ArrowSteps(active: active, step: step))
+    }
+}
+
+
+/// A caption's words, retyped in place: set on Return or when the field is left; Escape puts them back.
+/// Double-clicking a caption on the timeline puts the cursor here.
+private struct CaptionTextField: View {
+    @ObservedObject var model: EditorModel
+    let block: CaptionBlock
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("", text: $text, axis: .vertical)
+            .textFieldStyle(.plain)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Theme.text)
+            .lineLimit(1...4)
+            .focused($focused)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.field))
+            .onAppear { text = block.text; takeRequest() }
+            .onChange(of: block) { _, b in if !focused { text = b.text } }
+            .onChange(of: model.captionEditRequest) { _, _ in takeRequest() }
+            .onChange(of: focused) { _, now in if !now { commit() } }
+            .onSubmit { commit(); focused = false }
+            .onExitCommand { text = block.text; focused = false }
+    }
+
+    private func takeRequest() {
+        guard model.captionEditRequest == block.id else { return }
+        model.captionEditRequest = nil
+        DispatchQueue.main.async { focused = true }
+    }
+
+    private func commit() {
+        let new = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard new != block.text else { return }
+        model.setCaptionText(block, to: new)
     }
 }

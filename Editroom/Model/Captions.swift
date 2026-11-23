@@ -1,0 +1,213 @@
+import Foundation
+
+/// The caption track: one per sequence, above the video tracks. Its captions aren't stored; they're read
+/// from what's said in each captioned clip (its file's transcript), so they follow every trim, cut and
+/// move of the clip they come from.
+struct CaptionTrack: Codable, Hashable {
+    var hidden = false
+    var style = CaptionStyle()
+}
+
+/// How every caption looks. One style for the whole track.
+struct CaptionStyle: Codable, Hashable {
+    /// Point size relative to a 1080px frame's shorter side.
+    var size: Double = 64
+    /// Where the captions sit, as a fraction down the frame (their middle).
+    var y: Double = 0.78
+    /// The word being said lights up.
+    var highlight = true
+
+    static let sizeRange = 28.0...140.0
+}
+
+/// A change to one word of a file's transcript, made on a caption: new text, or "" to leave it out.
+/// Kept by file, so a fix shows wherever that file is used.
+struct CaptionFix: Codable, Hashable {
+    /// The word's start in the file, which identifies it.
+    var start: Double
+    var text: String
+}
+
+/// One caption: a few words shown together.
+struct CaptionBlock: Hashable, Identifiable {
+    struct Word: Hashable {
+        /// Timeline times.
+        var start: Double
+        var end: Double
+        var text: String
+        /// The word's start in its file, for fixes.
+        var source: Double
+    }
+
+    /// The clip it comes from and its first word's time in the file: steady through trims and moves.
+    var id: String { "\(clipID.uuidString)@\(Int((words.first?.source ?? 0) * 1000))" }
+    var clipID: UUID
+    var assetID: UUID
+    var start: Double
+    var end: Double
+    var words: [Word]
+
+    var text: String { words.map(\.text).joined(separator: " ") }
+}
+
+extension Project {
+    /// Clips whose speech is captioned: sound clips (a video's sound is its linked audio clip).
+    var captionedClips: [Clip] {
+        guard captions != nil else { return [] }
+        return clips.filter { $0.captioned == true && $0.kind == .audio && $0.playsSource && !$0.playsBackwards }
+    }
+
+    /// The sound clips that captioning these clips means: each one's own sound, or its linked sound.
+    func captionTargets(_ ids: Set<UUID>) -> Set<UUID> {
+        let group = linked(ids)
+        return Set(clips.filter { group.contains($0.id) && $0.kind == .audio && $0.playsSource }.map(\.id))
+    }
+
+    /// With nothing picked: the sound of clips from video files (people on camera), and of any track
+    /// something ducks under (a voiceover). Music on its own track is left alone.
+    var defaultCaptionTargets: Set<UUID> {
+        let voices = Set(audioTracks.compactMap(\.duckUnder))
+        return Set(clips.filter { c in
+            guard c.kind == .audio, c.playsSource, let a = asset(c.assetID) else { return false }
+            return a.kind == .video || voices.contains(c.trackID)
+        }.map(\.id))
+    }
+
+    /// Turns captions on for these sound clips, making the caption track if there isn't one.
+    mutating func addCaptions(_ ids: Set<UUID>) {
+        if captions == nil { captions = CaptionTrack() }
+        for i in clips.indices where ids.contains(clips[i].id) { clips[i].captioned = true }
+    }
+
+    /// Turns captions off for these clips; the track goes when nothing's captioned any more.
+    mutating func removeCaptions(_ ids: Set<UUID>) {
+        for i in clips.indices where ids.contains(clips[i].id) { clips[i].captioned = nil }
+        if !clips.contains(where: { $0.captioned == true }) { captions = nil }
+    }
+
+    /// Removes the caption track and every clip's captions.
+    mutating func removeCaptionTrack() {
+        captions = nil
+        for i in clips.indices { clips[i].captioned = nil }
+    }
+
+    /// Sets what a caption says. The same number of words replaces them one for one; otherwise the
+    /// first word takes the whole text and the rest are left out. Empty text leaves them all out.
+    mutating func setCaptionText(_ block: CaptionBlock, to text: String) {
+        let new = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        var fixes = captionFixes?[block.assetID] ?? []
+        func set(_ source: Double, _ t: String) {
+            fixes.removeAll { abs($0.start - source) < 0.0005 }
+            fixes.append(CaptionFix(start: source, text: t))
+        }
+        if new.count == block.words.count {
+            for (w, t) in zip(block.words, new) where w.text != t { set(w.source, t) }
+        } else {
+            for (i, w) in block.words.enumerated() { set(w.source, i == 0 ? new.joined(separator: " ") : "") }
+        }
+        if captionFixes == nil { captionFixes = [:] }
+        captionFixes?[block.assetID] = fixes.sorted { $0.start < $1.start }
+    }
+}
+
+/// Lays out the captions: each captioned clip's words, where they're said on the timeline, in short
+/// phrases that read at a glance.
+enum CaptionLayout {
+    /// Longest phrase, in characters, and longest time on screen.
+    static let maxChars = 26
+    static let maxSeconds = 2.6
+    /// A pause this long starts a new caption.
+    static let pause = 0.5
+
+    static func blocks(_ project: Project, transcript: (MediaAsset) -> Transcript?) -> [CaptionBlock] {
+        var out: [CaptionBlock] = []
+        for clip in project.captionedClips {
+            guard let asset = project.asset(clip.assetID), let script = transcript(asset), !script.isEmpty else { continue }
+            out += blocks(for: clip, asset: asset, words: script.words, fixes: project.captionFixes?[asset.id] ?? [])
+        }
+        out.sort { $0.start < $1.start }
+        // Overlapping speech (two people at once): each caption gives way to the next.
+        for i in out.indices.dropLast() where out[i].end > out[i + 1].start {
+            out[i].end = max(out[i].start + 0.05, out[i + 1].start)
+        }
+        return out
+    }
+
+    /// A run of talking cut into even phrases: as many as keep each within `maxChars` and `maxSeconds`,
+    /// each cut at the word nearest an even share (a little nearer after a comma).
+    private static func phrases(_ run: [CaptionBlock.Word]) -> [[CaptionBlock.Word]] {
+        guard let first = run.first, let last = run.last else { return [] }
+        // Characters up to the end of each word.
+        var ends: [Int] = []
+        var total = 0
+        for (i, w) in run.enumerated() {
+            total += w.text.count + (i > 0 ? 1 : 0)
+            ends.append(total)
+        }
+        let byChars = Int((Double(total) / Double(maxChars)).rounded(.up))
+        let byTime = Int(((last.end - first.start) / maxSeconds).rounded(.up))
+        let n = min(run.count, max(1, byChars, byTime))
+        guard n > 1 else { return [run] }
+        var cuts: [Int] = []
+        var from = 0
+        for k in 1..<n {
+            let target = Double(total) * Double(k) / Double(n)
+            // Cut after word i (from ... run.count - (n - k) - 1, leaving a word for each phrase to come).
+            var best = from, bestScore = Double.infinity
+            for i in from...(run.count - (n - k) - 1) {
+                var score = abs(Double(ends[i]) - target)
+                if run[i].text.hasSuffix(",") { score -= 6 }
+                if score < bestScore { bestScore = score; best = i }
+            }
+            cuts.append(best)
+            from = best + 1
+        }
+        var out: [[CaptionBlock.Word]] = []
+        var start = 0
+        for c in cuts + [run.count - 1] {
+            out.append(Array(run[start...c]))
+            start = c + 1
+        }
+        return out
+    }
+
+    private static func blocks(for clip: Clip, asset: MediaAsset, words: [Transcript.Word], fixes: [CaptionFix]) -> [CaptionBlock] {
+        let s0 = clip.sourceStart, s1 = s0 + clip.sourceLength
+        let at = { (s: Double) in min(clip.end, max(clip.start, clip.start + clip.timelineSpan(from: s0, to: s))) }
+        // The words heard in the clip (most of the word inside it), on the timeline, with any fixes.
+        var heard: [CaptionBlock.Word] = []
+        for w in words {
+            let mid = (w.start + w.end) / 2
+            guard mid >= s0, mid < s1 else { continue }
+            var text = w.text
+            if let fix = fixes.first(where: { abs($0.start - w.start) < 0.0005 }) { text = fix.text }
+            guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+            let a = at(max(w.start, s0)), b = at(min(w.end, s1))
+            guard b > a else { continue }
+            heard.append(CaptionBlock.Word(start: a, end: b, text: text, source: w.start))
+        }
+
+        // Runs of talking: broken by a pause or the end of a sentence. Each run is then cut into as few
+        // even phrases as keep each one short, so no word is left on its own.
+        var runs: [[CaptionBlock.Word]] = []
+        for w in heard {
+            if let last = runs.last?.last, w.start - last.end < pause,
+               !(last.text.hasSuffix(".") || last.text.hasSuffix("?") || last.text.hasSuffix("!")) {
+                runs[runs.count - 1].append(w)
+            } else {
+                runs.append([w])
+            }
+        }
+        let groups = runs.flatMap(phrases)
+
+        var out: [CaptionBlock] = []
+        for (i, g) in groups.enumerated() {
+            guard let first = g.first, let last = g.last else { continue }
+            // Held a moment after the last word, never into the next caption or past the clip.
+            let next = i + 1 < groups.count ? groups[i + 1][0].start : clip.end
+            let end = min(next, clip.end, max(last.end + 0.25, first.start + 0.6))
+            out.append(CaptionBlock(clipID: clip.id, assetID: asset.id, start: first.start, end: max(end, last.end), words: g))
+        }
+        return out
+    }
+}

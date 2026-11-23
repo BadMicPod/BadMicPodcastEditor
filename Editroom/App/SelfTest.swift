@@ -1162,6 +1162,13 @@ enum SelfTest {
                 let s = id(await call("add_solid", ["color": "#112233", "start": 5.0, "duration": 1.0]).0)
                 _ = await call("set_solid_color", ["clip_id": s, "color": "#445566"])
                 checks["solid"] = UUID(uuidString: s).flatMap { m.project.clip($0) }.map { $0.kind == .solid && MCPTools.hex($0.color) == "#445566" } ?? false
+                // Captions from the clip's speech, styled; then the track taken away.
+                let (_, capErr) = await call("set_captions", ["clip_ids": [a], "size": 80.0, "highlight": false])
+                checks["captions"] = capErr == nil && m.project.captions?.style.size == 80 && m.project.captions?.style.highlight == false
+                    && m.project.captionedClips.count == 1
+                if checks["captions"] != true { log("MCP MORE captions: \(capErr ?? "-")") }
+                _ = await call("set_captions", ["remove": true])
+                checks["captions_off"] = m.project.captions == nil && m.project.captionedClips.isEmpty
                 // Freeze, reverse, detach, duplicate.
                 let videoBefore = m.project.clips.filter { $0.kind == .video }.map(\.end).max() ?? 0
                 _ = await call("freeze_frame", ["clip_id": a, "at": 1.0, "seconds": 1.0])
@@ -1770,6 +1777,69 @@ enum SelfTest {
             let menuOK = reloaded.menu(.delete) == nil && reloaded.menu(.save) != nil
             let good = findOK && moved && stealOK && persisted && resetOK && menuOK
             log("SHORTCUTS \(good ? "OK" : "FAIL") find=\(findOK) move=\(moved) steal=\(stealOK) saved=\(persisted) reset=\(resetOK) menu=\(menuOK)")
+            ok = ok && good
+        }
+        // Captions: words land where they're said on the timeline, follow the clip, take fixes, and draw.
+        do {
+            var p = Project()
+            p.width = 1280; p.height = 720; p.fps = 30
+            p.assets = [video]
+            let v1 = p.videoTracks[0].id, a1 = p.audioTracks[0].id
+            let link = UUID()
+            var cv = Clip(trackID: v1, kind: .video, assetID: video.id, start: 5, duration: 3, sourceStart: 1)
+            cv.linkID = link
+            var ca = Clip(trackID: a1, kind: .audio, assetID: video.id, start: 5, duration: 3, sourceStart: 1)
+            ca.linkID = link
+            p.clips = [cv, ca]
+            let said: [(String, Double, Double)] = [("hello", 0.2, 0.5), ("so", 1.1, 1.3), ("here's", 1.35, 1.6), ("the", 1.62, 1.7),
+                                                    ("thing.", 1.72, 2.0), ("we", 2.8, 2.95), ("made", 3.0, 3.3), ("it", 3.35, 3.5), ("again", 4.5, 4.8)]
+            let script = Transcript(words: said.map { Transcript.Word(start: $0.1, end: $0.2, text: $0.0) }, language: "en")
+            let heard: (MediaAsset) -> Transcript? = { _ in script }
+            // Captioning the video means its sound.
+            let targets = p.captionTargets([cv.id])
+            let picksSound = targets == [ca.id]
+            p.addCaptions(targets)
+            var blocks = CaptionLayout.blocks(p, transcript: heard)
+            let texts = blocks.map(\.text)
+            let phrases = texts == ["so here's the thing.", "we made it"]
+            let placed = blocks.count == 2 && abs(blocks[0].start - 5.1) < 0.001 && abs(blocks[1].start - 6.8) < 0.001
+                && blocks.allSatisfy { $0.end <= 8 + 1e-9 }
+            // Moved 2s later and played at 200%: each word where it's now said.
+            for i in p.clips.indices { p.clips[i].start += 2; p.clips[i].speed = 2; p.clips[i].duration = 1.5 }
+            let moved = CaptionLayout.blocks(p, transcript: heard)
+            let follows = moved.count == 2 && abs(moved[0].start - (7 + 0.05)) < 0.001 && abs(moved[1].start - (7 + 0.9)) < 0.001
+            for i in p.clips.indices { p.clips[i].start -= 2; p.clips[i].speed = 1; p.clips[i].duration = 3 }
+            // A fix (same words count, one for one), and a caption left out.
+            blocks = CaptionLayout.blocks(p, transcript: heard)
+            p.setCaptionText(blocks[1], to: "we made it!")
+            p.setCaptionText(blocks[0], to: "")
+            let fixed = CaptionLayout.blocks(p, transcript: heard).map(\.text) == ["we made it!"]
+            // Drawn: white text at the captions' height, the word being said in yellow.
+            var drawn = false
+            if let track = p.captions {
+                let layers = CaptionRenderer.layers(CaptionLayout.blocks(p, transcript: heard), style: track.style)
+                let instruction = TimelineInstruction(timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 10, timescale: 1)),
+                                                      layers: [], trackIDs: [], canvas: p.size, captions: layers)
+                let frame = TimelineCompositor.compose(instruction, at: 7.05, output: p.size) { _, _ in nil }
+                if let cg = TimelineCompositor.context.createCGImage(frame, from: CGRect(origin: .zero, size: p.size)) {
+                    let bytes = NSBitmapImageRep(cgImage: cg)
+                    var white = 0, yellow = 0, elsewhere = 0
+                    for y in stride(from: 0, to: 720, by: 3) {
+                        for x in stride(from: 0, to: 1280, by: 3) {
+                            guard let c = bytes.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
+                            let near = abs(CGFloat(y) - 0.78 * 720) < 60
+                            if c.redComponent > 0.9, c.greenComponent > 0.9, c.blueComponent > 0.9 { near ? (white += 1) : (elsewhere += 1) }
+                            if near, c.redComponent > 0.9, c.greenComponent > 0.7, c.blueComponent < 0.45 { yellow += 1 }
+                        }
+                    }
+                    drawn = white > 40 && yellow > 10 && elsewhere == 0
+                    log("CAPTIONS draw white=\(white) yellow=\(yellow) elsewhere=\(elsewhere)")
+                }
+            }
+            p.removeCaptions([ca.id])
+            let removed = p.captions == nil && !p.clips.contains { $0.captioned == true }
+            let good = picksSound && phrases && placed && follows && fixed && drawn && removed
+            log("CAPTIONS \(good ? "OK" : "FAIL") sound=\(picksSound) phrases=\(phrases) \(texts) placed=\(placed) follows=\(follows) \(moved.map { String(format: "%.3f", $0.start) }) fixed=\(fixed) drawn=\(drawn) removed=\(removed)")
             ok = ok && good
         }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")

@@ -212,6 +212,25 @@ final class TimelineCanvas: NSView {
                       width: max(CGFloat(c.duration) * pps, 1), height: band.height)
     }
 
+    /// A caption's block on the caption track.
+    private func captionRect(_ b: CaptionBlock) -> CGRect? {
+        guard let cy = layout.captionY else { return nil }
+        return CGRect(x: x(b.start), y: TimelineLayout.ruler + cy - view.scrollY,
+                      width: max(CGFloat(b.end - b.start) * pps, 2), height: TimelineLayout.captionRow)
+    }
+
+    /// Whether a point is on the caption track's row.
+    private func inCaptionRow(_ p: CGPoint) -> Bool {
+        guard let cy = layout.captionY, p.y >= TimelineLayout.ruler else { return false }
+        let y = p.y - TimelineLayout.ruler + view.scrollY
+        return y >= cy && y < cy + TimelineLayout.captionRow
+    }
+
+    private func captionHit(at p: CGPoint) -> CaptionBlock? {
+        guard inCaptionRow(p) else { return nil }
+        return model.captionBlocks.last { captionRect($0)?.insetBy(dx: -2, dy: 0).contains(p) == true }
+    }
+
     private func lane(atY y: CGFloat) -> Lane {
         let cy = y - TimelineLayout.ruler + view.scrollY
         if cy < layout.videoZoneY + TimelineLayout.zone { return .newVideo }
@@ -418,6 +437,28 @@ final class TimelineCanvas: NSView {
             }
             drag = .scrub
             scrub(to: p)
+            return
+        }
+
+        // The caption track: pick captions (⇧ adds); a double-click goes to one to retype it.
+        if inCaptionRow(p) {
+            drag = .none
+            guard let b = captionHit(at: p) else {
+                if !extend { model.selectCaptions([]) }
+                return
+            }
+            if extend {
+                var picked = model.captionSelection
+                if picked.contains(b.id) { picked.remove(b.id) } else { picked.insert(b.id) }
+                model.selectCaptions(picked)
+            } else {
+                model.selectCaptions([b.id])
+            }
+            if event.clickCount == 2 {
+                model.seek(to: (b.start + b.end) / 2)
+                model.captionEditRequest = b.id
+            }
+            needsDisplay = true
             return
         }
 
@@ -919,6 +960,23 @@ final class TimelineCanvas: NSView {
         menu.autoenablesItems = false
         let model = self.model
 
+        if inCaptionRow(p) {
+            if let b = captionHit(at: p) {
+                if !model.captionSelection.contains(b.id) { model.selectCaptions([b.id]) }
+                menu.addItem(ActionItem("Edit Caption") {
+                    model.seek(to: (b.start + b.end) / 2)
+                    model.captionEditRequest = b.id
+                })
+                menu.addItem(ActionItem(model.captionSelection.count > 1 ? "Delete Captions" : "Delete Caption") { model.deleteSelectedCaptions() })
+                menu.addItem(ActionItem("Remove Captions from Clip") { model.removeCaptions(from: [b.clipID]) })
+                menu.addItem(.separator())
+            }
+            let hidden = model.project.captions?.hidden ?? false
+            menu.addItem(ActionItem(hidden ? "Show Captions" : "Hide Captions") { model.setCaptionsHidden(!hidden) })
+            menu.addItem(ActionItem("Delete Caption Track") { model.removeCaptionTrack() })
+            return menu
+        }
+
         if let h = hit(at: p) {
             if !model.selection.contains(h.clip.id) { model.selection = model.project.linked([h.clip.id]) }
             let t = model.playhead
@@ -962,6 +1020,14 @@ final class TimelineCanvas: NSView {
             }
             if h.clip.kind == .audio {
                 menu.addItem(ActionItem("Even Out Levels") { model.evenOutLevels() })
+            }
+            // Captions from what's said in the clip's sound.
+            if !model.project.captionTargets(model.selection).isEmpty {
+                if model.hasCaptions(model.selection) {
+                    menu.addItem(ActionItem("Remove Captions") { model.removeCaptions() })
+                } else {
+                    menu.addItem(ActionItem("Add Captions", enabled: Transcripts.available) { model.addCaptions() })
+                }
             }
             if h.clip.fadeIn > 0 || h.clip.fadeOut > 0 {
                 menu.addItem(ActionItem("Remove Fades") {
@@ -1168,6 +1234,17 @@ final class TimelineCanvas: NSView {
             r.fill()
         }
 
+        // The caption track: its captions as blocks of their words.
+        if let cy = layout.captionY {
+            let lane = CGRect(x: 0, y: ruler + cy - view.scrollY, width: bounds.width, height: TimelineLayout.captionRow)
+            if lane.maxY > ruler, lane.minY < bounds.height {
+                let hidden = project.captions?.hidden ?? false
+                (hidden ? Theme.NS.bg.blended(withFraction: 0.4, of: Theme.NS.lane)! : Theme.NS.lane).setFill()
+                lane.fill()
+                drawCaptions(ctx, lane: lane, dim: hidden)
+            }
+        }
+
         // An empty timeline says how to fill it, across V1.
         if project.clips.isEmpty, ghosts.isEmpty, let v1 = project.videoTracks.first, let band = layout.band(for: v1.id) {
             let hint = NSAttributedString(string: "Drag media here, or double-click it in the library", attributes: Self.hintAttrs)
@@ -1327,6 +1404,46 @@ final class TimelineCanvas: NSView {
             text.draw(at: CGPoint(x: r.minX + 6, y: r.minY + 2))
         }
     }
+
+    private func drawCaptions(_ ctx: CGContext, lane: CGRect, dim: Bool) {
+        let blocks = model.captionBlocks
+        if blocks.isEmpty {
+            let note = model.captionsWaiting ? "Listening for what's said…" : "No speech heard in the captioned clips"
+            let hint = NSAttributedString(string: note, attributes: Self.hintAttrs)
+            hint.draw(at: CGPoint(x: 12, y: lane.midY - hint.size().height / 2))
+            return
+        }
+        let fill = Theme.NS.textClip
+        for b in blocks {
+            guard let full = captionRect(b), full.maxX > -4, full.minX < bounds.width + 4 else { continue }
+            let r = full.insetBy(dx: min(0.5, full.width / 4), dy: 3)
+            let path = CGPath(roundedRect: r, cornerWidth: min(5, r.width / 2), cornerHeight: min(5, r.width / 2), transform: nil)
+            let selected = model.captionSelection.contains(b.id)
+            ctx.saveGState()
+            ctx.setAlpha(dim ? 0.45 : 1)
+            ctx.addPath(path)
+            ctx.setFillColor(fill.cgColor)
+            ctx.fillPath()
+            if r.width > 18 {
+                ctx.addPath(path)
+                ctx.clip()
+                let text = NSAttributedString(string: b.text, attributes: Self.captionAttrs)
+                text.draw(at: CGPoint(x: max(r.minX, 0) + 6, y: r.midY - text.size().height / 2))
+            }
+            ctx.restoreGState()
+            if selected {
+                ctx.addPath(path)
+                ctx.setStrokeColor(Theme.NS.selection.cgColor)
+                ctx.setLineWidth(1.5)
+                ctx.strokePath()
+            }
+        }
+    }
+
+    private static var captionAttrs: [NSAttributedString.Key: Any] { [
+        .font: NSFont.systemFont(ofSize: 10.5, weight: .medium),
+        .foregroundColor: NSColor.white.withAlphaComponent(0.92),
+    ] }
 
     private static var hintAttrs: [NSAttributedString.Key: Any] { [
         .font: NSFont.systemFont(ofSize: 11.5),

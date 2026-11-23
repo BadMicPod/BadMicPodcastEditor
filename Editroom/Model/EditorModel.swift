@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import AVFoundation
+import Combine
 import UniformTypeIdentifiers
 
 enum Tool { case move, cut }
@@ -50,7 +51,19 @@ final class EditorModel: ObservableObject {
     @Published private(set) var project = Project() {
         didSet { lastEdit = Date() }
     }
-    @Published var selection: Set<UUID> = []
+    @Published var selection: Set<UUID> = [] {
+        didSet { if !selection.isEmpty, !captionSelection.isEmpty || captionsFocused { captionSelection = []; captionsFocused = false } }
+    }
+    /// Captions picked on the caption track (by `CaptionBlock.id`); picking clips clears them.
+    @Published var captionSelection: Set<String> = []
+    /// The caption track's header was clicked: the inspector shows the caption style.
+    @Published var captionsFocused = false
+    /// A caption to retype: the inspector puts its text field on it.
+    @Published var captionEditRequest: String?
+    /// Bumped as transcripts become ready, so captions waiting for one appear.
+    private var transcriptVersion = 0
+    private var captionCache: (key: Int, blocks: [CaptionBlock])?
+    private var transcriptWatch: AnyCancellable?
     /// Items picked in the Media panel (click, ⇧-click for a range, ⌘-click to add or take away).
     /// Delete removes these while there are any; clicking the timeline clears them.
     @Published var mediaSelection: Set<UUID> = []
@@ -161,6 +174,15 @@ final class EditorModel: ObservableObject {
         // Back from another app: any media saved over there is opened again.
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.reloadChangedMedia() }
+        }
+        // A transcript ready: captions waiting for it appear.
+        transcriptWatch = Transcripts.shared.$states.dropFirst().sink { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.project.captions != nil else { return }
+                self.transcriptVersion += 1
+                self.objectWillChange.send()
+                self.setNeedsRebuild()
+            }
         }
         media.onStillLoaded = { [weak self] in self?.setNeedsRebuild() }
         media.onReverseReady = { [weak self] in self?.setNeedsRebuild() }
@@ -389,6 +411,37 @@ final class EditorModel: ObservableObject {
                     FileHandle.standardError.write("TRANSCRIBE \(String(format: "%.1f", Date().timeIntervalSince(t0)))s [\(t?.language ?? "-")] \(words)\n".data(using: .utf8)!)
                 }
                 if args.contains("--play") { self.play() }
+                // `--captions-test <file> <out.png>` (testing): captions a clip of someone talking, logs the
+                // captions once what's said has been heard, and draws one over grey to the PNG.
+                if let k = args.firstIndex(of: "--captions-test"), args.count > k + 2 {
+                    self.importFiles([URL(fileURLWithPath: args[k + 1])], offerMatch: false) { assets in
+                        guard let a = assets.first else { return }
+                        let v = self.project.videoTracks[0].id, au = self.project.audioTracks[0].id
+                        self.insert(self.makeClips(.asset(a.id), at: 0, videoTrack: v, audioTrack: au))
+                        let n = self.addCaptions(to: [])
+                        Task { @MainActor in
+                            let t0 = CACurrentMediaTime()
+                            while self.captionBlocks.isEmpty, CACurrentMediaTime() - t0 < 120 {
+                                try? await Task.sleep(nanoseconds: 250_000_000)
+                            }
+                            let blocks = self.captionBlocks
+                            var log = "CAPTIONS clips=\(n) blocks=\(blocks.count) after \(Int(CACurrentMediaTime() - t0))s\n"
+                            for b in blocks { log += String(format: "  %.2f-%.2f  ", b.start, b.end) + b.text + "\n" }
+                            if let b = blocks.dropFirst().first ?? blocks.first, let track = self.project.captions {
+                                let size = CGSize(width: 1920, height: 1080)
+                                let layers = CaptionRenderer.layers([b], style: track.style)
+                                let t = b.words.count > 1 ? (b.words[1].start + b.words[1].end) / 2 : (b.start + b.end) / 2
+                                let grey = CIImage(color: CIColor(red: 0.45, green: 0.5, blue: 0.55)).cropped(to: CGRect(origin: .zero, size: size))
+                                let image = layers.first { t >= $0.start && t < $0.end }?.image(output: size).map { $0.composited(over: grey) } ?? grey
+                                if let cg = TimelineCompositor.context.createCGImage(image, from: CGRect(origin: .zero, size: size)) {
+                                    let rep = NSBitmapImageRep(cgImage: cg)
+                                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: args[k + 2]))
+                                }
+                            }
+                            FileHandle.standardError.write(log.data(using: .utf8)!)
+                        }
+                    }
+                }
                 // `--handoff-test <file>` (testing): plays two copies of a clip, moves the second while playing,
                 // and logs how evenly the playhead kept moving (the longest it stood still).
                 if let k = args.firstIndex(of: "--handoff-test"), args.count > k + 1 {
@@ -723,6 +776,12 @@ final class EditorModel: ObservableObject {
     }
 
     private func didChange() {
+        if !captionSelection.isEmpty {
+            let ids = Set(captionBlocks.map(\.id))
+            let valid = captionSelection.intersection(ids)
+            if valid != captionSelection { captionSelection = valid }
+        }
+        if project.captions == nil { captionsFocused = false }
         // Muting and soloing are heard at once, not after the rebuild.
         engine.audio.setAudible(Dictionary(uniqueKeysWithValues: project.audioTracks.map { ($0.id, project.isAudible($0)) }))
         let valid = selection.intersection(Set(project.clips.map(\.id)))
@@ -1022,14 +1081,16 @@ final class EditorModel: ObservableObject {
     var maxScrollX: CGFloat { max(0, CGFloat(extent) * view.pps - view.viewWidth) }
 
     var rowsContent: CGFloat {
-        TimelineLayout.fixedHeight + CGFloat(project.videoTracks.count + project.audioTracks.count) * (view.rowHeight + TimelineLayout.gap)
+        TimelineLayout.fixedHeight + TimelineLayout.captionSpace(project)
+            + CGFloat(project.videoTracks.count + project.audioTracks.count) * (view.rowHeight + TimelineLayout.gap)
     }
     var rowsVisible: CGFloat { max(40, view.viewHeight - TimelineLayout.ruler) }
 
     /// Distance from the top of the tracks to the middle of the gap between video and audio.
     /// That gap is the vertical "home" of the timeline: the centre of the scroll bar.
     var rowsAbove: CGFloat {
-        TimelineLayout.zone + CGFloat(project.videoTracks.count) * (view.rowHeight + TimelineLayout.gap) + TimelineLayout.divider / 2
+        TimelineLayout.captionSpace(project) + TimelineLayout.zone
+            + CGFloat(project.videoTracks.count) * (view.rowHeight + TimelineLayout.gap) + TimelineLayout.divider / 2
     }
 
     /// The vertical bar is a window onto a taller "world" whose middle is the video/audio gap, so a
@@ -1047,8 +1108,9 @@ final class EditorModel: ObservableObject {
     /// The same fraction as it would be at another row height.
     func rowWindow(rowHeight r: CGFloat) -> CGFloat {
         let tracks = CGFloat(project.videoTracks.count + project.audioTracks.count)
-        let above = TimelineLayout.zone + CGFloat(project.videoTracks.count) * (r + TimelineLayout.gap) + TimelineLayout.divider / 2
-        let content = TimelineLayout.fixedHeight + tracks * (r + TimelineLayout.gap)
+        let captions = TimelineLayout.captionSpace(project)
+        let above = captions + TimelineLayout.zone + CGFloat(project.videoTracks.count) * (r + TimelineLayout.gap) + TimelineLayout.divider / 2
+        let content = TimelineLayout.fixedHeight + captions + tracks * (r + TimelineLayout.gap)
         let zoomed = rowsVisible * r / TimelineViewState.rowRange.lowerBound
         return rowsVisible / max(rowsVisible, zoomed, 2 * above, 2 * (content - above))
     }
@@ -1349,6 +1411,7 @@ final class EditorModel: ObservableObject {
     // MARK: Editing commands
 
     func deleteSelection(ripple: Bool = false) {
+        if selection.isEmpty, !captionSelection.isEmpty { return deleteSelectedCaptions() }
         guard !selection.isEmpty else { return }
         let ids = project.unlocked(project.linked(selection))
         guard !ids.isEmpty else { return }
@@ -1380,6 +1443,118 @@ final class EditorModel: ObservableObject {
 
     func selectAll() {
         selection = Set(project.clips.map(\.id))
+    }
+
+    // MARK: Captions
+
+    /// The captions as they show: each captioned clip's words, in short phrases where they're said.
+    var captionBlocks: [CaptionBlock] {
+        guard project.captions != nil else { return [] }
+        var h = Hasher()
+        h.combine(project.captionedClips)
+        h.combine(project.captionFixes)
+        h.combine(transcriptVersion)
+        let key = h.finalize()
+        if let c = captionCache, c.key == key { return c.blocks }
+        let blocks = CaptionLayout.blocks(project) { media.transcript($0.id) }
+        captionCache = (key, blocks)
+        return blocks
+    }
+
+    /// Clips that will have captions once what's said in them has been heard.
+    var captionsWaiting: Bool {
+        project.captionedClips.contains { c in
+            guard let id = c.assetID, let url = media.soundURL(id) else { return false }
+            let state = Transcripts.shared.state(for: url)
+            return state == .waiting || state == .working
+        }
+    }
+
+    /// Clip › Add Captions: the picked clips' speech, or with nothing picked, every clip of people
+    /// talking (sound from video files, and voiceover tracks). Their transcripts are made first if needed.
+    /// Returns how many clips were captioned.
+    @discardableResult
+    func addCaptions(to ids: Set<UUID>? = nil) -> Int {
+        let picked = ids ?? selection
+        let targets = project.unlocked(picked.isEmpty ? project.defaultCaptionTargets : project.captionTargets(picked))
+        guard !targets.isEmpty else { return 0 }
+        for c in project.clips where targets.contains(c.id) {
+            if let id = c.assetID, let url = media.soundURL(id) { Transcripts.shared.make(url, soon: true) }
+        }
+        mutate { $0.addCaptions(targets) }
+        return targets.count
+    }
+
+    /// Clip › Add Captions, or Remove Captions when the picked clips have them.
+    var captionsMenuTitle: String { !selection.isEmpty && hasCaptions(selection) ? "Remove Captions" : "Add Captions" }
+
+    func captionsFromMenu() {
+        if !selection.isEmpty, hasCaptions(selection) { return removeCaptions() }
+        guard addCaptions() == 0 else { return }
+        let alert = NSAlert()
+        alert.messageText = "Nothing to caption"
+        alert.informativeText = selection.isEmpty
+            ? "Captions come from what's said in clips of people talking. Add some to the timeline, or pick a clip with sound."
+            : "The picked clips have no sound to caption."
+        alert.runModal()
+    }
+
+    /// Takes captions off the picked clips (and what's linked to them).
+    func removeCaptions(from ids: Set<UUID>? = nil) {
+        let targets = project.captionTargets(ids ?? selection)
+        guard !targets.isEmpty else { return }
+        mutate { $0.removeCaptions(targets) }
+    }
+
+    func removeCaptionTrack() {
+        captionSelection = []
+        mutate { $0.removeCaptionTrack() }
+    }
+
+    /// Whether any of these clips (or what's linked to them) have captions.
+    func hasCaptions(_ ids: Set<UUID>) -> Bool {
+        let targets = project.captionTargets(ids)
+        return project.clips.contains { targets.contains($0.id) && $0.captioned == true }
+    }
+
+    /// Picks captions on the caption track (clips are let go).
+    func selectCaptions(_ ids: Set<String>) {
+        if !selection.isEmpty { selection = [] }
+        captionSelection = ids
+        captionsFocused = false
+    }
+
+    /// The caption track's header: shows the caption style in the inspector.
+    func focusCaptions() {
+        if !selection.isEmpty { selection = [] }
+        captionSelection = []
+        captionsFocused = true
+    }
+
+    /// Leaves the picked captions' words out (the speech isn't touched).
+    func deleteSelectedCaptions() {
+        let picked = captionBlocks.filter { captionSelection.contains($0.id) }
+        guard !picked.isEmpty else { return }
+        captionSelection = []
+        mutate { p in for b in picked { p.setCaptionText(b, to: "") } }
+    }
+
+    func setCaptionText(_ block: CaptionBlock, to text: String) {
+        mutate { $0.setCaptionText(block, to: text) }
+    }
+
+    func setCaptionsHidden(_ hidden: Bool) {
+        mutate { $0.captions?.hidden = hidden }
+    }
+
+    /// Style changes; `live` for a slider being dragged.
+    func setCaptionStyle(live: Bool = false, _ change: (inout CaptionStyle) -> Void) {
+        guard project.captions != nil else { return }
+        if live {
+            self.live(autoCommit: false) { p in if p.captions != nil { change(&p.captions!.style) } }
+        } else {
+            mutate { p in if p.captions != nil { change(&p.captions!.style) } }
+        }
     }
 
     // MARK: Freeze frame

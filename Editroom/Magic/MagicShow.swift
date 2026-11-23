@@ -608,7 +608,7 @@ final class MagicShow: NSObject {
             return nil
         }.max() ?? 0, 4)
         let tracks = CGFloat(plan.base.videoTracks.count + plan.base.audioTracks.count)
-        let fit = (model.rowsVisible - TimelineLayout.fixedHeight - 8) / tracks - TimelineLayout.gap
+        let fit = (model.rowsVisible - TimelineLayout.fixedHeight - TimelineLayout.captionSpace(plan.base) - 8) / tracks - TimelineLayout.gap
         model.setView(rowHeight: min(62, fit))
         model.setView(pps: (model.view.viewWidth - 60) / CGFloat(total), scrollX: 0)
         model.centerRows()

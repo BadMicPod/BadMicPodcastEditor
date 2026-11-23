@@ -460,6 +460,11 @@ struct TrackHeaders: View {
                         .frame(width: TimelineLayout.headerWidth, height: row.height)
                         .offset(y: ruler + row.y - view.scrollY)
                 }
+                if let cy = layout.captionY, let track = model.project.captions {
+                    CaptionHeader(model: model, track: track)
+                        .frame(width: TimelineLayout.headerWidth, height: TimelineLayout.captionRow)
+                        .offset(y: ruler + cy - view.scrollY)
+                }
                 AddTrackButton(label: "Video") { model.addTrack(.video) }
                     .frame(width: TimelineLayout.headerWidth, height: TimelineLayout.zone)
                     .offset(y: ruler + layout.videoZoneY - view.scrollY)
@@ -476,6 +481,43 @@ struct TrackHeaders: View {
             .clipped()
         }
         .background(Theme.bg)
+    }
+}
+
+/// The caption track's header: C1, its eye, and a click shows the caption style in the inspector.
+struct CaptionHeader: View {
+    @ObservedObject var model: EditorModel
+    let track: CaptionTrack
+
+    var body: some View {
+        let focused = model.captionsFocused || !model.captionSelection.isEmpty
+        HStack(spacing: 3) {
+            Text("C1")
+                .font(Theme.mono(11.5, .semibold))
+                .foregroundStyle(track.hidden ? Theme.textFaint : Theme.text)
+                .frame(width: 24, alignment: .leading)
+            MiniKey(symbol: track.hidden ? "eye.slash" : "eye", on: track.hidden, help: track.hidden ? "Show Captions" : "Hide Captions") {
+                model.setCaptionsHidden(!track.hidden)
+            }
+            Text("Captions")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(focused ? Theme.text : Theme.textDim)
+                .padding(.leading, 4)
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.panel)
+        .overlay(Hairline(), alignment: .bottom)
+        .contentShape(Rectangle())
+        .onTapGesture { model.focusCaptions() }
+        .help("Captions: click for their style")
+        .contextMenu {
+            Button(track.hidden ? "Show Captions" : "Hide Captions") { model.setCaptionsHidden(!track.hidden) }
+            Divider()
+            Button("Delete Caption Track") { model.removeCaptionTrack() }
+        }
     }
 }
 

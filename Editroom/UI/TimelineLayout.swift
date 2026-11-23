@@ -16,6 +16,8 @@ struct TimelineLayout {
     }
 
     private(set) var rows: [Row] = []
+    /// The caption track's row, at the top, when the sequence has one.
+    private(set) var captionY: CGFloat?
     private(set) var videoZoneY: CGFloat = 0
     private(set) var dividerY: CGFloat = 0
     private(set) var audioZoneY: CGFloat = 0
@@ -23,9 +25,17 @@ struct TimelineLayout {
 
     /// Height everything except the track rows takes up.
     static let fixedHeight = zone * 2 + divider
+    static let captionRow: CGFloat = 30
+
+    /// Height the caption track takes above the video tracks (none without one).
+    static func captionSpace(_ project: Project) -> CGFloat { project.captions == nil ? 0 : captionRow + gap }
 
     init(project: Project, rowHeight: CGFloat) {
         var y: CGFloat = 0
+        if project.captions != nil {
+            captionY = y
+            y += Self.captionRow + Self.gap
+        }
         videoZoneY = y
         y += Self.zone
         for (i, t) in project.videoTracks.enumerated().reversed() {

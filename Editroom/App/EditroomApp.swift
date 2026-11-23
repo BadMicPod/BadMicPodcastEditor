@@ -267,6 +267,8 @@ struct EditroomApp: App {
                 Divider()
                 Button("Add Text") { model.addAtPlayhead(.text) }.keyboardShortcut(keys.menu(.addText))
                 Button("Add Solid") { model.addAtPlayhead(.solid) }
+                Button(model.captionsMenuTitle) { model.captionsFromMenu() }
+                    .disabled(!Transcripts.available)
                 Divider()
                 Button("Add Video Track") { model.addTrack(.video) }
                 Button("Add Audio Track") { model.addTrack(.audio) }

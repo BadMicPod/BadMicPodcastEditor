@@ -115,6 +115,8 @@ struct Clip: Identifiable, Codable, Hashable {
     var reversed: Bool?
     /// The speed changing across the clip; nil plays at `speed` throughout.
     var ramp: SpeedRamp?
+    /// A sound clip whose speech shows on the caption track.
+    var captioned: Bool?
 
     var isFreeze: Bool { freeze == true }
     var playsBackwards: Bool { reversed == true }
@@ -298,6 +300,10 @@ struct Project: Codable, Equatable {
     var outPoint: Double?
     /// Prompts sent with Magic in this project, newest first (optional so older projects open).
     var magicHistory: [MagicHistory.Entry]?
+    /// The caption track, when there is one (see Captions.swift).
+    var captions: CaptionTrack?
+    /// Words fixed or left out on captions, by file.
+    var captionFixes: [UUID: [CaptionFix]]?
 }
 
 struct Marker: Codable, Hashable, Identifiable {

@@ -259,7 +259,13 @@ enum CompositionBuilder {
         vc.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
         vc.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
         let range = CMTimeRange(start: .zero, duration: CMTimeMaximum(comp.duration, time(total)))
-        vc.instructions = [TimelineInstruction(timeRange: range, layers: layers, trackIDs: requiredTracks, canvas: canvas, offset: offset)]
+        // Captions: read from what's said in the captioned clips, unless the caption track is hidden.
+        var captions: [CaptionLayer] = []
+        if includeVideo, let track = project.captions, !track.hidden {
+            captions = CaptionRenderer.layers(CaptionLayout.blocks(project) { media.transcript($0.id) }, style: track.style)
+        }
+        vc.instructions = [TimelineInstruction(timeRange: range, layers: layers, trackIDs: requiredTracks, canvas: canvas, offset: offset,
+                                               captions: captions)]
 
         var mix: AVMutableAudioMix?
         if !mixParams.isEmpty {
