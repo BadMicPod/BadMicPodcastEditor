@@ -113,10 +113,10 @@ struct InspectorView: View {
                          format: { "\(Int($0.rounded()))%" },
                          onEditing: { if !$0 { model.commitLive() } },
                          onChange: { v in model.setCaptionStyle(live: true) { $0.y = (v / 100 * 1000).rounded() / 1000 } })
-                captionColorRow("Text", on: nil, color: track.style.textColor) { s, c in s.textColor = c }
-                captionColorRow("Word highlight", on: track.style.highlight, color: track.style.highlightColor,
+                captionColorRow("Text", icon: "textformat", on: nil, color: track.style.textColor) { s, c in s.textColor = c }
+                captionColorRow("Word highlight", icon: "highlighter", on: track.style.highlight, color: track.style.highlightColor,
                                 toggle: { $0.highlight.toggle() }) { s, c in s.highlightColor = c }
-                captionColorRow("Outline", on: track.style.outline, color: track.style.outlineColor,
+                captionColorRow("Outline", icon: "a.square", on: track.style.outline, color: track.style.outlineColor,
                                 toggle: { $0.outline.toggle() }) { s, c in s.outlineColor = c }
                 if model.captionsWaiting {
                     Text("Listening for what's said in the captioned clips…")
@@ -128,17 +128,21 @@ struct InspectorView: View {
     }
 
     /// A caption colour: its well, and for a part that can be off (highlight, outline) a chip to turn it on.
-    private func captionColorRow(_ label: String, on: Bool?, color: RGBA, toggle: ((inout CaptionStyle) -> Void)? = nil,
+    private func captionColorRow(_ label: String, icon: String, on: Bool?, color: RGBA, toggle: ((inout CaptionStyle) -> Void)? = nil,
                                  set: @escaping (inout CaptionStyle, RGBA) -> Void) -> some View {
-        HStack(spacing: 6) {
+        // Laid out like the slider rows above: icon, name, then the controls on the right.
+        HStack(spacing: 8) {
+            RowIconView(icon: .symbol(icon))
+                .foregroundStyle(on == false ? Theme.textFaint : Theme.textDim)
+                .frame(width: 18)
             Text(label)
                 .font(.system(size: 11.5))
-                .foregroundStyle(on == false ? Theme.textFaint : Theme.textDim)
-            // Highlight and outline: an eye to show or hide them, as on the tracks.
+                .foregroundStyle(on == false ? Theme.textFaint : Theme.text)
+            Spacer()
+            // Highlight and outline: an eye beside the colour, to show or hide them.
             if let on, let toggle {
                 CaptionEye(on: on) { model.setCaptionStyle(toggle) }
             }
-            Spacer()
             ColorField(color: color) { c in model.setCaptionStyle(live: true, settles: true) { set(&$0, c) } }
                 .frame(width: 44)
                 .opacity(on == false ? 0.4 : 1)
