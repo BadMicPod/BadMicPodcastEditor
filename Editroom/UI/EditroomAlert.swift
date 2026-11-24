@@ -1,7 +1,8 @@
 import AppKit
 
-/// Editroom's alerts: the system's, with the main button (the one Return presses) white with dark text on
-/// the Dark theme, as in the rest of the app, rather than in the accent grey. Other themes keep the system's.
+/// Editroom's alerts: the system's, with dark text on the main button (the one Return presses) on the Dark
+/// theme, which reads better on its grey than white does. (Its colour can't be changed: the system paints it in
+/// the accent colour.) Other themes keep the system's.
 final class EditroomAlert: NSAlert {
     @discardableResult
     override func runModal() -> NSApplication.ModalResponse {
@@ -19,8 +20,6 @@ final class EditroomAlert: NSAlert {
 
     private func styleButtons() {
         guard Theme.current == .dark, let main = buttons.first(where: { $0.keyEquivalent == "\r" }) ?? buttons.first else { return }
-        main.bezelColor = .white
-        if #available(macOS 26, *) { main.tintProminence = .primary }
         main.attributedTitle = NSAttributedString(string: main.title, attributes: [
             .foregroundColor: NSColor.black,
             .font: main.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
