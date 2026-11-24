@@ -172,16 +172,28 @@ enum LocalBrain {
     /// No title unless they ask (a title over every cut gets in the way more often than it helps).
     static func titleAsked(_ request: String) -> String? {
         let t = request.lowercased()
-        let quoted = request.range(of: #"(^|\s)["“'‘][^"”'’]{1,60}["”'’]"#, options: .regularExpression) != nil
+        let quoted = quotedWords(request) != nil
         let asks = (quoted && t.contains("caption")) || ["title", "heading", "text on", "words on", "add text", "put text", "some text", "call it", "name it",
                     "text saying", "text that says"].contains { t.contains($0) }
         let refuses = ["no title", "without a title", "without title", "no text", "without text", "remove the title", "take out the title"]
             .contains { t.contains($0) }
         guard asks, !refuses else { return nil }
-        if let r = request.range(of: #"["“'‘]([^"”'’]{1,60})["”'’]"#, options: .regularExpression) {
-            return String(request[r].dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+        return quotedWords(request) ?? ""
+    }
+
+    /// Words they put in quotes: "…" or “…” up to the matching close, so an apostrophe inside ("doesn't")
+    /// stays in; '…' or ‘…’ only as a pair around words (an apostrophe in a word doesn't close it).
+    static func quotedWords(_ request: String) -> String? {
+        let patterns = [#""([^"]{1,120})""#, #"“([^”]{1,120})”"#,
+                        #"(?:^|\s)'(.{1,120}?)'(?=$|\s|[.,!?;:])"#, #"(?:^|\s)‘(.{1,120}?)’(?=$|\s|[.,!?;:])"#]
+        for pattern in patterns {
+            guard let re = try? NSRegularExpression(pattern: pattern),
+                  let m = re.firstMatch(in: request, range: NSRange(request.startIndex..., in: request)),
+                  let r = Range(m.range(at: 1), in: request) else { continue }
+            let words = request[r].trimmingCharacters(in: .whitespaces)
+            if !words.isEmpty { return words }
         }
-        return ""
+        return nil
     }
 
     /// Asks for sound effects ("sfx", "sound effects", "whooshes"…).

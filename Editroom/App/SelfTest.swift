@@ -651,8 +651,13 @@ enum SelfTest {
             let start = titled("put a title saying \"Day one\" at the start")
             let startOK = start.map { $0.start == 0 && $0.text.string == "Day one" } ?? false
             let newCut = !LocalTitle.asks("make a new montage with a title", project: p)
-            let good = endOK && startOK && newCut
-            log("LOCAL TITLE \(good ? "OK" : "FAIL") end=\(endOK) start=\(startOK) newCut=\(newCut)")
+            // Quotes read as pairs: an apostrophe inside stays in the title.
+            let quotes = LocalBrain.titleAsked("add a title at the end that says \"Mom doesn't know what ai is\"") == "Mom doesn't know what ai is"
+                && LocalBrain.titleAsked("title “It’s day one” at the start") == "It’s day one"
+                && LocalBrain.titleAsked("add a title saying 'Mom doesn't know' at the end") == "Mom doesn't know"
+                && LocalBrain.titleAsked("add a title at the end") == ""
+            let good = endOK && startOK && newCut && quotes
+            log("LOCAL TITLE \(good ? "OK" : "FAIL") end=\(endOK) start=\(startOK) newCut=\(newCut) quotes=\(quotes)")
             ok = ok && good
         }
         // Local captions: "add captions" captions everyone talking (not a title); quoted words are still a title.

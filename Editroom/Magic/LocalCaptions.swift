@@ -9,7 +9,7 @@ enum LocalCaptions {
         guard ["caption", "subtitle", "closed caption", "transcribe the", "words on screen as they talk"].contains(where: { t.contains($0) })
         else { return false }
         // "a caption saying 'Day one'" is a title; a new cut is left to Local's cut (captions can be asked for after).
-        if t.range(of: #"(^|\s)["“'‘][^"”'’]{1,60}["”'’]"#, options: .regularExpression) != nil { return false }
+        if LocalBrain.quotedWords(request) != nil { return false }
         if LocalTitle.newCut(request) { return false }
         return removes(request) || p.clips.contains { $0.kind == .audio }
     }
@@ -18,7 +18,7 @@ enum LocalCaptions {
     static func wantedWithCut(_ request: String) -> Bool {
         let t = request.lowercased()
         return ["caption", "subtitle"].contains(where: { t.contains($0) }) && !removes(request)
-            && t.range(of: #"(^|\s)["“'‘][^"”'’]{1,60}["”'’]"#, options: .regularExpression) == nil
+            && LocalBrain.quotedWords(request) == nil
     }
 
     /// Captions everyone talking in the edit as it is now (heard first), in the same undo step as the cut. Says what it did.
