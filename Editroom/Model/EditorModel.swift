@@ -1182,6 +1182,20 @@ final class EditorModel: ObservableObject {
         setView(scrollY: centeredScrollY)
     }
 
+    /// How a timeline opens (at launch, and when a project opens): rows as tall as fit the panel with every
+    /// track and the add-track zones above and below in view (no taller than usual, no shorter than the
+    /// smallest), centred. When they can't all fit, the video/audio gap is centred as usual.
+    func fitRows() {
+        let tracks = CGFloat(max(1, project.videoTracks.count + project.audioTracks.count))
+        let room = rowsVisible - TimelineLayout.fixedHeight - TimelineLayout.captionSpace(project) - 6
+        setView(rowHeight: min(62, room / tracks - TimelineLayout.gap))
+        if rowsContent <= rowsVisible {
+            setView(scrollY: (rowsContent - rowsVisible) / 2)
+        } else {
+            centerRows()
+        }
+    }
+
     func setView(pps: CGFloat? = nil, scrollX: CGFloat? = nil, scrollY: CGFloat? = nil, rowHeight: CGFloat? = nil) {
         if let rowHeight {
             let r = min(TimelineViewState.rowRange.upperBound, max(TimelineViewState.rowRange.lowerBound, rowHeight.rounded()))
@@ -2084,7 +2098,7 @@ final class EditorModel: ObservableObject {
         fileURL = url
         isDirty = false
         setView(scrollX: 0)
-        centerRows()
+        fitRows()
         setNeedsRebuild()
         Task {
             let reconverted = await media.restore(p.assets)

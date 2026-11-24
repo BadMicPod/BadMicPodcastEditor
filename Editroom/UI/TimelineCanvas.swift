@@ -171,7 +171,7 @@ final class TimelineCanvas: NSView {
             if state.viewHeight != newSize.height { state.viewHeight = newSize.height }
             if state.needsInitialCentering, newSize.height > 0 {
                 state.needsInitialCentering = false
-                self.model.centerRows()
+                self.model.fitRows()
             }
             self.model.clampView()
         }
