@@ -270,6 +270,10 @@ struct EditroomApp: App {
                     .disabled(!model.canDeleteSelected)
                 Button("Ripple Delete") { model.deleteSelected(ripple: true) }.keyboardShortcut(keys.menu(.rippleDelete))
                     .disabled(!model.canDeleteSelected)
+                Button("Ripple Trim Start to Playhead") { model.rippleTrim(head: true) }.keyboardShortcut(keys.menu(.rippleTrimStart))
+                    .disabled(!model.canRippleTrim)
+                Button("Ripple Trim End to Playhead") { model.rippleTrim(head: false) }.keyboardShortcut(keys.menu(.rippleTrimEnd))
+                    .disabled(!model.canRippleTrim)
                 Button("Close All Gaps") { model.closeAllGaps() }
                 Divider()
                 Button("Add Text") { model.addAtPlayhead(.text) }.keyboardShortcut(keys.menu(.addText))

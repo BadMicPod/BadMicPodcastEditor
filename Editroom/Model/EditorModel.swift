@@ -1482,6 +1482,45 @@ final class EditorModel: ObservableObject {
         mutate { p in _ = p.split(ids: targets, at: t) }
     }
 
+    /// Ripple Trim (Q and W, as in Premiere): takes out the clip under the playhead from its start up to the
+    /// playhead (`head`), or from the playhead to its end, and closes the gap. With clips under the playhead
+    /// selected, only their tracks (and their linked audio or video) change; otherwise every track does, so
+    /// music and other layers stay in sync. After a head trim the playhead lands on the new edit.
+    func rippleTrim(head: Bool) {
+        // While playing, trim where it's playing now and carry on playing afterwards.
+        let wasPlaying = isPlaying
+        pause()
+        guard let (a, b, tracks) = rippleTrimRange(head: head) else {
+            if wasPlaying { play() }
+            return
+        }
+        mutate { $0.rippleRemove(from: a, to: b, tracks: tracks) }
+        if head { seek(to: a) }
+        if wasPlaying { play() }
+    }
+
+    var canRippleTrim: Bool { rippleTrimRange(head: true) != nil || rippleTrimRange(head: false) != nil }
+
+    private func rippleTrimRange(head: Bool) -> (Double, Double, Set<UUID>)? {
+        let t = playhead
+        let p = project
+        let under = p.clips.filter { $0.start < t && $0.end > t && !p.isLocked($0.trackID) }
+        let selected = under.filter { selection.contains($0.id) }
+        let tracks: Set<UUID>
+        if selected.isEmpty {
+            tracks = Set((p.videoTracks + p.audioTracks).map(\.id))
+        } else {
+            let ids = p.linked(Set(selected.map(\.id)))
+            tracks = Set(p.clips.filter { ids.contains($0.id) }.map(\.trackID))
+        }
+        let edges = under.filter { tracks.contains($0.trackID) }
+        guard !edges.isEmpty else { return nil }
+        // The nearest edit before (or after) the playhead on those tracks.
+        let range = head ? (edges.map(\.start).max()!, t) : (t, edges.map(\.end).min()!)
+        guard range.1 - range.0 >= 0.5 / p.fps else { return nil }
+        return (range.0, range.1, tracks.filter { !p.isLocked($0) })
+    }
+
     func split(clip id: UUID, at t: Double) {
         let targets = project.linked([id])
         mutate { p in _ = p.split(ids: targets, at: t) }

@@ -596,6 +596,23 @@ extension Project {
         }
     }
 
+    /// Takes the time from `a` to `b` out of these tracks and closes it up: clips crossing either end are cut
+    /// there, what's between goes, and everything after slides left by the same amount, so the tracks stay in
+    /// sync with each other. Locked tracks are left alone.
+    mutating func rippleRemove(from a: Double, to b: Double, tracks: Set<UUID>) {
+        let tracks = tracks.filter { !isLocked($0) }
+        let gap = b - a
+        guard gap > 1e-9, !tracks.isEmpty else { return }
+        let on = { (c: Clip) in tracks.contains(c.trackID) }
+        split(ids: Set(clips.filter { on($0) && $0.start < a && $0.end > a }.map(\.id)), at: a)
+        split(ids: Set(clips.filter { on($0) && $0.start < b && $0.end > b }.map(\.id)), at: b)
+        let eps = 0.5 / fps
+        clips.removeAll { on($0) && $0.start >= a - eps && $0.end <= b + eps }
+        for i in clips.indices where on(clips[i]) && clips[i].start >= b - eps {
+            clips[i].start = max(0, clips[i].start - gap)
+        }
+    }
+
     /// Changes playback speed of the given clips, keeping each one's source span.
     /// Changed clips on a track stay butted together (later ones slide by however much earlier ones
     /// grew or shrank), and anything that would be overlapped is pushed later instead.

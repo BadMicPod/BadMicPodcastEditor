@@ -234,6 +234,8 @@ enum KeyCommands {
         case .pasteGrade: model.pasteGrade()
         case .delete: model.deleteSelected()
         case .rippleDelete: model.deleteSelected(ripple: true)
+        case .rippleTrimStart: model.rippleTrim(head: true)
+        case .rippleTrimEnd: model.rippleTrim(head: false)
         case .addText: model.addAtPlayhead(.text)
         case .addMarker: model.addMarker()
         case .setIn: model.setInPoint()

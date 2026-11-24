@@ -792,6 +792,50 @@ enum SelfTest {
             log("OPENING \(good ? "OK" : "FAIL") notRedWhileOpening=\(whileOpening) redWhenMissing=\(thenMissing)")
             ok = ok && good
         }
+        // Ripple Trim (Q/W): the clip under the playhead loses its head or tail, the gap closes on every track,
+        // and with a clip selected only its tracks move.
+        do {
+            func setup() -> (EditorModel, UUID, UUID, UUID) {
+                var p = Project()
+                let v1 = p.videoTracks[0].id, a1 = p.audioTracks[0].id
+                let a2 = Track(kind: .audio)
+                p.audioTracks.append(a2)
+                let link = UUID()
+                var x = Clip(trackID: v1, kind: .video, assetID: nil, start: 0, duration: 4); x.linkID = link
+                var xa = Clip(trackID: a1, kind: .audio, assetID: nil, start: 0, duration: 4); xa.linkID = link
+                let y = Clip(trackID: v1, kind: .video, assetID: nil, start: 4, duration: 4)
+                let music = Clip(trackID: a2.id, kind: .audio, assetID: nil, start: 0, duration: 8)
+                p.clips = [x, xa, y, music]
+                let m = EditorModel()
+                m.load(p, url: nil)
+                return (m, x.id, y.id, music.id)
+            }
+            func spans(_ m: EditorModel) -> String {
+                m.project.clips.sorted { ($0.trackID.uuidString, $0.start) < ($1.trackID.uuidString, $1.start) }
+                    .map { String(format: "%.1f-%.1f", $0.start, $0.end) }.sorted().joined(separator: " ")
+            }
+            func qShapeOK(_ m: EditorModel) -> Bool { spans(m) == "0.0-3.0 0.0-3.0 0.0-7.0 3.0-7.0" }
+            // Q at 1s, nothing selected: X and its audio lose 0–1, Y and the music slide back with them.
+            var (m, _, yID, musicID) = setup()
+            m.seek(to: 1); m.rippleTrim(head: true)
+            let q = m.project.clip(yID)?.start == 3 && qShapeOK(m) && abs(m.playhead) < 1e-6
+            let qShape = spans(m)
+            // W at 6s: Y loses 6–8; the music's tail goes too.
+            (m, _, yID, musicID) = setup()
+            m.seek(to: 6); m.rippleTrim(head: false)
+            let w = m.project.clip(yID)?.end == 6 && m.project.duration == 6
+            // W at 1s with X selected: X and its audio lose 1–4, Y slides to 1; the music isn't touched.
+            var xID: UUID
+            (m, xID, yID, musicID) = setup()
+            m.selection = [xID]
+            m.seek(to: 1); m.rippleTrim(head: false)
+            let sel = m.project.clip(yID)?.start == 1 && m.project.clip(musicID)?.end == 8 && m.project.clips.count == 4
+            m.undo()
+            let undone = m.project.clip(yID)?.start == 4
+            let good = q && w && sel && undone
+            log("RIPPLE TRIM \(good ? "OK" : "FAIL") q=\(q) [\(qShape)] w=\(w) selected=\(sel) undo=\(undone)")
+            ok = ok && good
+        }
         // Typed timecodes.
         do {
             let cases: [(String, Double?)] = [("1000", 10), ("1:02:03", 62.1), ("00:00:02:15", 2.5), ("12", 0.4), ("abc", nil)]
