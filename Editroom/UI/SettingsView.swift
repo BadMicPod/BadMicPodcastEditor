@@ -745,6 +745,8 @@ private struct UpdateSettings: View {
                         Divider().overlay(Theme.stroke)
                         Toggle("Check for updates automatically", isOn: Binding(get: { updates.automatic }, set: { updates.automatic = $0 }))
                             .toggleStyle(.checkbox)
+                            // The grey it's always had: the accent is lighter on Light, for alerts' main buttons.
+                            .tint(Color(red: 0.557, green: 0.557, blue: 0.541))
                             .font(.system(size: 12))
                             .disabled(!updates.running)
                         PillButton(title: "Check for Updates…", prominent: false) { updates.check() }
