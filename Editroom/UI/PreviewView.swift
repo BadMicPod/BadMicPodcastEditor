@@ -288,7 +288,11 @@ private struct EmptyViewerPrompt: View {
     let onImport: () -> Void
     @State private var hovering = false
 
+    /// The viewer is black in every theme, so on Light this uses Dark's colours, not Light's dark ones.
+    private var p: Palette { Theme.current.isLight ? AppTheme.dark.palette : Theme.p }
+
     var body: some View {
+        let text = Color(hex: p.text), faint = Color(hex: p.textFaint)
         GeometryReader { g in
             VStack(spacing: 16) {
                 Canvas { ctx, size in
@@ -301,26 +305,26 @@ private struct EmptyViewerPrompt: View {
                         frame.move(to: CGPoint(x: x * s, y: 41 * s)); frame.addLine(to: CGPoint(x: x * s, y: 49 * s))
                     }
                     let style = StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round)
-                    ctx.stroke(frame, with: .color(Theme.textFaint), style: style)
+                    ctx.stroke(frame, with: .color(faint), style: style)
                     var arrow = Path()
                     arrow.move(to: CGPoint(x: 66 * s, y: 4 * s)); arrow.addLine(to: CGPoint(x: 66 * s, y: 24 * s))
                     arrow.move(to: CGPoint(x: 59 * s, y: 17 * s)); arrow.addLine(to: CGPoint(x: 66 * s, y: 24 * s)); arrow.addLine(to: CGPoint(x: 73 * s, y: 17 * s))
-                    ctx.stroke(arrow, with: .color(Theme.text), style: style)
+                    ctx.stroke(arrow, with: .color(text), style: style)
                 }
                 .frame(width: 96, height: 70)
                 Text(hasMedia ? "Drag media from the library to the timeline" : "Drop video, audio or images anywhere")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.text)
+                    .foregroundStyle(text)
                 Text(hasMedia ? "or double-click it to add it at the playhead"
                               : "or press ⌘I to import  ·  MP4, MOV, MKV, WebM, WAV, MP3, JPG, PNG")
                     .font(.system(size: 11.5))
-                    .foregroundStyle(Theme.textFaint)
+                    .foregroundStyle(faint)
             }
             .frame(width: g.size.width * 0.62, height: g.size.height * 0.58)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-                    .foregroundStyle(hovering ? Theme.ink.opacity(0.3) : Theme.outline)
+                    .foregroundStyle(hovering ? Color(hex: p.ink).opacity(0.3) : Color(hex: p.outline))
             )
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
