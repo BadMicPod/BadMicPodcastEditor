@@ -1184,7 +1184,8 @@ final class EditorModel: ObservableObject {
 
     /// How a timeline opens (at launch, and when a project opens): rows as tall as fit the panel with every
     /// track and the add-track zones above and below in view (no taller than usual, no shorter than the
-    /// smallest), centred. When they can't all fit, the video/audio gap is centred as usual.
+    /// smallest), centred. When they can't all fit, the tracks start at the top (the add-video zone first), with
+    /// no empty space above, and the rest are scrolled to.
     func fitRows() {
         // The track headers run on past the timeline, alongside the scroll bar under it: the add-audio zone,
         // only a label on the headers' side, can sit level with the bar.
@@ -1195,7 +1196,7 @@ final class EditorModel: ObservableObject {
         if rowsContent <= visible {
             setView(scrollY: (rowsContent - visible) / 2)
         } else {
-            centerRows()
+            setView(scrollY: 0)
         }
     }
 
