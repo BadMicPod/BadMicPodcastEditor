@@ -1961,6 +1961,12 @@ enum SelfTest {
             }
             p.removeCaptions([ca.id])
             let removed = p.captions == nil && !p.clips.contains { $0.captioned == true } && p.captionFixes == nil
+            // Deleting every captioned clip takes the caption track with it.
+            var emptied = p
+            emptied.addCaptions([ca.id])
+            emptied.clips.removeAll()
+            emptied.sanitize()
+            let trackGoes = emptied.captions == nil
             // Captioned again: every word is back, the earlier edits gone.
             p.addCaptions([ca.id])
             let afresh = CaptionLayout.blocks(p, transcript: heard).map(\.text) == ["so here's the thing.", "we made it"]
@@ -1976,8 +1982,8 @@ enum SelfTest {
                 && longer.flatMap(\.words).count == 7
             p.setCaptionText(blocks[1], to: "we made it")
             let back = CaptionLayout.blocks(p, transcript: heard).last?.text == "we made it" && kept
-            let good = picksSound && phrases && placed && follows && fixed && drawn && removed && afresh && fewer && back
-            log("CAPTIONS \(good ? "OK" : "FAIL") sound=\(picksSound) phrases=\(phrases) \(texts) placed=\(placed) follows=\(follows) \(moved.map { String(format: "%.3f", $0.start) }) fixed=\(fixed) drawn=\(drawn) removed=\(removed) afresh=\(afresh) typing=\(fewer)/\(back)")
+            let good = picksSound && phrases && placed && follows && fixed && drawn && removed && trackGoes && afresh && fewer && back
+            log("CAPTIONS \(good ? "OK" : "FAIL") sound=\(picksSound) phrases=\(phrases) \(texts) placed=\(placed) follows=\(follows) \(moved.map { String(format: "%.3f", $0.start) }) fixed=\(fixed) drawn=\(drawn) removed=\(removed) trackGoes=\(trackGoes) afresh=\(afresh) typing=\(fewer)/\(back)")
             ok = ok && good
         }
         log(ok ? "SELFTEST OK" : "SELFTEST FAIL")

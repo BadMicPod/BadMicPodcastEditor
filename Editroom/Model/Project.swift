@@ -852,6 +852,12 @@ extension Project {
             clips[i].start = max(0, clips[i].start)
             clips[i].clampFades()
         }
+        // The caption track goes with the last captioned clip (deleted, or its captions taken off): it could
+        // never show anything again. Undo brings both back.
+        if captions != nil, !clips.contains(where: { $0.captioned == true }) {
+            captions = nil
+            captionFixes = nil
+        }
     }
 }
 
