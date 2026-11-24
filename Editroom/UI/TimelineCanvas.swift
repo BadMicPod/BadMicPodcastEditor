@@ -1684,7 +1684,7 @@ final class TimelineCanvas: NSView {
         let path = CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius, transform: nil)
         let visible = r.intersection(bounds.insetBy(dx: -2, dy: 0))
         let asset = model.project.asset(c.assetID)
-        let offline = c.kind.usesSource || c.kind == .image ? (asset.map { model.media.isOffline($0) } ?? true) : false
+        let offline = c.kind.usesSource || c.kind == .image ? (asset.map { model.media.looksOffline($0) } ?? true) : false
 
         ctx.saveGState()
         ctx.setAlpha(alpha)

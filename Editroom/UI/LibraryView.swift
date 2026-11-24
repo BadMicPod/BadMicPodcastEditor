@@ -101,7 +101,7 @@ struct LibraryView: View {
                         if layout == .thumbnails {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8, alignment: .top)], spacing: 10) {
                                 ForEach(shown) { asset in
-                                    AssetTile(model: model, media: media, asset: asset, snippet: snippet(asset), offline: media.isOffline(asset), selected: inSelection.contains(asset.id),
+                                    AssetTile(model: model, media: media, asset: asset, snippet: snippet(asset), offline: media.looksOffline(asset), selected: inSelection.contains(asset.id),
                                               picked: model.mediaSelection.contains(asset.id), pickedCount: model.mediaSelection.count,
                                               matchesSequence: model.sequenceMatches(asset))
                                         .simultaneousGesture(TapGesture().onEnded { model.clickMedia(asset.id, in: order) })
@@ -110,7 +110,7 @@ struct LibraryView: View {
                         } else {
                             VStack(spacing: 3) {
                                 ForEach(shown) { asset in
-                                    AssetRow(model: model, media: media, asset: asset, snippet: snippet(asset), thumbWidth: thumbWidth, offline: media.isOffline(asset), selected: inSelection.contains(asset.id),
+                                    AssetRow(model: model, media: media, asset: asset, snippet: snippet(asset), thumbWidth: thumbWidth, offline: media.looksOffline(asset), selected: inSelection.contains(asset.id),
                                              picked: model.mediaSelection.contains(asset.id), pickedCount: model.mediaSelection.count,
                                              matchesSequence: model.sequenceMatches(asset))
                                         // A click picks it (⇧ for a range, ⌘ to add or take away); a double-click adds it.

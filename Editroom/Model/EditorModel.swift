@@ -2098,6 +2098,8 @@ final class EditorModel: ObservableObject {
         redoKnown.removeAll()
         selection = []
         playhead = 0
+        // Its files are loading from here: drawn as clips, not as missing, until they're found or aren't.
+        media.expect(p.assets)
         project = p
         fileURL = url
         isDirty = false

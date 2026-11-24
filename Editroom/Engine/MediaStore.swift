@@ -144,10 +144,31 @@ final class MediaStore: ObservableObject {
     /// Re-attaches runtimes for assets coming from a saved project. When a converted copy has gone
     /// but its original is still there, the original is converted again; the new copies' paths are
     /// returned by asset id so the project can be updated.
+    /// Files a project just opened is still loading: not drawn as missing until they turn out to be.
+    private(set) var opening = Set<UUID>()
+
+    /// A project's files about to load (marked before its first frame is drawn).
+    func expect(_ assets: [MediaAsset]) {
+        for a in assets where isOffline(a) { opening.insert(a.id) }
+    }
+
+    /// Whether to show a file as missing: not loaded, and not still loading.
+    func looksOffline(_ asset: MediaAsset) -> Bool {
+        isOffline(asset) && !opening.contains(asset.id)
+    }
+
+    /// Done loading a file, found or not: it's shown as it is.
+    private func opened(_ id: UUID) {
+        guard opening.remove(id) != nil else { return }
+        notifyVisual()
+    }
+
     func restore(_ assets: [MediaAsset]) async -> [UUID: String] {
         var reconverted: [UUID: String] = [:]
+        expect(assets)
         for var a in assets where runtimes[a.id] == nil {
             if a.kind == .image { loadStill(a); continue }
+            defer { opened(a.id) }
             if let playable = a.playablePath, !FileManager.default.fileExists(atPath: playable),
                FileManager.default.fileExists(atPath: a.path),
                let again = await FFmpeg.makePlayable(URL(fileURLWithPath: a.path)) {
@@ -345,17 +366,21 @@ final class MediaStore: ObservableObject {
         SceneTagStore.shared.make(url, isVideo: false, duration: 0)
         AnalysisWarmer.shared.warm(url, kind: .image, song: false)
         Task.detached(priority: .userInitiated) {
-            guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return }
             let opts: [CFString: Any] = [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
                 kCGImageSourceThumbnailMaxPixelSize: 3840,
             ]
-            guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else { return }
+            guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else {
+                await MainActor.run { [weak self] in self?.opened(id) }
+                return
+            }
             await MainActor.run { [weak self] in
                 self?.stills[id] = cg
                 self?.posters[id] = NSImage(cgImage: cg, size: .zero)
                 self?.onStillLoaded?()
+                self?.opening.remove(id)
                 self?.notifyVisual()
             }
         }

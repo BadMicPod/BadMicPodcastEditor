@@ -777,6 +777,21 @@ enum SelfTest {
             log("LOCAL COMBINED \(good ? "OK" : "FAIL") parts=\(parts.count) added=\(added) title=\(titled) captions=\(captioned)")
             ok = ok && good
         }
+        // A project's files aren't drawn as missing while they load; a file that's really gone is, once looked for.
+        do {
+            var p = Project()
+            let gone = MediaAsset(path: "/tmp/editroom-no-such-file.mov", name: "Gone.mov", kind: .video, duration: 5, width: 1920, height: 1080, fps: 30, hasAudio: true)
+            p.assets = [gone]
+            p.clips = [Clip(trackID: p.videoTracks[0].id, kind: .video, assetID: gone.id, start: 0, duration: 2)]
+            let m = EditorModel()
+            m.load(p, url: nil)
+            let whileOpening = !m.media.looksOffline(gone)
+            for _ in 0..<40 where m.media.opening.contains(gone.id) { try? await Task.sleep(nanoseconds: 50_000_000) }
+            let thenMissing = m.media.looksOffline(gone)
+            let good = whileOpening && thenMissing
+            log("OPENING \(good ? "OK" : "FAIL") notRedWhileOpening=\(whileOpening) redWhenMissing=\(thenMissing)")
+            ok = ok && good
+        }
         // Typed timecodes.
         do {
             let cases: [(String, Double?)] = [("1000", 10), ("1:02:03", 62.1), ("00:00:02:15", 2.5), ("12", 0.4), ("abc", nil)]
