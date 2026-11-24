@@ -461,6 +461,12 @@ final class EditorModel: ObservableObject {
                         clips += self.makeClips(.asset(a.id), at: a.duration, videoTrack: v, audioTrack: au)
                         self.insert(clips)
                         Task { @MainActor in
+                            // `--handoff-captions`: with the clips captioned (heard first).
+                            if args.contains("--handoff-captions") {
+                                self.addCaptions(to: [])
+                                if let url = self.media.soundURL(a.id) { _ = await Transcripts.shared.ready(url) }
+                                FileHandle.standardError.write("CAPTIONS \(self.captionBlocks.count)\n".data(using: .utf8)!)
+                            }
                             try? await Task.sleep(nanoseconds: 1_500_000_000)
                             if args.contains("--handoff-loop") {
                                 self.project.inPoint = 0.5
@@ -486,7 +492,15 @@ final class EditorModel: ObservableObject {
                                 if !moved, CACurrentMediaTime() - t0 > 1 {
                                     moved = true
                                     let second = self.project.clips.filter { $0.start > 0.5 }.map(\.id)
-                                    self.mutate { p in for id in second { if let i = p.index(of: id) { p.clips[i].start += 0.5 } } }
+                                    if args.contains("--handoff-track") {
+                                        // `--handoff-track`: the second copy goes up a track instead (V1→V2, A1→A2).
+                                        self.mutate { p in
+                                            let v2 = p.videoTracks[1].id, a2 = p.audioTracks[1].id
+                                            for id in second { if let i = p.index(of: id) { p.clips[i].trackID = p.clips[i].kind == .audio ? a2 : v2 } }
+                                        }
+                                    } else {
+                                        self.mutate { p in for id in second { if let i = p.index(of: id) { p.clips[i].start += 0.5 } } }
+                                    }
                                 }
                                 if CACurrentMediaTime() - t0 > 0.5 { samples.append((CACurrentMediaTime(), self.playhead)) }
                                 try? await Task.sleep(nanoseconds: 8_000_000)

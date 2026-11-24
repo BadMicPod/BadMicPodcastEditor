@@ -91,6 +91,9 @@ final class PlaybackEngine {
                 let rate = lengths.max { $0.value < $1.value }.map(\.key).flatMap { (8000...192_000).contains($0) ? $0 : nil } ?? 48000
                 lanes[id] = (compTrack, rate)
             }
+            // Every audio track has its renderer from the start, sound or not, so sound moved onto an empty
+            // track while playing never adds one (which would interrupt the others for a moment).
+            for t in project.audioTracks where lanes[t.id] == nil { lanes[t.id] = (kCMPersistentTrackID_Invalid, 48000) }
             audio.load(sound.flatMap { $0.hasAudio ? $0.composition : nil }, mix: sound?.audioMix, duration: project.duration, tracks: lanes)
         }
         audio.setAudible(Dictionary(uniqueKeysWithValues: project.audioTracks.map { ($0.id, project.isAudible($0)) }))

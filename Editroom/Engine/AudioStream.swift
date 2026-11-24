@@ -70,6 +70,8 @@ final class AudioStream: @unchecked Sendable {
     /// Where each stretch of render time starts, for telling which timeline time is being heard.
     private var stretches: [(render: CMTime, offset: CMTime)] = []
     private var playing = false
+    /// The tracks of the last load: a lane of any other track is only waiting to be taken out once stopped.
+    private var wanted = Set<UUID>()
 
     private static func settings(rate: Double) -> [String: Any] {
         [
@@ -105,10 +107,13 @@ final class AudioStream: @unchecked Sendable {
             self.composition = composition
             self.mix = mix
             self.duration = CompositionBuilder.time(duration)
-            let tracks = composition == nil ? [:] : tracks
+            let tracks = composition == nil ? tracks.mapValues { _ in (track: kCMPersistentTrackID_Invalid, rate: 48000.0) } : tracks
+            self.wanted = Set(tracks.keys)
+            // A track gone: its renderer goes, but only once stopped. Adding or taking out a renderer while the
+            // synchronizer plays interrupts every track's sound for a moment, so meanwhile it's just silent.
             for (id, lane) in self.lanes where tracks[id] == nil {
-                lane.feed?.reader.cancelReading()
-                lane.renderer.flush()
+                self.silence(lane)
+                guard !self.playing else { continue }
                 self.synchronizer.removeRenderer(lane.renderer, at: .invalid)
                 self.lanes[id] = nil
             }
@@ -116,6 +121,8 @@ final class AudioStream: @unchecked Sendable {
                 if let lane = self.lanes[id] {
                     lane.track = t.track
                     lane.rate = t.rate
+                    // A track with no sound now (its clips moved to another): nothing queued, nothing read.
+                    if t.track == kCMPersistentTrackID_Invalid { self.silence(lane); continue }
                     if self.playing { self.continueWithNewSound(lane) }
                 } else {
                     let lane = Lane(track: t.track, rate: t.rate)
@@ -126,6 +133,15 @@ final class AudioStream: @unchecked Sendable {
                 }
             }
         }
+    }
+
+    /// A lane with nothing to play: its reading stops and what it had queued goes.
+    private func silence(_ lane: Lane) {
+        lane.feed?.reader.cancelReading()
+        lane.feed = nil
+        lane.held = nil
+        lane.queuedEnd = nil
+        lane.renderer.flush()
     }
 
     /// Which tracks are heard. Takes effect at once.
@@ -174,6 +190,11 @@ final class AudioStream: @unchecked Sendable {
         queue.async {
             self.playing = false
             self.synchronizer.rate = 0
+            // Renderers of tracks that went while playing go now.
+            for (id, lane) in self.lanes where !self.wanted.contains(id) {
+                self.synchronizer.removeRenderer(lane.renderer, at: .invalid)
+                self.lanes[id] = nil
+            }
             for lane in self.lanes.values {
                 lane.feed?.reader.cancelReading()
                 lane.feed = nil
