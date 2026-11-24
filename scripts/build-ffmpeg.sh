@@ -12,7 +12,10 @@ cd "$WORK"
 curl -fsSLO "https://ffmpeg.org/releases/ffmpeg-$VERSION.tar.xz"
 tar xf "ffmpeg-$VERSION.tar.xz"
 mkdir build && cd build
+# A fixed, ordinary install location: configure writes it into the program, so a build folder's path
+# (with the builder's user name) would otherwise end up in every copy shipped.
 "../ffmpeg-$VERSION/configure" \
+  --prefix=/usr/local \
   --arch=arm64 --cc=clang \
   --disable-everything --disable-autodetect --disable-doc --disable-debug --disable-network \
   --disable-ffplay --disable-ffprobe --enable-ffmpeg --enable-small --disable-shared --enable-static \
@@ -28,6 +31,11 @@ mkdir build && cd build
   --enable-swscale --enable-swresample \
   --extra-cflags="-Os -flto" --extra-ldflags="-flto -Wl,-dead_strip"
 make -j"$(sysctl -n hw.ncpu)" ffmpeg
+# Nothing from this Mac in the program: no home folder, temporary folder or user name.
+if strings -a ffmpeg | grep -E '/Users/|/private/|/var/folders/|'"$USER" ; then
+  echo "The build has a local path in it (above); not copied." >&2
+  exit 1
+fi
 cp ffmpeg "$ROOT/Vendor/ffmpeg/ffmpeg"
 echo "$VERSION" > "$ROOT/Vendor/ffmpeg/VERSION"
 ls -la "$ROOT/Vendor/ffmpeg/ffmpeg"
