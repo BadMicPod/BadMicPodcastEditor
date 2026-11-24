@@ -1186,11 +1186,14 @@ final class EditorModel: ObservableObject {
     /// track and the add-track zones above and below in view (no taller than usual, no shorter than the
     /// smallest), centred. When they can't all fit, the video/audio gap is centred as usual.
     func fitRows() {
+        // The track headers run on past the timeline, alongside the scroll bar under it: the add-audio zone,
+        // only a label on the headers' side, can sit level with the bar.
+        let visible = rowsVisible + RangeBarStyle.thickness
         let tracks = CGFloat(max(1, project.videoTracks.count + project.audioTracks.count))
-        let room = rowsVisible - TimelineLayout.fixedHeight - TimelineLayout.captionSpace(project) - 6
+        let room = visible - TimelineLayout.fixedHeight - TimelineLayout.captionSpace(project) - 6
         setView(rowHeight: min(62, room / tracks - TimelineLayout.gap))
-        if rowsContent <= rowsVisible {
-            setView(scrollY: (rowsContent - rowsVisible) / 2)
+        if rowsContent <= visible {
+            setView(scrollY: (rowsContent - visible) / 2)
         } else {
             centerRows()
         }
