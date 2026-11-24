@@ -227,7 +227,9 @@ struct HTTPRequest {
 enum MCPHandler {
     static let versions = ["2025-06-18", "2025-03-26", "2024-11-05"]
 
-    static func handle(_ req: [String: Any], client: MCPServer.Client?, draft token: String? = nil) async -> [String: Any] {
+    /// The handshake, ping and the tool list: needing nothing from the editor, so the bridge answers them
+    /// the same way while Editroom is closed (and doesn't open it just for an agent saying hello).
+    static func handshake(_ req: [String: Any]) -> [String: Any]? {
         let id = req["id"]
         let params = req["params"] as? [String: Any] ?? [:]
         func ok(_ result: [String: Any]) -> [String: Any] { ["jsonrpc": "2.0", "id": id ?? NSNull(), "result": result] }
@@ -244,6 +246,17 @@ enum MCPHandler {
             return ok([:])
         case "tools/list":
             return ok(["tools": MCPTools.definitions])
+        default:
+            return nil
+        }
+    }
+
+    static func handle(_ req: [String: Any], client: MCPServer.Client?, draft token: String? = nil) async -> [String: Any] {
+        if let reply = handshake(req) { return reply }
+        let id = req["id"]
+        let params = req["params"] as? [String: Any] ?? [:]
+        func ok(_ result: [String: Any]) -> [String: Any] { ["jsonrpc": "2.0", "id": id ?? NSNull(), "result": result] }
+        switch req["method"] as? String ?? "" {
         case "tools/call":
             let name = params["name"] as? String ?? ""
             let args = params["arguments"] as? [String: Any] ?? [:]

@@ -3,7 +3,9 @@ import Foundation
 
 /// `Editroom --mcp`: for agents that start their tools as a program and talk over stdin and stdout
 /// (Claude Desktop, Codex). Each line in is passed to the running app's MCP server and its reply is
-/// written back; Editroom is opened first if it isn't running. Nothing else is ever written to stdout.
+/// written back. While Editroom is closed, saying hello and listing the tools are answered here, so an
+/// agent starting up (a new chat, the app opening) doesn't open Editroom; the first real request opens
+/// it. Nothing else is ever written to stdout.
 enum MCPBridge {
     static func runIfRequested() {
         guard CommandLine.arguments.contains("--mcp") else { return }
@@ -38,6 +40,10 @@ enum MCPBridge {
             return (body, status)
         }
 
+        /// The agent's hello, answered here while Editroom was closed: given to Editroom once it's open, so
+        /// it knows which agent this is (its name on the cursor).
+        var heldHello: Data?
+
         func launchApp() {
             guard !launched else { return }
             launched = true
@@ -53,12 +59,42 @@ enum MCPBridge {
         while let line = readLine(strippingNewline: true) {
             guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
             let data = Data(line.utf8)
-            let id = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["id"]
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let id = json?["id"]
+            let method = json?["method"] as? String ?? ""
             var reply: Data?
+            // Hello, ping, the tool list and notifications: Editroom's own answer if it's open; this one, and
+            // no opening it, if it's closed.
+            if let json, method == "initialize" || method == "ping" || method == "tools/list" || method.hasPrefix("notifications/") {
+                let (body, status) = post(data)
+                if status == 200 || status == 202 {
+                    reply = status == 200 ? body : nil
+                } else if status == 0 {
+                    if method == "initialize" { heldHello = data }
+                    reply = MainActor.assumeIsolated { MCPHandler.handshake(json) }.flatMap { try? JSONSerialization.data(withJSONObject: $0) }
+                } else {
+                    reply = body
+                }
+                if let reply, id != nil, var out = String(data: reply, encoding: .utf8) {
+                    out = out.replacingOccurrences(of: "\n", with: " ")
+                    FileHandle.standardOutput.write(Data((out + "\n").utf8))
+                }
+                continue
+            }
             // Up to about 20 seconds for the app to start and begin listening.
             for attempt in 0..<80 {
+                // Editroom opened for this: it hears the agent's hello first.
+                if let hello = heldHello {
+                    let (_, status) = post(hello)
+                    if status == 0 {
+                        launchApp()
+                        Thread.sleep(forTimeInterval: 0.25)
+                        continue
+                    }
+                    heldHello = nil
+                }
                 let (body, status) = post(data)
-                if status == 200 || status == 202 { reply = status == 200 ? body : nil; break }
+                if status == 200 || status == 202 { reply = status == 200 ? body : nil; launched = false; break }
                 if status == 0 {
                     launchApp()
                     Thread.sleep(forTimeInterval: 0.25)
