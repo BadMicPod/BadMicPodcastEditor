@@ -1273,7 +1273,7 @@ final class EditorModel: ObservableObject {
         let fps = Self.standardFPS(asset.fps)
         project.settingsLocked = true
         if asset.width == project.width, asset.height == project.height, fps == project.fps { return }
-        let alert = NSAlert()
+        let alert = EditroomAlert()
         alert.messageText = "Match the sequence to “\(asset.name)”?"
         alert.informativeText = "\(asset.width) × \(asset.height) · \(InspectorView.fpsLabel(fps))\nThe sequence is currently \(project.width) × \(project.height) · \(InspectorView.fpsLabel(project.fps))."
         alert.addButton(withTitle: "Match")
@@ -1353,7 +1353,7 @@ final class EditorModel: ObservableObject {
         let clipCount = Set(used.map { $0.linkID ?? $0.id }).count
         if !used.isEmpty {
             let names = project.assets.filter { ids.contains($0.id) }.map(\.name)
-            let alert = NSAlert()
+            let alert = EditroomAlert()
             alert.messageText = names.count == 1 ? "Delete “\(names[0])”?" : "Delete \(names.count) items?"
             alert.informativeText = "\(clipCount) clip\(clipCount == 1 ? " on the timeline uses" : "s on the timeline use") \(names.count == 1 ? "it" : "them") and will be deleted too. The files stay on your Mac, and Undo brings everything back."
             alert.addButton(withTitle: "Delete")
@@ -1530,7 +1530,7 @@ final class EditorModel: ObservableObject {
     func captionsFromMenu() {
         if !selection.isEmpty, hasCaptions(selection) { return removeCaptions() }
         guard addCaptions() == 0 else { return }
-        let alert = NSAlert()
+        let alert = EditroomAlert()
         alert.messageText = "Nothing to caption"
         alert.informativeText = selection.isEmpty
             ? "Captions come from what's said in clips of people talking. Add some to the timeline, or pick a clip with sound."
@@ -1950,7 +1950,7 @@ final class EditorModel: ObservableObject {
             // Quitting keeps untitled work in the recovery copy, which reopens next time.
             guard !quitting, isDirty, !project.clips.isEmpty else { return true }
             if fileURL != nil { autosaveNow(); return true }
-            let alert = NSAlert()
+            let alert = EditroomAlert()
             alert.messageText = "Discard unsaved changes?"
             alert.informativeText = "Your changes to “\(title)” will be lost."
             alert.addButton(withTitle: "Discard")
@@ -1961,7 +1961,7 @@ final class EditorModel: ObservableObject {
         }
         commitLive()
         guard isDirty, !(project.clips.isEmpty && project.assets.isEmpty) else { return true }
-        let alert = NSAlert()
+        let alert = EditroomAlert()
         alert.messageText = "Save changes to “\(title)”?"
         alert.informativeText = "Your changes will be lost if you don't save them."
         alert.addButton(withTitle: "Save")
@@ -2212,7 +2212,7 @@ final class EditorModel: ObservableObject {
         let missing = missingAssets
         guard let first = missing.first else { return }
         let names = missing.prefix(6).map { URL(fileURLWithPath: $0.path).lastPathComponent }
-        let alert = NSAlert()
+        let alert = EditroomAlert()
         alert.messageText = missing.count == 1 ? "1 media file is missing" : "\(missing.count) media files are missing"
         alert.informativeText = names.joined(separator: "\n") + (missing.count > names.count ? "\n…" : "")
             + "\n\nLocate one and any others in the same folder are found too."

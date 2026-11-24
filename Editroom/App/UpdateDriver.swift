@@ -19,7 +19,7 @@ import Sparkle
         let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Editroom"
         let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
         let downloaded = state.stage != .notDownloaded
-        let alert = NSAlert()
+        let alert = EditroomAlert()
         alert.icon = NSApp.applicationIconImage
         alert.messageText = "A new version of \(name) is available!"
         alert.informativeText = downloaded

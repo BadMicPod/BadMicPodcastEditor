@@ -1228,7 +1228,7 @@ enum LocalMagic {
                 state.busy = false
                 state.status = nil
                 MagicThinking.current?.end()
-                let a = NSAlert()
+                let a = EditroomAlert()
                 a.messageText = "Local couldn't read that"
                 a.informativeText = (error as? LocalBrain.Failure)?.message ?? error.localizedDescription
                 a.runModal()

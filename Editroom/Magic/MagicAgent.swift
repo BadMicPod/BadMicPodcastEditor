@@ -426,7 +426,7 @@ final class MagicAgent: ObservableObject {
     /// Signed in already, or signs in now (once, in the browser) if the person wants to.
     private func signIn(_ kind: Kind, _ cli: URL) async -> Bool {
         if await signedIn(kind, cli) { return true }
-        let ask = NSAlert()
+        let ask = EditroomAlert()
         ask.messageText = "Sign in to \(kind.name)"
         ask.informativeText = kind == .claude
             ? "Magic uses Claude through Claude Code on this Mac, with your Claude plan. It needs signing in once, in your browser."
@@ -695,7 +695,7 @@ final class MagicAgent: ObservableObject {
     }
 
     private func alert(_ title: String, _ text: String) {
-        let a = NSAlert()
+        let a = EditroomAlert()
         a.messageText = title
         a.informativeText = text
         a.runModal()

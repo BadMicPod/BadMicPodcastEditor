@@ -290,7 +290,7 @@ struct ExportSheet: View {
         name = clean
         let url = folder.appendingPathComponent(clean + "." + settings.fileExtension)
         if FileManager.default.fileExists(atPath: url.path) {
-            let alert = NSAlert()
+            let alert = EditroomAlert()
             alert.messageText = "Replace “\(url.lastPathComponent)”?"
             alert.informativeText = "A file with this name already exists in \(folder.lastPathComponent)."
             alert.addButton(withTitle: "Replace")
