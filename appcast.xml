@@ -3,21 +3,14 @@
   <channel>
     <title>Editroom</title>
     <item>
-      <title>Version 1.0</title>
-      <pubDate>Tue, 24 Nov 2026 14:54:57 +0000</pubDate>
-      <sparkle:version>1</sparkle:version>
-      <sparkle:shortVersionString>1.0</sparkle:shortVersionString>
+      <title>Version 1.0.1</title>
+      <pubDate>Tue, 24 Nov 2026 15:15:14 +0000</pubDate>
+      <sparkle:version>2</sparkle:version>
+      <sparkle:shortVersionString>1.0.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <link>https://github.com/robbietilton/Editroom/releases/tag/v1.0</link>
-      <changes><![CDATA[The first release of Editroom: a fast, free video editor for Mac
-Color grading with LUTs and looks, including HDR and Log footage
-Speed ramps, transitions and fades
-Auto captions, timed word by word, that follow your edit
-Search your footage by what's said or what's in the shot
-Magic: edit by asking, on this Mac or with Claude and ChatGPT
-Built-in MCP server, so AI apps can edit with you
-Export any shape, at the right loudness]]></changes>
-      <enclosure url="https://github.com/robbietilton/Editroom/releases/download/v1.0/Editroom.dmg" sparkle:edSignature="t0K0u4cgEmxWeqTJB097DtFtxkgSbKWnSuD0aB3gqy1CYhXHjBQQ6Ghjb5uB7wD6aUFunEKxwE5TAHeK0gSWAA==" length="11437033" type="application/octet-stream"/>
+      <link>https://github.com/robbietilton/Editroom/releases/tag/v1.0.1</link>
+      <changes><![CDATA[Clips no longer flash red while a project opens]]></changes>
+      <enclosure url="https://github.com/robbietilton/Editroom/releases/download/v1.0.1/Editroom.dmg" sparkle:edSignature="BPFUxj65PsgGuEta+yLvng6ASils1PyVtL8R37XYlOvMi3h1qF5S1jREt9UOdFvhsYSd9Q/CTI9qIvuAzGWiBQ==" length="11473819" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>
