@@ -152,7 +152,9 @@ final class Exporter: ObservableObject {
         let size = settings.renderSize(for: project)
         guard let built = CompositionBuilder.build(project: project, media: media, renderSize: size,
                                                    includeVideo: !wav, includeAudio: wav || settings.includeAudio,
-                                                   reframe: settings.crops(project) ? settings.reframe : nil) else {
+                                                   reframe: settings.crops(project) ? settings.reframe : nil,
+                                                   // Video drawn bigger than its pixels (a 1080p sequence at 4K) is upscaled, not stretched.
+                                                   upscale: true) else {
             state = .failed("The timeline is empty.")
             return
         }
@@ -173,6 +175,8 @@ final class Exporter: ObservableObject {
                 Task { @MainActor in
                     guard let self else { return }
                     self.job = nil
+                    // The upscaler's frames (a few hundred MB at 4K) aren't kept between exports.
+                    Upscaler.shared.purge()
                     if let error {
                         self.state = (error as? ExportJob.Cancelled) != nil ? .idle : .failed(error.localizedDescription)
                     } else {

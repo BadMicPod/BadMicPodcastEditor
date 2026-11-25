@@ -917,6 +917,53 @@ enum SelfTest {
             ok = ok && good
             try? fm.removeItem(at: dir.deletingLastPathComponent())
         }
+        // Upscaler (export): the same way up and the same colours as a plain resize, a sharper edge, and how long 1080p to
+        // 4K takes on this Mac.
+        do {
+            let up = Upscaler.shared
+            if !up.available {
+                log("UPSCALE SKIP MetalFX's upscaler isn't available on this Mac")
+            } else {
+                let ctx = TimelineCompositor.context
+                func rect(_ c: CIColor, _ r: CGRect) -> CIImage { CIImage(color: c).cropped(to: r) }
+                // 320 × 180: dark left, light right (an edge to measure), a red band along the top, blue along the bottom.
+                var img = rect(CIColor(red: 0.2, green: 0.2, blue: 0.2), CGRect(x: 0, y: 0, width: 320, height: 180))
+                img = rect(CIColor(red: 0.8, green: 0.8, blue: 0.8), CGRect(x: 160, y: 0, width: 160, height: 180)).composited(over: img)
+                img = rect(CIColor(red: 0.9, green: 0.1, blue: 0.1), CGRect(x: 0, y: 150, width: 320, height: 30)).composited(over: img)
+                img = rect(CIColor(red: 0.1, green: 0.1, blue: 0.9), CGRect(x: 0, y: 0, width: 320, height: 30)).composited(over: img)
+                let target = CGSize(width: 1280, height: 720)
+                func pixels(_ i: CIImage) -> [UInt8] {
+                    var b = [UInt8](repeating: 0, count: 1280 * 720 * 4)
+                    ctx.render(i, toBitmap: &b, rowBytes: 1280 * 4, bounds: CGRect(origin: .zero, size: target), format: .RGBA8, colorSpace: nil)
+                    return b
+                }
+                let upscaled = up.upscale(img, to: target, slot: 99, context: ctx)
+                let plain = img.transformed(by: CGAffineTransform(scaleX: 4, y: 4))
+                var good = false
+                var detail = "no picture"
+                if let upscaled {
+                    let a = pixels(upscaled), b = pixels(plain)
+                    func px(_ p: [UInt8], _ x: Int, _ y: Int) -> (Int, Int, Int) { let i = (y * 1280 + x) * 4; return (Int(p[i]), Int(p[i + 1]), Int(p[i + 2])) }
+                    func near(_ u: (Int, Int, Int), _ v: (Int, Int, Int)) -> Bool { abs(u.0 - v.0) < 14 && abs(u.1 - v.1) < 14 && abs(u.2 - v.2) < 14 }
+                    // Same way up and same colours: the bands and both sides match the plain resize.
+                    let same = [(640, 40), (640, 680), (300, 360), (980, 360)].allSatisfy { near(px(a, $0.0, $0.1), px(b, $0.0, $0.1)) }
+                    // The edge: how many pixels across row 360 are partway between dark and light.
+                    func soft(_ p: [UInt8]) -> Int { (560..<720).filter { let v = px(p, $0, 360).0; return v > 70 && v < 185 }.count }
+                    let sharper = soft(a) <= soft(b)
+                    // Timing: 1080p to 4K.
+                    let hd = rect(CIColor(red: 0.5, green: 0.4, blue: 0.3), CGRect(x: 0, y: 0, width: 1920, height: 1080))
+                    _ = up.upscale(hd, to: CGSize(width: 3840, height: 2160), slot: 98, context: ctx)
+                    let t0 = Date()
+                    for _ in 0..<20 { _ = up.upscale(hd, to: CGSize(width: 3840, height: 2160), slot: 98, context: ctx) }
+                    let ms = Date().timeIntervalSince(t0) / 20 * 1000
+                    good = same && sharper
+                    detail = String(format: "sameWayUpAndColours=%@ edge=%d px (plain %d) 1080p→4K=%.1f ms a frame", same ? "true" : "false", soft(a), soft(b), ms)
+                }
+                up.purge()
+                log("UPSCALE \(good ? "OK" : "FAIL") \(detail)")
+                ok = ok && good
+            }
+        }
         // Folders: a folder brought in whole is mirrored in Media and followed on disk: files added later come in,
         // a file renamed or the folder moved is followed (same items, nothing to locate), a file taken out stays out
         // (Undo brings it back), one put in the Trash isn't followed there, and Delete Folder takes it all out.

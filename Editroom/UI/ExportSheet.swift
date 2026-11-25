@@ -125,16 +125,6 @@ struct ExportSheet: View {
                     Button("WAV Audio") { settings.format = .wav }
                 }
             }
-            row("Loudness") {
-                let on = !isVideo || settings.includeAudio
-                SheetMenu(label: Self.loudnessLabel(settings.loudness), height: h) {
-                    ForEach(Self.loudnessTargets, id: \.0) { item in
-                        Button(item.0) { settings.loudness = item.1 }
-                    }
-                }
-                .disabled(!on)
-                .opacity(on ? 1 : 0.4)
-            }
             if isVideo {
                 row("Resolution") {
                     SheetMenu(label: heights.first { $0.1 == settings.height }?.0 ?? heights[0].0, height: h) {
@@ -166,15 +156,20 @@ struct ExportSheet: View {
                         Button("Web") { settings.quality = .web }
                     }
                 }
-                row("Audio") {
-                    HStack(spacing: 10) {
-                        AccentSwitch(isOn: $settings.includeAudio)
-                        Text("Include audio")
-                            .font(.system(size: 11.5, weight: .medium))
-                            .foregroundStyle(SheetStyle.text)
-                        Spacer()
+            }
+            // Whether there's sound, and how loud: one menu ("No audio" only for video; a WAV is its sound).
+            row("Audio") {
+                SheetMenu(label: isVideo && !settings.includeAudio ? "No audio" : Self.loudnessLabel(settings.loudness), height: h) {
+                    if isVideo {
+                        Button("No audio") { settings.includeAudio = false }
+                        Divider()
                     }
-                    .frame(height: h)
+                    ForEach(Self.loudnessTargets, id: \.0) { item in
+                        Button(item.0) {
+                            settings.includeAudio = true
+                            settings.loudness = item.1
+                        }
+                    }
                 }
             }
         }
@@ -201,6 +196,21 @@ struct ExportSheet: View {
                              crop: isVideo && settings.crops(p) ? settings.renderSize(for: p) : nil,
                              reframe: $settings.reframe)
                 .frame(width: w, height: (w * 9 / 16).rounded())
+                // Exported bigger than the sequence: said so, since it's upscaled (sharpened as it's enlarged), not stretched.
+                .overlay(alignment: .topLeading) {
+                    if isVideo, Upscaler.shared.available, max(size.width, size.height) > CGFloat(max(p.width, p.height)) + 1 {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 9.5, weight: .semibold))
+                            Text("Upscaled from \(min(p.width, p.height))p").font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundStyle(Color(hex: 0xF2F2F0))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.black.opacity(0.55)))
+                        .padding(8)
+                        .allowsHitTesting(false)
+                    }
+                }
 
             // Spread edge to edge under the preview: first item flush left, last flush right.
             HStack(spacing: 0) {
@@ -631,11 +641,12 @@ struct PillButton: View {
 }
 
 extension View {
-    /// The rounded, softly outlined field used throughout the export sheet.
+    /// The rounded, softly outlined field used throughout the export sheet: the same fill, hover and outline as the
+    /// inspector's fields and menus.
     func sheetField(hovering: Bool = false, focused: Bool = false) -> some View {
-        background(RoundedRectangle(cornerRadius: SheetStyle.radius, style: .continuous).fill(hovering ? SheetStyle.fieldHover : SheetStyle.field))
+        background(RoundedRectangle(cornerRadius: SheetStyle.radius, style: .continuous).fill(hovering ? Theme.hover : Theme.field))
             .overlay(RoundedRectangle(cornerRadius: SheetStyle.radius, style: .continuous)
-                .strokeBorder(focused ? Theme.text.opacity(0.85) : SheetStyle.fieldStroke, lineWidth: 1))
+                .strokeBorder(focused ? Theme.text.opacity(0.85) : Theme.ink.opacity(0.05), lineWidth: 1))
     }
 }
 

@@ -104,9 +104,12 @@ final class TimelineInstruction: NSObject, AVVideoCompositionInstructionProtocol
     let offset: CGPoint
     /// Captions, drawn over everything in the output's own frame.
     let captions: [CaptionLayer]
+    /// Video drawn bigger than its own pixels is enlarged with the upscaler (on export), not just stretched.
+    let upscale: Bool
 
     init(timeRange: CMTimeRange, layers: [RenderLayer], trackIDs: [CMPersistentTrackID], canvas: CGSize, offset: CGPoint = .zero,
-         captions: [CaptionLayer] = []) {
+         captions: [CaptionLayer] = [], upscale: Bool = false) {
+        self.upscale = upscale
         self.timeRange = timeRange
         self.canvas = canvas
         self.offset = offset
@@ -223,9 +226,18 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
                 let e = src.extent
                 guard e.width > 0, e.height > 0 else { continue }
                 let s = min(size.width / e.width, size.height / e.height)
-                let tx = (size.width - e.width * s) / 2 - e.minX * s
-                let ty = (size.height - e.height * s) / 2 - e.minY * s
-                image = src.transformed(by: CGAffineTransform(a: s, b: 0, c: 0, d: s, tx: tx, ty: ty))
+                if instruction.upscale, s > 1.01,
+                   let up = Upscaler.shared.upscale(src.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY)),
+                                                    to: CGSize(width: e.width * s, height: e.height * s), slot: index, context: context) {
+                    // Enlarged with detail rebuilt, then centred as the plain fit would be.
+                    let u = up.extent
+                    image = up.transformed(by: CGAffineTransform(translationX: (size.width - u.width) / 2 - u.minX,
+                                                                 y: (size.height - u.height) / 2 - u.minY))
+                } else {
+                    let tx = (size.width - e.width * s) / 2 - e.minX * s
+                    let ty = (size.height - e.height * s) / 2 - e.minY * s
+                    image = src.transformed(by: CGAffineTransform(a: s, b: 0, c: 0, d: s, tx: tx, ty: ty))
+                }
                 // After scaling, so a 4K source is converted at the output's size.
                 image = layer.color.toRec709(image)
             case .image(let img):

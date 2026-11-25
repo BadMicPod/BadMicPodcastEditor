@@ -59,7 +59,7 @@ enum CompositionBuilder {
     /// each track's sound itself (AudioStream), at once.
     static func build(project: Project, media: MediaStore, renderSize: CGSize,
                       includeVideo: Bool = true, includeAudio: Bool = true, reframe: CGPoint? = nil,
-                      keepAllTracks: Bool = false) -> BuiltTimeline? {
+                      keepAllTracks: Bool = false, upscale: Bool = false) -> BuiltTimeline? {
         // The sequence is laid out on `canvas`, then `offset` picks the output's window from it.
         var canvas = renderSize
         var offset = CGPoint.zero
@@ -265,7 +265,7 @@ enum CompositionBuilder {
             captions = CaptionRenderer.layers(CaptionLayout.blocks(project) { media.transcript($0.id) }, style: track.style)
         }
         vc.instructions = [TimelineInstruction(timeRange: range, layers: layers, trackIDs: requiredTracks, canvas: canvas, offset: offset,
-                                               captions: captions)]
+                                               captions: captions, upscale: upscale)]
 
         var mix: AVMutableAudioMix?
         if !mixParams.isEmpty {
