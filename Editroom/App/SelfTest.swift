@@ -836,6 +836,60 @@ enum SelfTest {
             log("RIPPLE TRIM \(good ? "OK" : "FAIL") q=\(q) [\(qShape)] w=\(w) selected=\(sel) undo=\(undone)")
             ok = ok && good
         }
+        // Zoom for agents: set_transform's zoom (in at 1s over 1.5s, framing the right side), reported by get_project,
+        // an out that ends with the clip, and off keeping the scale.
+        do {
+            var p = Project()
+            let clip = Clip(trackID: p.videoTracks[0].id, kind: .solid, start: 0, duration: 6)
+            p.clips = [clip]
+            let m = EditorModel()
+            m.load(p, url: nil)
+            func call(_ args: [String: Any]) async -> String? {
+                do { _ = try await MCPTools.call("set_transform", args, model: m, client: nil, draft: nil); return nil }
+                catch { return (error as? MCPToolError)?.message ?? "\(error)" }
+            }
+            let id = clip.id.uuidString
+            let e1 = await call(["clip_id": id, "zoom": "in", "zoom_start": 1.0, "zoom_seconds": 1.5, "focus_x": 0.75])
+            let z = m.project.clip(clip.id)?.transform
+            let inOK = e1 == nil && z?.scale == 2 && z?.zoom?.mode == .zoomIn && z?.zoom?.p1 == 1 && z?.zoom?.p2 == 2.5
+                && abs((z?.x ?? 0) + 0.5) < 1e-9 && z?.at(0) == nil && z?.at(3)?.scale == 2
+            let out = try? await MCPTools.call("get_project", [:], model: m, client: nil, draft: nil)
+            let shown = (out?.first?["text"] as? String)?.contains("\"zoom\"") == true
+            let e2 = await call(["clip_id": id, "zoom": "out", "zoom_seconds": 2.0, "zoom_smooth": false])
+            let o = m.project.clip(clip.id)?.transform?.zoom
+            let outOK = e2 == nil && o?.mode == .zoomOut && o?.p3 == 4 && o?.p4 == 6 && o?.smooth == false
+            let e3 = await call(["clip_id": id, "zoom": "off"])
+            let offOK = e3 == nil && m.project.clip(clip.id)?.transform?.zoom == nil && m.project.clip(clip.id)?.transform?.scale == 2
+            let bad = await call(["clip_id": id, "zoom": "sideways"]) != nil
+            let good = inOK && shown && outOK && offOK && bad
+            log("ZOOM TOOL \(good ? "OK" : "FAIL") in=\(inOK) shown=\(shown) out=\(outOK) off=\(offOK) refusesBad=\(bad) \(e1 ?? "")")
+            ok = ok && good
+        }
+        // Local's zooms: "@selected add zoom animation" zooms the selected shot (and adds no clip); "zoom in and out"
+        // at the playhead; "2x" sets how far; "remove the zoom" takes it off and keeps the scale.
+        do {
+            var p = Project()
+            let a = Clip(trackID: p.videoTracks[0].id, kind: .solid, start: 0, duration: 4)
+            let b = Clip(trackID: p.videoTracks[0].id, kind: .solid, start: 4, duration: 4)
+            p.clips = [a, b]
+            func run(_ text: String, _ ptr: MagicPointers, _ on: Project) -> Project {
+                var q = on
+                for task in LocalZoom.plan(request: text, pointers: ptr, project: on).plan?.tasks ?? [] { task.edit.apply(&q, 1) }
+                return q
+            }
+            let asked = LocalZoom.asks("@selected add zoom animation") && !LocalZoom.asks("add a clip at the end")
+            let selected = run("@selected add zoom animation", MagicPointers(playhead: 6, selected: [a.id], range: nil), p)
+            let selOK = selected.clips.count == 2 && selected.clip(a.id)?.transform?.zoom?.mode == .zoomIn
+                && selected.clip(a.id)?.transform?.scale == 2 && selected.clip(b.id)?.transform == nil
+            let inOut = run("zoom in and out 1.5x", MagicPointers(playhead: 6, selected: [], range: nil), p)
+            let inOutOK = inOut.clip(b.id)?.transform?.zoom?.mode == .inOut && inOut.clip(b.id)?.transform?.scale == 1.5
+                && inOut.clip(a.id)?.transform == nil
+            let off = run("remove the zoom", MagicPointers(playhead: 1, selected: [a.id], range: nil), selected)
+            let offOK = off.clip(a.id)?.transform?.zoom == nil && off.clip(a.id)?.transform?.scale == 2
+            let good = asked && selOK && inOutOK && offOK
+            log("LOCAL ZOOM \(good ? "OK" : "FAIL") asks=\(asked) selected=\(selOK) inOutAtPlayhead=\(inOutOK) off=\(offOK)")
+            ok = ok && good
+        }
         // Folders: a folder brought in whole is mirrored in Media and followed on disk: files added later come in,
         // a file renamed or the folder moved is followed (same items, nothing to locate), a file taken out stays out
         // (Undo brings it back), one put in the Trash isn't followed there, and Delete Folder takes it all out.

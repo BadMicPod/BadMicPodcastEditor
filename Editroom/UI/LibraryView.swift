@@ -117,7 +117,7 @@ struct LibraryView: View {
                         if let missingRoot {
                             MissingFolder(model: model, folder: missingRoot)
                         }
-                        SearchField(text: $search, prompt: folder.map { "Search " + tree.name($0) } ?? "Search")
+                        SearchField(text: $search, prompt: folder == nil ? "Search" : "Search folder")
                         let order = folders.map(MediaPick.folder) + shown.map { MediaPick.asset($0.id) }
                         let pickedCount = model.mediaSelection.count + model.folderSelection.count
                         if layout == .thumbnails {
@@ -609,16 +609,16 @@ private struct FolderPicture: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: compact ? 5 : 6, style: .continuous).fill(Theme.raised)
+            // Quiet: a faint fill and no outline, so it sits back among the clips' (mostly dark) pictures.
+            RoundedRectangle(cornerRadius: compact ? 5 : 6, style: .continuous).fill(Theme.ink.opacity(0.02))
             Image(systemName: "folder")
                 .font(.system(size: compact ? 14 : 21, weight: .light))
-                .foregroundStyle(Theme.textDim)
+                .foregroundStyle(Theme.textDim.opacity(0.8))
             if missing {
                 Color.black.opacity(0.45)
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
             }
         }
-        .overlay(RoundedRectangle(cornerRadius: compact ? 5 : 6, style: .continuous).strokeBorder(Theme.ink.opacity(0.06)))
     }
 }
 

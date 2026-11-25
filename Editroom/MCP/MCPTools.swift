@@ -13,8 +13,8 @@ enum MCPTools {
     static let instructions = """
     Editroom is a video editor. Times are in seconds. Video tracks are V1, V2, … (V1 is the bottom; \
     higher tracks cover lower ones) and audio tracks are A1, A2, …. A video with sound is placed as a \
-    linked pair: moving, trimming or deleting either moves both. Placing, moving or trimming a clip \
-    over another on the same track overwrites what's underneath, as on the timeline. Start with \
+    linked pair: moving, trimming or deleting either moves both. Placing, moving or trimming a clip, \
+    title or solid over another on the same track overwrites what's underneath, as on the timeline. Start with \
     get_project and list_media; analyze_media finds a clip's best moments or a song's beats; \
     look_at_media shows you a clip or photo, and get_frame shows you the cut; search_media finds shots by what they \
     show or what's said. After looking at a clip, save what you saw with note_media; list_media gives those notes \
@@ -761,7 +761,17 @@ enum MCPTools {
                           "color": hex(c.text.color), "x": round3(c.text.x), "y": round3(c.text.y)]
         }
         if c.kind == .solid { d["color"] = hex(c.color) }
-        if let tf = c.transform, !tf.isIdentity { d["transform"] = ["scale": round3(tf.scale), "x": round3(tf.x), "y": round3(tf.y)] }
+        if let tf = c.transform, !tf.isIdentity {
+            var t: [String: Any] = ["scale": round3(tf.scale), "x": round3(tf.x), "y": round3(tf.y)]
+            // An animated zoom: seconds into the clip that it moves in and out.
+            if let z = tf.zoom {
+                var zd: [String: Any] = ["mode": z.mode == .zoomIn ? "in" : z.mode == .zoomOut ? "out" : "in_out", "smooth": z.smooth]
+                if z.mode != .zoomOut { zd["in"] = [round3(z.p1), round3(z.p2)] }
+                if z.mode != .zoomIn { zd["out"] = [round3(z.p3), round3(z.p4)] }
+                t["zoom"] = zd
+            }
+            d["transform"] = t
+        }
         if let g = c.grade {
             var gd: [String: Any] = [:]
             if let look = g.look { gd["look"] = g.lookLabel; if look != g.lookLabel { gd["look_file"] = look } }
@@ -844,10 +854,17 @@ extension MCPTools {
             tool("delete_markers", "Delete markers", "Removes markers.", ["marker_ids": ["type": "array", "items": ["type": "string"]], "all": ["type": "boolean", "description": "Remove every marker."]]),
             tool("set_in_out", "Set in and out", "The in/out range: what Loop plays and what export can be limited to (range_only).",
                  ["in": num("Timeline seconds."), "out": num("Timeline seconds."), "clear": ["type": "boolean", "description": "Remove the range."]]),
-            tool("set_transform", "Position and scale", "Moves and scales a video, photo or solid in the frame, for reframing (keeping a subject in a vertical crop, a picture-in-picture). A title's place is set with set_title_style.",
-                 ["clip_id": str("A clip's id."), "scale": num("1 fits the frame; 2 is twice as big (0.05...10)."),
+            tool("set_transform", "Position, scale and zoom", "Moves and scales a video, photo or solid in the frame, for reframing (keeping a subject in a vertical crop, a picture-in-picture). With zoom, it animates over the clip between the full frame and this scale and framing: pushing in on a moment, or following the action in a screen recording. A title's place is set with set_title_style.",
+                 ["clip_id": str("A clip's id."), "scale": num("1 fits the frame; 2 is twice as big (0.05...10). With zoom, how far in it goes (default 2)."),
                   "x": num("Offset of its centre across, as a fraction of the frame's width (0 is centred, 0.5 is the right edge)."),
-                  "y": num("Offset down, as a fraction of the frame's height (0 is centred, positive is lower)."), "reset": ["type": "boolean", "description": "Back to fitted and centred."]],
+                  "y": num("Offset down, as a fraction of the frame's height (0 is centred, positive is lower)."),
+                  "focus_x": num("Instead of x: the point to frame, across the picture (0 left edge, 0.5 centre, 1 right edge). Scaled up, the picture is placed so that point is centred, as near as its edges allow."),
+                  "focus_y": num("Instead of y: the point to frame, down the picture (0 top, 0.5 centre, 1 bottom)."),
+                  "zoom": ["type": "string", "enum": ["in", "in_out", "out", "off"], "description": "Animate: in (full frame to this framing), in_out (in, hold, back out at the end), out (from this framing back to the full frame), or off (stay at this framing)."],
+                  "zoom_seconds": num("How long each move takes (default a quarter of the clip, 0.5 to 2 seconds)."),
+                  "zoom_start": num("Seconds into the clip when the move starts: for in and in_out, when it starts moving in (default 0); for out, when it starts moving out (default so it ends with the clip)."),
+                  "zoom_smooth": ["type": "boolean", "description": "Eased in and out (the default), or false for an even pace."],
+                  "reset": ["type": "boolean", "description": "Back to fitted and centred, with no zoom."]],
                  required: ["clip_id"]),
             tool("set_title_style", "Title style", "A title's words and look. Leave out what shouldn't change.",
                  ["clip_id": str("A title clip's id."), "text": str("The words."), "font": str("A font family installed on this Mac, or \"System\"."),
@@ -1068,6 +1085,40 @@ extension MCPTools {
             if let s = double(args["scale"]) { tf.scale = s.clamped(to: ClipTransform.scaleRange) }
             if let x = double(args["x"]) { tf.x = x.clamped(to: -2...2) }
             if let y = double(args["y"]) { tf.y = y.clamped(to: -2...2) }
+            // Zoom: from the full frame to this framing over the clip (as the Scale field's zoom button).
+            if let z = args["zoom"] as? String {
+                switch z {
+                case "off":
+                    tf.zoom = nil
+                case "in", "in_out", "out":
+                    let mode: ZoomMove.Mode = z == "in" ? .zoomIn : z == "out" ? .zoomOut : .inOut
+                    let length = c.duration
+                    if double(args["scale"]) == nil, tf.scale <= 1.01 { tf.scale = 2 }
+                    var move = ZoomMove.starter(mode, length: length)
+                    let m = double(args["zoom_seconds"]).map { min(max($0, 0.05), mode == .inOut ? length / 2 : length) }
+                        ?? (move.p2 - move.p1 > 0 ? move.p2 - move.p1 : move.p4 - move.p3)
+                    let start = double(args["zoom_start"])
+                    switch mode {
+                    case .zoomIn:
+                        move.p1 = start ?? 0; move.p2 = move.p1 + m; move.p3 = length; move.p4 = length
+                    case .zoomOut:
+                        move.p1 = 0; move.p2 = 0; move.p3 = start ?? (length - m); move.p4 = move.p3 + m
+                    case .inOut:
+                        move.p1 = start ?? 0; move.p2 = move.p1 + m; move.p3 = max(move.p2, length - m); move.p4 = length
+                    }
+                    if let smooth = args["zoom_smooth"] as? Bool { move.smooth = smooth }
+                    move.fit(length: length)
+                    tf.zoom = move
+                default:
+                    throw MCPToolError("zoom is in, in_out, out or off.")
+                }
+            } else if let smooth = args["zoom_smooth"] as? Bool {
+                tf.zoom?.smooth = smooth
+            }
+            // A point to frame: the picture is moved so that point is centred (kept within its edges when it fills).
+            if let fx = double(args["focus_x"]) { tf.x = (-(fx.clamped(to: 0...1) - 0.5) * tf.scale).clamped(to: -2...2) }
+            if let fy = double(args["focus_y"]) { tf.y = (-(fy.clamped(to: 0...1) - 0.5) * tf.scale).clamped(to: -2...2) }
+            if tf.fills { (tf.x, tf.y) = tf.zoomedOffset }
             let set = tf
             try await perform([.change(c.id, "Transform") { q in if let i = q.index(of: c.id) { q.clips[i].transform = set.isIdentity ? nil : set } }], model, who, draft)
             return json(clipsJSON([c.id], now()))

@@ -1095,6 +1095,17 @@ enum LocalMagic {
                 await perform(outcome, model: model, run: run)
                 return
             }
+            // A zoom on a shot ("@selected add a zoom", "push in"): before adding clips, so "add" here isn't a new clip.
+            if LocalZoom.asks(request) {
+                state.busy = false
+                state.status = nil
+                let outcome = LocalZoom.plan(request: typed, pointers: pointers, project: model.project)
+                if CommandLine.arguments.contains("--magic-local") {
+                    FileHandle.standardError.write("MAGIC LOCAL zoom: \(outcome.said) (\(outcome.plan?.tasks.count ?? 0) edits)\n".data(using: .utf8)!)
+                }
+                await perform(outcome, model: model, run: run)
+                return
+            }
             // More than one thing asked ("add @Beach to the end, add captions and a title"): all of them, in turn.
             let parts = LocalCombined.parts(request, project: model.project)
             if parts.count > 1 {

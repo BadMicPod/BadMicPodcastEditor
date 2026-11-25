@@ -255,7 +255,9 @@ final class MagicAgent: ObservableObject {
         clip's own sound right down (set_audio gain_db -60) unless they asked to keep it. set_speed_ramp eases \
         the speed within a clip: a slow-motion moment on the best part of an action (look at the frames to find \
         it), fast-normal-fast on travel shots, or ramping up into a cut and down out of it on the next shot. \
-        Use ramps when asked, or sparingly where they make the moment. For a long video like a \
+        Use ramps when asked, or sparingly where they make the moment. set_transform's zoom pushes in on a \
+        moment or follows the action in a screen recording (focus_x and focus_y say where to look): use it \
+        when asked, or sparingly. For a long video like a \
         vlog, keep what people say whole, and use short titles to mark each part.
         7. Finish. Colour only when they asked for it, or when the footage clearly needs it (look at the frames): \
         shots from different cameras or light that don't match, or shots too dark or washed out. Then one look \
