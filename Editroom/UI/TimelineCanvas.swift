@@ -185,7 +185,12 @@ final class TimelineCanvas: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        // Keep keyboard focus on the timeline rather than the first text field SwiftUI finds.
+        // Keep keyboard focus on the timeline rather than the first text field SwiftUI finds (the Media search):
+        // the window starts on the timeline, so the search never flashes into focus as Editroom opens.
+        if let window {
+            window.initialFirstResponder = self
+            if !(window.firstResponder is NSText) || !window.isVisible { window.makeFirstResponder(self) }
+        }
         for delay in [0.0, 0.4] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self, let window = self.window, !(window.firstResponder is NSText) || delay > 0 else { return }
