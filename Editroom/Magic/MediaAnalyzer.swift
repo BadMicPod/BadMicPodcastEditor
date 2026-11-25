@@ -244,15 +244,21 @@ enum MediaAnalyzer {
         ])
         reader.add(out)
         guard reader.startReading() else { return nil }
-        var all: [Float] = []
-        while let sb = out.copyNextSampleBuffer() {
-            guard let block = CMSampleBufferGetDataBuffer(sb) else { continue }
-            let n = CMBlockBufferGetDataLength(block) / 4
-            var chunk = [Float](repeating: 0, count: n)
-            chunk.withUnsafeMutableBytes { _ = CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: n * 4, destination: $0.baseAddress!) }
-            all.append(contentsOf: chunk)
+        // Decoded off the shared task threads, and given up if the file stops giving sound.
+        return await BlockingWork.run {
+            let stall = StallGuard(reader)
+            defer { stall.stop() }
+            var all: [Float] = []
+            while let sb = out.copyNextSampleBuffer() {
+                stall.tick()
+                guard let block = CMSampleBufferGetDataBuffer(sb) else { continue }
+                let n = CMBlockBufferGetDataLength(block) / 4
+                var chunk = [Float](repeating: 0, count: n)
+                chunk.withUnsafeMutableBytes { _ = CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: n * 4, destination: $0.baseAddress!) }
+                all.append(contentsOf: chunk)
+            }
+            return all.isEmpty || reader.status == .cancelled ? nil : all
         }
-        return all.isEmpty ? nil : all
     }
 
     /// Finds the tempo and beats: an onset envelope from spectral flux, tempo by autocorrelation

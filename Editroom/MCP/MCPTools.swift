@@ -45,8 +45,8 @@ enum MCPTools {
     static var definitions: [[String: Any]] {
         [
             tool("get_project", "Get project", "The sequence (size, frame rate, length), tracks, and every clip with its id, track, times, source, grade, sound and transition.", readOnly: true),
-            tool("list_media", "List media", "Everything in the library: id, name, kind (video, audio, image), length, size, frame rate, what it shows, whether people talk in it, and notes saved from looking at it before.", readOnly: true),
-            tool("import_media", "Import media", "Adds files to the library.", ["paths": ["type": "array", "items": ["type": "string"], "description": "Absolute file paths."]], required: ["paths"]),
+            tool("list_media", "List media", "Everything in the library: id, name, kind (video, audio, image), the folder it's in, length, size, frame rate, what it shows, whether people talk in it, and notes saved from looking at it before.", readOnly: true),
+            tool("import_media", "Import media", "Adds files to the library. A folder brings in everything in it (and in folders inside it) and stays linked: files added to it later come in too, and list_media gives each item's folder.", ["paths": ["type": "array", "items": ["type": "string"], "description": "Absolute paths of files or folders."]], required: ["paths"]),
             tool("download_media", "Download media", "Downloads one music or sound file you found online and adds it to the library, ready for add_clip. Give the direct link to the audio file (an .mp3, .m4a or .wav), not a web page. Only for music that's free to use; say where you found it and what its licence allows, which is noted beside the file.",
                  ["url": str("https link to the audio file itself."), "name": str("What to call it, like the track and artist."),
                   "source_page": str("The page you found it on."), "licence": str("What the licence says, for example \"Pixabay Content License: free to use, no attribution required\".")],
@@ -138,7 +138,13 @@ enum MCPTools {
             var counts: [String: Int] = [:]
             for t in tagged { for name in Set(t.tags.map(\.name)) { counts[name, default: 0] += 1 } }
             let common = tagged.count >= 4 ? Set(counts.filter { Double($0.value) >= Double(tagged.count) * 0.6 }.keys) : []
-            return json(p.assets.map { assetJSON($0, media: model.media, common: common) })
+            let tree = MediaTree(p)
+            return json(p.assets.map { a in
+                var d = assetJSON(a, media: model.media, common: common)
+                // The folder it's in, for media brought in as a folder ("B-roll / Drone").
+                if let at = tree.folder(of: a) { d["folder"] = tree.label(at) }
+                return d
+            })
 
         case "list_looks":
             return json(BuiltInLook.all.map(\.name))

@@ -46,7 +46,7 @@ struct TimelineToolbar: View {
             .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.bg))
             TextAction(title: "Split", help: "Split at Playhead (⌘K)") { model.splitAtPlayhead() }
             TextAction(title: "Delete", help: "Delete (⌫)") { model.deleteSelected() }
-                .disabled(model.selection.isEmpty && model.mediaSelection.isEmpty)
+                .disabled(model.selection.isEmpty && model.mediaSelection.isEmpty && model.folderSelection.isEmpty)
             if model.project.inPoint != nil || model.project.outPoint != nil {
                 RangeReadout(model: model).padding(.leading, 4)
             }

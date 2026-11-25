@@ -242,6 +242,8 @@ struct MediaAsset: Identifiable, Codable, Hashable {
     var height: Int
     var fps: Double
     var hasAudio: Bool
+    /// Finds the file again after it's renamed or moved on its drive.
+    var bookmark: Data?
 
     var url: URL { URL(fileURLWithPath: playablePath ?? path) }
 }
@@ -257,6 +259,12 @@ extension Project {
             let parts = Array(repeating: "..", count: base.count - shared) + file[shared...]
             assets[i].relativePath = parts.joined(separator: "/")
         }
+        for i in (folders ?? []).indices {
+            let dir = URL(fileURLWithPath: folders![i].path).standardizedFileURL.pathComponents
+            var shared = 0
+            while shared < base.count, shared < dir.count, base[shared] == dir[shared] { shared += 1 }
+            folders![i].relativePath = (Array(repeating: "..", count: base.count - shared) + dir[shared...]).joined(separator: "/")
+        }
     }
 
     /// Points assets whose file has gone from its saved place at the same file relative to the
@@ -264,6 +272,12 @@ extension Project {
     @discardableResult
     mutating func resolveMovedMedia(projectDir: URL) -> Int {
         var found = 0
+        // A folder brought in whole, moved along with the project: everything in it moves with it.
+        for f in folders ?? [] where !FileManager.default.fileExists(atPath: f.path) {
+            guard let rel = f.relativePath else { continue }
+            let candidate = projectDir.appendingPathComponent(rel).standardizedFileURL.path
+            if MediaFolder.isFolder(candidate) { movePaths(from: f.path, to: candidate) }
+        }
         for i in assets.indices where !FileManager.default.fileExists(atPath: assets[i].path) {
             guard let rel = assets[i].relativePath else { continue }
             let candidate = projectDir.appendingPathComponent(rel).standardizedFileURL.path
@@ -309,6 +323,11 @@ struct Project: Codable, Equatable {
     var captions: CaptionTrack?
     /// Words fixed or left out on captions, by file.
     var captionFixes: [UUID: [CaptionFix]]?
+    /// Folders on disk brought in whole, which the Media panel mirrors (see MediaFolders.swift).
+    var folders: [MediaFolder]?
+    /// Files (or whole folders) in those folders taken out of the project, so they don't come back when
+    /// the folder is next looked at.
+    var hiddenMedia: [String]?
 }
 
 struct Marker: Codable, Hashable, Identifiable {

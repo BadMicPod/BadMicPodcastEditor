@@ -836,6 +836,85 @@ enum SelfTest {
             log("RIPPLE TRIM \(good ? "OK" : "FAIL") q=\(q) [\(qShape)] w=\(w) selected=\(sel) undo=\(undone)")
             ok = ok && good
         }
+        // Folders: a folder brought in whole is mirrored in Media and followed on disk: files added later come in,
+        // a file renamed or the folder moved is followed (same items, nothing to locate), a file taken out stays out
+        // (Undo brings it back), one put in the Trash isn't followed there, and Delete Folder takes it all out.
+        do {
+            let fm = FileManager.default
+            let base = outDir.appendingPathComponent("folders-test")
+            try? fm.removeItem(at: base)
+            let root = base.appendingPathComponent("Shoot")
+            let drone = root.appendingPathComponent("B-roll/Drone")
+            try? fm.createDirectory(at: drone, withIntermediateDirectories: true)
+            func put(_ name: String, _ to: String) { try? fm.copyItem(at: mediaDir.appendingPathComponent(name), to: root.appendingPathComponent(to)) }
+            put("a_clip.mp4", "interview.mp4"); put("c_clip.mp4", "B-roll/street.mp4"); put("d_clip.mp4", "B-roll/Drone/air.mp4")
+            try? "notes".write(to: root.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
+            let m = EditorModel()
+            m.load(Project(), url: nil)
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            func settle() async { for _ in 0..<100 where m.importCount > 0 { try? await Task.sleep(nanoseconds: 100_000_000) } }
+            let rootPath = root.standardizedFileURL.path
+            let imported: [MediaAsset] = await withCheckedContinuation { c in m.importFiles([root], offerMatch: false) { c.resume(returning: $0) } }
+            var tree = MediaTree(m.project)
+            let importOK = imported.count == 3 && m.project.folders?.count == 1 && tree.folders(in: nil) == [rootPath]
+                && tree.folders(in: rootPath) == [rootPath + "/B-roll"] && tree.assets(in: rootPath, of: m.project.assets).count == 1
+                && tree.count(under: rootPath) == 3 && tree.label(rootPath + "/B-roll/Drone") == "Shoot / B-roll / Drone"
+                && tree.assets(in: nil, of: m.project.assets).isEmpty
+            // A file added on disk comes in.
+            put("e_clip.mp4", "B-roll/new.mp4")
+            await m.syncFolders(); await settle()
+            let added = m.project.assets.first { $0.path.hasSuffix("/B-roll/new.mp4") }
+            let addOK = m.project.assets.count == 4 && added != nil
+            guard let added, let street = m.project.assets.first(where: { $0.path.hasSuffix("street.mp4") }) else {
+                log("FOLDERS FAIL import=\(importOK) added=false")
+                ok = false
+                return
+            }
+            // Renamed in Finder: the same item, with the new name.
+            try? fm.moveItem(at: root.appendingPathComponent("B-roll/street.mp4"), to: root.appendingPathComponent("B-roll/street-2.mp4"))
+            await m.syncFolders(); await settle()
+            let renamed = m.project.asset(street.id)
+            let renameOK = renamed?.path.hasSuffix("/B-roll/street-2.mp4") == true && renamed?.name == "street-2" && m.project.assets.count == 4
+            // Taken out of the project: stays out when the folder is looked at again; Undo brings it back.
+            m.removeAssets([added.id])
+            await m.syncFolders(); await settle()
+            let hiddenOK = m.project.assets.count == 3 && m.project.folders?.count == 1
+            m.undo()
+            let undoOK = m.project.assets.count == 4 && m.project.folders?.count == 1
+            // The whole folder renamed: everything follows it.
+            let moved = base.appendingPathComponent("Shoot Moved")
+            try? fm.moveItem(at: root, to: moved)
+            await m.syncFolders(); await settle()
+            let movedPath = moved.standardizedFileURL.path
+            tree = MediaTree(m.project)
+            let folderOK = m.project.folders?.first?.path == movedPath && m.project.assets.count == 4
+                && m.project.assets.allSatisfy { $0.path.hasPrefix(movedPath + "/") && fm.fileExists(atPath: $0.path) }
+                && tree.count(under: movedPath) == 4 && m.missingAssets.isEmpty
+            // In the Trash: not followed there (it's missing, as a deleted file is).
+            let airURL = moved.appendingPathComponent("B-roll/Drone/air.mp4").standardizedFileURL
+            let air = m.project.assets.first { $0.path.hasSuffix("air.mp4") } ?? added
+            var trashed: NSURL?
+            try? fm.trashItem(at: airURL, resultingItemURL: &trashed)
+            await m.syncFolders(); await settle()
+            let trashOK = m.project.asset(air.id)?.path == airURL.path
+            if let t = trashed as URL? { try? fm.removeItem(at: t) }
+            // Picked with an item and deleted together (Delete key): the folder's items and the item go.
+            let picks = m.project.assets.count
+            let interview = m.project.assets.first { $0.path.hasSuffix("/interview.mp4") }
+            m.folderSelection = [movedPath + "/B-roll/Drone"]
+            m.mediaSelection = interview.map { [$0.id] } ?? []
+            m.deleteSelected()
+            let pickedOK = m.project.assets.count == picks - 2 && m.folderSelection.isEmpty && m.mediaSelection.isEmpty
+                && m.project.isHidden(movedPath + "/B-roll/Drone/air.mp4")
+            m.undo()
+            // Delete Folder: all of it goes; the files stay.
+            m.removeFolder(movedPath)
+            let deleteOK = m.project.assets.isEmpty && m.project.folders == nil && fm.fileExists(atPath: movedPath + "/interview.mp4")
+            let good = importOK && addOK && renameOK && hiddenOK && undoOK && folderOK && trashOK && pickedOK && deleteOK
+            log("FOLDERS \(good ? "OK" : "FAIL") import=\(importOK) added=\(addOK) rename=\(renameOK) hidden=\(hiddenOK) undo=\(undoOK) moved=\(folderOK) trash=\(trashOK) picked=\(pickedOK) delete=\(deleteOK)")
+            ok = ok && good
+            try? fm.removeItem(at: base)
+        }
         // Zoom on Scale: in, in and out, out; kept on its picture through trims and splits (an in-and-out cut
         // in the middle leaves an in and an out); never past the picture's edge; drawn zoomed where it's framed.
         do {

@@ -67,7 +67,18 @@ final class EditorModel: ObservableObject {
     /// Items picked in the Media panel (click, ⇧-click for a range, ⌘-click to add or take away).
     /// Delete removes these while there are any; clicking the timeline clears them.
     @Published var mediaSelection: Set<UUID> = []
-    private var mediaAnchor: UUID?
+    /// Folders picked in the Media panel, by path, alongside items: Delete takes them out too.
+    @Published var folderSelection: Set<String> = []
+    private var mediaAnchor: MediaPick?
+    /// The folder open in the Media panel (its path); nil for the top.
+    @Published var mediaFolder: String?
+    /// Linked folders whose files are coming in, kept while they're still empty.
+    private var importingFolders = Set<UUID>()
+    /// Files being imported right now, so the same file isn't brought in twice at once.
+    private var pendingImports = Set<String>()
+    private var syncingFolders = false
+    /// Files in linked folders that couldn't be imported, left alone from then on.
+    private var unreadable = Set<String>()
     @Published var tool: Tool = .move
     @Published var snapping = true
     /// Skimming: hovering over the timeline shows that frame in the viewer without moving the playhead.
@@ -173,7 +184,10 @@ final class EditorModel: ObservableObject {
         }
         // Back from another app: any media saved over there is opened again.
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reloadChangedMedia() }
+            MainActor.assumeIsolated {
+                self?.reloadChangedMedia()
+                Task { await self?.syncFolders() }
+            }
         }
         // A transcript ready: captions waiting for it appear.
         transcriptWatch = Transcripts.shared.$states.dropFirst().sink { [weak self] _ in
@@ -786,10 +800,21 @@ final class EditorModel: ObservableObject {
         redoKnown.append(Set(prev.assets.map(\.id)))
         // The library isn't undone (imports and relinks stay), except that items a step deleted come back.
         prev.assets = Self.restoring(prev.assets, into: project.assets)
+        Self.keepFolders(&prev, from: project, importing: importingFolders)
         // Magic's prompt history isn't undone either.
         prev.magicHistory = project.magicHistory
         project = prev
         didChange()
+    }
+
+    /// Linked folders follow the library: those of either version that still hold something are kept.
+    private static func keepFolders(_ p: inout Project, from now: Project, importing: Set<UUID>) {
+        var folders = now.folders ?? []
+        for f in p.folders ?? [] where !folders.contains(where: { $0.id == f.id }) { folders.append(f) }
+        p.folders = folders.isEmpty ? nil : folders
+        let hidden = Array(Set((p.hiddenMedia ?? []) + (now.hiddenMedia ?? [])))
+        p.hiddenMedia = hidden.isEmpty ? nil : hidden
+        p.pruneFolders(keeping: importing)
     }
 
     /// The library now, with any items from `earlier` that are missing put back where they were.
@@ -807,6 +832,7 @@ final class EditorModel: ObservableObject {
         // Items the step deleted go again; everything else in the library stays as it is now.
         let deleted = known.subtracting(next.assets.map(\.id))
         next.assets = project.assets.filter { !deleted.contains($0.id) }
+        Self.keepFolders(&next, from: project, importing: importingFolders)
         next.magicHistory = project.magicHistory
         project = next
         didChange()
@@ -1245,18 +1271,12 @@ final class EditorModel: ObservableObject {
 
     // MARK: Import
 
-    static var importTypes: [UTType] {
-        var types: [UTType] = [.movie, .video, .audio, .image, .audiovisualContent]
-        for ext in ["mkv", "webm", "avi", "flv", "wmv", "mts", "m2ts", "ts", "mxf", "ogv", "ogg", "opus", "flac", "3gp", "mpg", "mpeg", "vob", "f4v"] {
-            if let t = UTType(filenameExtension: ext) { types.append(t) }
-        }
-        return types
-    }
+    static var importTypes: [UTType] { MediaFolder.types }
 
     func showImportPanel() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = true
         panel.allowedContentTypes = Self.importTypes
         panel.prompt = "Import"
         guard panel.runModal() == .OK else { return }
@@ -1264,32 +1284,193 @@ final class EditorModel: ObservableObject {
     }
 
     /// `offerMatch` asks about matching the sequence to the first video; off for imports by an agent.
+    /// A folder brings in everything in it (and in the folders inside it) and stays linked to it: the Media
+    /// panel shows it as a folder, and files added to it later come in too.
     func importFiles(_ urls: [URL], offerMatch offer: Bool = true, then completion: (([MediaAsset]) -> Void)? = nil) {
         guard !urls.isEmpty else { return }
-        importCount += urls.count
+        importCount += 1
         Task {
+            var files: [String] = []
+            var linked: [MediaFolder] = []
+            var opened: String?
+            for url in urls {
+                let path = url.standardizedFileURL.path
+                let isPackage = (try? url.resourceValues(forKeys: [.isPackageKey]))?.isPackage == true
+                if MediaFolder.isFolder(path), !isPackage {
+                    let (folder, nested) = linkFolder(path)
+                    if let folder { linked.append(folder); importingFolders.insert(folder.id) }
+                    if nested { opened = path }
+                    files += await Task.detached { MediaFolder.mediaFiles(in: path) }.value.filter { !project.isHidden($0) }
+                } else {
+                    // Brought in by hand: no longer left out of its folder.
+                    project.hiddenMedia?.removeAll { MediaFolder.contains($0, path) }
+                    files.append(path)
+                }
+            }
+            importCount += files.count
+            importCount -= 1
             var imported: [MediaAsset] = []
             var failed: [String] = []
-            for url in urls {
-                if let existing = project.assets.first(where: { $0.path == url.path }) {
+            for path in files {
+                defer { importCount -= 1 }
+                if let existing = project.assets.first(where: { $0.path == path }) {
                     imported.append(existing)
-                } else if let asset = await media.importFile(url) {
+                    continue
+                }
+                guard !pendingImports.contains(path) else { continue }
+                pendingImports.insert(path)
+                defer { pendingImports.remove(path) }
+                if var asset = await media.importFile(URL(fileURLWithPath: path)) {
+                    asset.bookmark = Bookmark.make(path)
                     project.assets.append(asset)
                     isDirty = true
                     imported.append(asset)
                     if offer { offerMatch(asset) }
                 } else {
-                    failed.append(url.lastPathComponent)
+                    // Not tried again when its folder is next looked at.
+                    unreadable.insert(path)
+                    failed.append(URL(fileURLWithPath: path).lastPathComponent)
                 }
-                importCount -= 1
             }
+            for f in linked { importingFolders.remove(f.id) }
+            let before = project.folders
+            project.pruneFolders(keeping: importingFolders)
+            for f in linked where project.folders?.contains(where: { $0.id == f.id }) != true {
+                importError = "There's no media in “\(f.name)”."
+            }
+            if project.folders != before { objectWillChange.send() }
             if !failed.isEmpty {
                 let hint = FFmpeg.binary == nil ? " Install ffmpeg to import formats macOS can't decode." : ""
-                importError = "Couldn't import " + failed.joined(separator: ", ") + "." + hint
+                let shown = failed.prefix(8).joined(separator: ", ") + (failed.count > 8 ? " and \(failed.count - 8) more" : "")
+                importError = "Couldn't import " + shown + "." + hint
+            }
+            // One thing brought in by hand: shown where it sits in Media.
+            if offer, urls.count == 1 {
+                let tree = MediaTree(project)
+                if let opened, tree.exists(opened) {
+                    mediaFolder = opened
+                } else if linked.isEmpty, let a = imported.first {
+                    mediaFolder = tree.folder(of: a)
+                    mediaSelection = [a.id]
+                    folderSelection = []
+                    mediaAnchor = .asset(a.id)
+                }
             }
             completion?(imported)
         }
     }
+
+    /// Starts following a folder brought in whole. Returns the new linked folder, or nil when it's already
+    /// inside one (`nested`). Linked folders inside it become part of it.
+    private func linkFolder(_ path: String) -> (MediaFolder?, nested: Bool) {
+        // Everything left out of it comes back: it was brought in again on purpose.
+        project.hiddenMedia?.removeAll { MediaFolder.contains(path, $0) || MediaFolder.contains($0, path) }
+        if project.hiddenMedia?.isEmpty == true { project.hiddenMedia = nil }
+        if project.linkedFolder(holding: path) != nil { return (nil, true) }
+        let folder = MediaFolder(path: path, bookmark: Bookmark.make(path))
+        var list = (project.folders ?? []).filter { !MediaFolder.contains(path, $0.path) }
+        list.append(folder)
+        project.folders = list
+        isDirty = true
+        return (folder, false)
+    }
+
+    // MARK: Folders on disk
+
+    /// Brings the Media panel up to date with the disk: linked folders and files that were renamed or
+    /// moved on their drive are followed, and files added to linked folders come in. Run when Editroom
+    /// comes back to the front, when a project opens, and from Reload Folder from Disk.
+    func syncFolders() async {
+        guard !syncingFolders else { return }
+        syncingFolders = true
+        defer { syncingFolders = false }
+        var p = project
+        var moved = Set<UUID>()
+        for f in p.folders ?? [] where !MediaFolder.isFolder(f.path) {
+            guard let now = Bookmark.resolve(f.bookmark), MediaFolder.isFolder(now) else { continue }
+            moved.formUnion(p.assets.filter { MediaFolder.contains(f.path, $0.path) }.map(\.id))
+            p.movePaths(from: f.path, to: now)
+        }
+        for i in p.assets.indices where !FileManager.default.fileExists(atPath: p.assets[i].path) {
+            guard let now = Bookmark.resolve(p.assets[i].bookmark), now != p.assets[i].path else { continue }
+            // Renamed: the new name shows, unless it was given a name of its own.
+            let wasNamed = URL(fileURLWithPath: p.assets[i].path).deletingPathExtension().lastPathComponent
+            if p.assets[i].name == wasNamed { p.assets[i].name = URL(fileURLWithPath: now).deletingPathExtension().lastPathComponent }
+            p.assets[i].path = now
+            moved.insert(p.assets[i].id)
+        }
+        if p.assets != project.assets || p.folders != project.folders || p.hiddenMedia != project.hiddenMedia {
+            commitLive()
+            project.assets = p.assets
+            project.folders = p.folders
+            project.hiddenMedia = p.hiddenMedia
+            isDirty = true
+            if let open = mediaFolder, !MediaTree(project).exists(open) { mediaFolder = nil }
+        }
+        if !moved.isEmpty { await reopenMedia(moved) }
+        var added: [URL] = []
+        for f in project.folders ?? [] where MediaFolder.isFolder(f.path) {
+            let path = f.path
+            let files = await Task.detached { MediaFolder.mediaFiles(in: path) }.value
+            let have = Set(project.assets.map(\.path))
+            added += files.filter { !have.contains($0) && !project.isHidden($0) && !pendingImports.contains($0) && !unreadable.contains($0) }
+                .map { URL(fileURLWithPath: $0) }
+        }
+        if !added.isEmpty { importFiles(added, offerMatch: false) }
+    }
+
+    /// Opens items again at their new place on disk (after a rename or a move).
+    private func reopenMedia(_ ids: Set<UUID>) async {
+        for id in ids {
+            guard let old = project.asset(id), FileManager.default.fileExists(atPath: old.path),
+                  var fresh = await media.importFile(URL(fileURLWithPath: old.path), replacing: old),
+                  let i = project.assets.firstIndex(where: { $0.id == id }) else { continue }
+            fresh.bookmark = Bookmark.make(fresh.path)
+            fresh.relativePath = old.relativePath
+            project.assets[i] = fresh
+        }
+        sourcePreview.clear()
+        objectWillChange.send()
+        setNeedsRebuild()
+    }
+
+    /// Asks where a linked folder that's gone missing is now; everything in it is found there.
+    func locateFolder(_ id: UUID) {
+        guard let f = project.folders?.first(where: { $0.id == id }) else { return }
+        let panel = NSOpenPanel()
+        panel.message = "Locate the folder “\(f.name)”"
+        panel.prompt = "Locate"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task {
+            await relinkFolder(f.path, to: url.standardizedFileURL.path)
+            if !missingAssets.isEmpty { offerToLocateMissing() }
+        }
+    }
+
+    /// Points a linked folder, and everything in it, at where it is now.
+    private func relinkFolder(_ old: String, to new: String) async {
+        commitLive()
+        let ids = Set(project.assets.filter { MediaFolder.contains(old, $0.path) }.map(\.id))
+        project.movePaths(from: old, to: new)
+        if let i = project.folders?.firstIndex(where: { $0.path == new }) { project.folders?[i].bookmark = Bookmark.make(new) }
+        isDirty = true
+        if let open = mediaFolder, MediaFolder.contains(old, open) { mediaFolder = new + open.dropFirst(old.count) }
+        await reopenMedia(ids)
+        await syncFolders()
+    }
+
+    /// Reload Folder from Disk: follows renames and moves, brings in new files, and opens everything in the
+    /// folder again as it is on disk now.
+    func reloadFolder(_ folder: String) async {
+        await syncFolders()
+        let ids = Set(MediaTree(project).assets(under: folder, of: project.assets).map(\.id))
+        await reloadMedia(ids)
+    }
+
+    /// Takes a folder in the Media panel out of the project, with everything in it (the files stay on disk).
+    func removeFolder(_ folder: String) { removeAssets([], folders: [folder]) }
 
     /// Asked once, on the first video brought into a project: adopt its frame size and rate?
     private func offerMatch(_ asset: MediaAsset) {
@@ -1349,17 +1530,20 @@ final class EditorModel: ObservableObject {
     }
 
     /// A click on a Media panel item. `order` is the items as shown, for ⇧-click ranges.
-    func clickMedia(_ id: UUID, in order: [UUID]) {
+    func clickMedia(_ id: MediaPick, in order: [MediaPick]) {
         let flags = NSEvent.modifierFlags
+        var picked = Set(mediaSelection.map(MediaPick.asset)).union(folderSelection.map(MediaPick.folder))
         if flags.contains(.shift), let anchor = mediaAnchor, let a = order.firstIndex(of: anchor), let b = order.firstIndex(of: id) {
-            mediaSelection = Set(order[min(a, b)...max(a, b)])
+            picked = Set(order[min(a, b)...max(a, b)])
         } else if flags.contains(.command) {
-            if mediaSelection.contains(id) { mediaSelection.remove(id) } else { mediaSelection.insert(id) }
+            if picked.contains(id) { picked.remove(id) } else { picked.insert(id) }
             mediaAnchor = id
         } else {
-            mediaSelection = [id]
+            picked = [id]
             mediaAnchor = id
         }
+        mediaSelection = Set(picked.compactMap { if case .asset(let a) = $0 { a } else { nil } })
+        folderSelection = Set(picked.compactMap { if case .folder(let f) = $0 { f } else { nil } })
         // One thing selected at a time: Delete then means these.
         selection = []
         // Out of the search field, so Delete reaches the editor rather than the text.
@@ -1370,31 +1554,73 @@ final class EditorModel: ObservableObject {
 
     /// Takes items out of the project (the files stay where they are), with any clips that use them.
     /// One undo brings them all back. Asks first when that would take clips off the timeline.
-    func removeAssets(_ ids: Set<UUID>) {
-        guard !ids.isEmpty else { return }
+    /// `folders`: whole folders in the Media panel going too, with everything in them.
+    func removeAssets(_ picked: Set<UUID>, folders: Set<String> = []) {
+        let tree = MediaTree(project)
+        let inFolders = Set(folders.flatMap { tree.assets(under: $0, of: project.assets).map(\.id) })
+        // Items picked on their own (not in a folder that's going).
+        let loose = picked.subtracting(inFolders)
+        let ids = loose.union(inFolders)
+        if ids.isEmpty {
+            // Folders with nothing in them (missing ones, say): just let go.
+            guard !folders.isEmpty else { return }
+            project.folders?.removeAll { folders.contains($0.path) }
+            project.pruneFolders(keeping: importingFolders)
+            isDirty = true
+            folderSelection.subtract(folders)
+            objectWillChange.send()
+            return
+        }
         let used = project.clips.filter { $0.assetID.map(ids.contains) == true }
         // A video and its linked sound count as one clip, as they look on the timeline.
         let clipCount = Set(used.map { $0.linkID ?? $0.id }).count
         if !used.isEmpty {
-            let names = project.assets.filter { ids.contains($0.id) }.map(\.name)
+            let names = project.assets.filter { loose.contains($0.id) }.map(\.name) + folders.map { tree.name($0) }
             let alert = EditroomAlert()
-            alert.messageText = names.count == 1 ? "Delete “\(names[0])”?" : "Delete \(names.count) items?"
+            alert.messageText = names.count == 1
+                ? (folders.isEmpty ? "Delete “\(names[0])”?" : "Delete the folder “\(names[0])”?")
+                : "Delete \(names.count) items?"
             alert.informativeText = "\(clipCount) clip\(clipCount == 1 ? " on the timeline uses" : "s on the timeline use") \(names.count == 1 ? "it" : "them") and will be deleted too. The files stay on your Mac, and Undo brings everything back."
             alert.addButton(withTitle: "Delete")
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
+        let importing = importingFolders
         mutate { p in
+            // Files in a linked folder are left out of it from now on, so they don't come back.
+            var hidden = p.hiddenMedia ?? []
+            for folder in folders {
+                if p.folders?.contains(where: { $0.path == folder }) == true {
+                    p.folders?.removeAll { $0.path == folder }
+                } else {
+                    hidden.append(folder)
+                }
+            }
+            hidden += p.assets.filter { loose.contains($0.id) && p.linkedFolder(holding: $0.path) != nil }.map(\.path)
+            p.hiddenMedia = hidden.isEmpty ? nil : hidden
             p.clips.removeAll { $0.assetID.map(ids.contains) == true }
             p.assets.removeAll { ids.contains($0.id) }
+            p.pruneFolders(keeping: importing)
         }
         mediaSelection.subtract(ids)
+        folderSelection = folderSelection.filter { f in !folders.contains { MediaFolder.contains($0, f) } }
+        if let open = mediaFolder, !MediaTree(project).exists(open) {
+            // Back up to the nearest folder that's still there.
+            let tree = MediaTree(project)
+            var up: String? = open
+            while let u = up, !tree.exists(u) { up = tree.root(of: u) == nil ? nil : (u as NSString).deletingLastPathComponent }
+            mediaFolder = up
+        }
         selection = selection.filter { project.clip($0) != nil }
     }
 
     /// Delete: the picked Media panel items if there are any, otherwise what's selected on the timeline.
     func deleteSelected(ripple: Bool = false) {
-        if !mediaSelection.isEmpty { removeAssets(mediaSelection) } else { deleteSelection(ripple: ripple) }
+        if !mediaSelection.isEmpty || !folderSelection.isEmpty {
+            removeAssets(mediaSelection, folders: folderSelection)
+        } else {
+            deleteSelection(ripple: ripple)
+        }
     }
 
     // MARK: Adding clips
@@ -1972,7 +2198,7 @@ final class EditorModel: ObservableObject {
     var canDuplicate: Bool { !selectedForCopy.isEmpty }
     var canReverse: Bool { project.clips.contains { selection.contains($0.id) && $0.playsSource && !project.isLocked($0.trackID) } }
     var canFreezeFrame: Bool { freezeTarget != nil }
-    var canDeleteSelected: Bool { !selection.isEmpty || !mediaSelection.isEmpty || !captionSelection.isEmpty }
+    var canDeleteSelected: Bool { !selection.isEmpty || !mediaSelection.isEmpty || !folderSelection.isEmpty || !captionSelection.isEmpty }
     /// Picked clips with sound to caption (or captions to remove).
     var canCaption: Bool { Transcripts.available && !project.captionTargets(selection).isEmpty }
 
@@ -2179,9 +2405,16 @@ final class EditorModel: ObservableObject {
         redoStack.removeAll()
         redoKnown.removeAll()
         selection = []
+        mediaSelection = []
+        folderSelection = []
+        mediaFolder = nil
         playhead = 0
         // Its files are loading from here: drawn as clips, not as missing, until they're found or aren't.
         media.expect(p.assets)
+        // Older projects: bookmarks for files and folders that are where they were.
+        var p = p
+        for i in p.assets.indices where p.assets[i].bookmark == nil { p.assets[i].bookmark = Bookmark.make(p.assets[i].path) }
+        for i in (p.folders ?? []).indices where p.folders![i].bookmark == nil { p.folders![i].bookmark = Bookmark.make(p.folders![i].path) }
         project = p
         fileURL = url
         isDirty = false
@@ -2195,7 +2428,8 @@ final class EditorModel: ObservableObject {
             }
             self.objectWillChange.send()
             self.setNeedsRebuild()
-            if offerLocate { self.offerToLocateMissing() }
+            await self.syncFolders()
+            if offerLocate, !self.missingAssets.isEmpty { self.offerToLocateMissing() }
         }
     }
 
@@ -2214,13 +2448,25 @@ final class EditorModel: ObservableObject {
               let fresh = await media.importFile(url, replacing: old),
               let i = project.assets.firstIndex(where: { $0.id == id }) else { return false }
         commitLive()
-        project.assets[i] = fresh
+        var found = fresh
+        found.bookmark = Bookmark.make(fresh.path)
+        project.assets[i] = found
+        // In a linked folder that's gone: the folder is where this file is now, if it's the same place in it.
+        if let root = project.linkedFolder(holding: old.path), !MediaFolder.isFolder(root.path) {
+            let inside = String(old.path.dropFirst(root.path.count))
+            let now = url.standardizedFileURL.path
+            if now.hasSuffix(inside) {
+                let moved = String(now.dropLast(inside.count))
+                if MediaFolder.isFolder(moved) { await relinkFolder(root.path, to: moved) }
+            }
+        }
         let folder = url.deletingLastPathComponent()
         for other in missingAssets where other.id != id {
             let candidate = folder.appendingPathComponent(URL(fileURLWithPath: other.path).lastPathComponent)
             guard FileManager.default.fileExists(atPath: candidate.path),
-                  let found = await media.importFile(candidate, replacing: other),
+                  var found = await media.importFile(candidate, replacing: other),
                   let j = project.assets.firstIndex(where: { $0.id == other.id }) else { continue }
+            found.bookmark = Bookmark.make(found.path)
             project.assets[j] = found
         }
         // Undo snapshots still hold the old paths, so they can't be kept.
@@ -2313,6 +2559,17 @@ final class EditorModel: ObservableObject {
     private func offerToLocateMissing() {
         let missing = missingAssets
         guard let first = missing.first else { return }
+        // A linked folder that's gone: located once, for everything in it.
+        if let f = project.folders?.first(where: { f in !MediaFolder.isFolder(f.path) && missing.contains { MediaFolder.contains(f.path, $0.path) } }) {
+            let n = missing.filter { MediaFolder.contains(f.path, $0.path) }.count
+            let alert = EditroomAlert()
+            alert.messageText = "The folder “\(f.name)” is missing"
+            alert.informativeText = "\(n) item\(n == 1 ? " in it can't" : "s in it can't") be found. Locate the folder and everything in it is found again."
+            alert.addButton(withTitle: "Locate…")
+            alert.addButton(withTitle: "Not Now")
+            if alert.runModal() == .alertFirstButtonReturn { locateFolder(f.id) }
+            return
+        }
         let names = missing.prefix(6).map { URL(fileURLWithPath: $0.path).lastPathComponent }
         let alert = EditroomAlert()
         alert.messageText = missing.count == 1 ? "1 media file is missing" : "\(missing.count) media files are missing"

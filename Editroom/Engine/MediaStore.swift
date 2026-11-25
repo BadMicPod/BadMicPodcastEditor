@@ -534,7 +534,7 @@ final class MediaStore: ObservableObject {
             let cache = WaveformReader.cacheURL(for: asset.url)
             var wf = WaveformReader.load(cache)
             if wf == nil {
-                wf = WaveformReader.read(asset: asset, track: track)
+                wf = await BlockingWork.run { WaveformReader.read(asset: asset, track: track) }
                 if let wf { WaveformReader.save(wf, to: cache) }
             }
             await MainActor.run { [weak self] in
@@ -614,6 +614,8 @@ enum WaveformReader {
         guard reader.canAdd(output) else { return nil }
         reader.add(output)
         guard reader.startReading() else { return nil }
+        let stall = StallGuard(reader)
+        defer { stall.stop() }
 
         var peaks: [Float] = [], left: [Float] = [], right: [Float] = [], rms: [Float] = []
         // The stretch being filled, which can run across decoded buffers.
@@ -622,6 +624,7 @@ enum WaveformReader {
         var loudest = [Float]()
 
         while let sample = output.copyNextSampleBuffer() {
+            stall.tick()
             guard let block = CMSampleBufferGetDataBuffer(sample),
                   let fmt = CMSampleBufferGetFormatDescription(sample),
                   let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(fmt)?.pointee else { continue }
@@ -668,7 +671,8 @@ enum WaveformReader {
                 }
             }
         }
-        guard !peaks.isEmpty else { return nil }
+        // A read cut short (its file moved mid-read) isn't kept: it's made again next time.
+        guard !peaks.isEmpty, reader.status == .completed else { return nil }
         return Waveform(peaksPerSecond: peaksPerSecond, peaks: peaks, left: left, right: right, rms: rms)
     }
 }
