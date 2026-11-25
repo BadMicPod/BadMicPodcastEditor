@@ -10,6 +10,8 @@ struct LibraryView: View {
     @AppStorage(MediaLayout.key) private var layout = MediaLayout.thumbnails
     /// How wide the panel is, so a list's pictures can grow a little when it's widened.
     @State private var panelWidth: CGFloat = 252
+    /// How tall the panel is, so a click anywhere below the items (not just between them) clears what's picked.
+    @State private var panelHeight: CGFloat = 400
 
     /// 64 points wide at the usual width, up to 104 as the panel is widened.
     private var thumbWidth: CGFloat { min(104, max(64, 64 + (panelWidth - 252) * 0.21)) }
@@ -164,6 +166,12 @@ struct LibraryView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.bottom, 12)
+                // A click on empty space (between items or below them) lets go of what's picked; items take their own clicks.
+                .frame(maxWidth: .infinity, minHeight: max(0, panelHeight - 44), alignment: .top)
+                .background(Color.clear.contentShape(Rectangle()).onTapGesture {
+                    model.mediaSelection = []
+                    model.folderSelection = []
+                })
             }
             // The part of the list on screen, for Magic's scans.
             .background(MagicAnchor(key: "libraryList"))
@@ -182,8 +190,9 @@ struct LibraryView: View {
         .background(Theme.panel)
         .background(GeometryReader { g in
             Color.clear
-                .onAppear { panelWidth = g.size.width }
+                .onAppear { panelWidth = g.size.width; panelHeight = g.size.height }
                 .onChange(of: g.size.width) { _, w in panelWidth = w }
+                .onChange(of: g.size.height) { _, h in panelHeight = h }
         })
         // Files dragged over the panel, or anywhere else in the window that imports: they'll land here.
         .overlay {
