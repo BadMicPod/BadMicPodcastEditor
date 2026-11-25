@@ -290,7 +290,10 @@ private enum SpeechReader {
             return words
         }
         try await analyzer.start(inputSequence: inputs)
+        let stall = StallGuard(reader)
+        defer { stall.stop() }
         while let sample = output.copyNextSampleBuffer() {
+            stall.tick()
             if let buffer = pcm(sample, format: format) { feed.yield(AnalyzerInput(buffer: buffer)) }
         }
         feed.finish()

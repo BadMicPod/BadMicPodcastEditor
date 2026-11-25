@@ -425,6 +425,7 @@ final class TimelineCanvas: NSView {
     override func mouseDown(with event: NSEvent) {
         // Working on the timeline: Delete is for clips again, not Media panel items.
         model.mediaSelection = []
+        model.folderSelection = []
         model.skim(to: nil)
         window?.makeFirstResponder(self)
         let p = convert(event.locationInWindow, from: nil)

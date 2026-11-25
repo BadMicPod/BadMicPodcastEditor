@@ -58,6 +58,8 @@ struct MentionField: NSViewRepresentable {
         context.coordinator.parent = self
         guard let tv = scroll.documentView as? NSTextView else { return }
         controller.textView = tv
+        // Mid-composition (Pinyin, Japanese, a dead key): the input method owns the text until a choice is made.
+        if tv.hasMarkedText() { return }
         if tv.string != text {
             // Set from outside (an idea, or cleared after sending): the cursor at the end, ready to type.
             tv.string = text
@@ -81,6 +83,9 @@ struct MentionField: NSViewRepresentable {
 
         func textDidChange(_ note: Notification) {
             guard let tv = note.object as? NSTextView else { return }
+            // Still composing (Pinyin syllables, say): left alone, so the candidate list stays; it's all
+            // passed on and coloured once a candidate is chosen. Plain typing never composes, so it updates at once.
+            if tv.hasMarkedText() { return }
             parent.text = tv.string
             // An `@` just typed is a new one, even where a closed one was: the list opens for it.
             let caret = tv.selectedRange().location
@@ -90,12 +95,12 @@ struct MentionField: NSViewRepresentable {
         }
 
         func textViewDidChangeSelection(_ note: Notification) {
-            guard let tv = note.object as? NSTextView else { return }
+            guard let tv = note.object as? NSTextView, !tv.hasMarkedText() else { return }
             report(tv)
         }
 
         func recolor(_ tv: NSTextView) {
-            guard let storage = tv.textStorage else { return }
+            guard let storage = tv.textStorage, !tv.hasMarkedText() else { return }
             let all = NSRange(location: 0, length: storage.length)
             storage.beginEditing()
             storage.setAttributes(plainAttributes, range: all)

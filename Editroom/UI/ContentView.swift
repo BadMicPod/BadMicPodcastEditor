@@ -193,6 +193,7 @@ enum KeyCommands {
             if model.viewerOnly { model.toggleViewerFullScreen(); return true }
             model.selection = []
             model.mediaSelection = []
+            model.folderSelection = []
             model.tool = .move
             return true
         }

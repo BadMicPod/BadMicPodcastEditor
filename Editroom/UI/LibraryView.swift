@@ -34,9 +34,9 @@ struct LibraryView: View {
     }
 
     /// The search: words in "quotes" are what's said in a clip; anything else is in its name.
-    private var shown: [MediaAsset] {
+    private func shown(_ assets: [MediaAsset]) -> [MediaAsset] {
         let q = search.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return model.project.assets }
+        guard !q.isEmpty else { return assets }
         var phrases: [String] = []
         var rest = q
         if let re = try? NSRegularExpression(pattern: #"["“”]([^"“”]*)["“”]?"#) {
@@ -48,7 +48,7 @@ struct LibraryView: View {
             rest = re.stringByReplacingMatches(in: q, range: NSRange(location: 0, length: ns.length), withTemplate: "")
                 .trimmingCharacters(in: .whitespaces)
         }
-        return model.project.assets.filter { a in
+        return assets.filter { a in
             // Plain words: in its name, or what it shows ("pool"), each word as it's typed.
             if !rest.isEmpty, !a.name.localizedCaseInsensitiveContains(rest) {
                 let tags = media.sceneTags(a.id)
@@ -64,12 +64,30 @@ struct LibraryView: View {
     var body: some View {
         // Library items used by whatever is selected on the timeline.
         let inSelection = Set(model.selection.compactMap { model.project.clip($0)?.assetID })
-        VStack(spacing: 0) {
+        // Folders: the one open (if it's still there), what's in it, and while searching, everything inside it.
+        let tree = MediaTree(model.project)
+        let folder = model.mediaFolder.flatMap { tree.exists($0) ? $0 : nil }
+        let searching = !search.trimmingCharacters(in: .whitespaces).isEmpty
+        let shown = shown(searching ? (folder.map { tree.assets(under: $0, of: model.project.assets) } ?? model.project.assets)
+                                    : tree.assets(in: folder, of: model.project.assets))
+        let folders = searching ? [] : tree.folders(in: folder)
+        let missingRoot = folder.flatMap { tree.root(of: $0) }.flatMap { MediaFolder.isFolder($0.path) ? nil : $0 }
+        /// Where an item found by searching is, when that's not the folder open.
+        func place(_ a: MediaAsset) -> String? {
+            guard searching, let at = tree.folder(of: a), at != folder else { return nil }
+            return tree.label(at)
+        }
+        return VStack(spacing: 0) {
             HStack(spacing: 6) {
-                Text("MEDIA")
-                    .font(Theme.label())
-                    .kerning(1.6)
-                    .foregroundStyle(Theme.textDim)
+                // In a folder: back, and the way down to it, in place of the title.
+                if let folder {
+                    MediaTitle(model: model, tree: tree, folder: folder)
+                } else {
+                    Text("MEDIA")
+                        .font(Theme.label())
+                        .kerning(1.6)
+                        .foregroundStyle(Theme.textDim)
+                }
                 if model.importCount > 0 {
                     ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 14, height: 14)
                 }
@@ -87,7 +105,7 @@ struct LibraryView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    if model.project.assets.isEmpty {
+                    if model.project.assets.isEmpty && folders.isEmpty {
                         SearchField(text: $search)
                         Text("Imported media\nappears here")
                             .font(.system(size: 11.5))
@@ -96,29 +114,41 @@ struct LibraryView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.top, 16)
                     } else {
-                        SearchField(text: $search)
-                        let order = shown.map(\.id)
+                        if let missingRoot {
+                            MissingFolder(model: model, folder: missingRoot)
+                        }
+                        SearchField(text: $search, prompt: folder.map { "Search " + tree.name($0) } ?? "Search")
+                        let order = folders.map(MediaPick.folder) + shown.map { MediaPick.asset($0.id) }
+                        let pickedCount = model.mediaSelection.count + model.folderSelection.count
                         if layout == .thumbnails {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8, alignment: .top)], spacing: 10) {
+                                ForEach(folders, id: \.self) { f in
+                                    FolderTile(model: model, tree: tree, folder: f, picked: model.folderSelection.contains(f), pickedCount: pickedCount, clearSearch: { search = "" })
+                                        .simultaneousGesture(TapGesture().onEnded { model.clickMedia(.folder(f), in: order) })
+                                }
                                 ForEach(shown) { asset in
-                                    AssetTile(model: model, media: media, asset: asset, snippet: snippet(asset), offline: media.looksOffline(asset), selected: inSelection.contains(asset.id),
-                                              picked: model.mediaSelection.contains(asset.id), pickedCount: model.mediaSelection.count,
+                                    AssetTile(model: model, media: media, asset: asset, snippet: snippet(asset), place: place(asset), offline: media.looksOffline(asset), selected: inSelection.contains(asset.id),
+                                              picked: model.mediaSelection.contains(asset.id), pickedCount: pickedCount,
                                               matchesSequence: model.sequenceMatches(asset))
-                                        .simultaneousGesture(TapGesture().onEnded { model.clickMedia(asset.id, in: order) })
+                                        .simultaneousGesture(TapGesture().onEnded { model.clickMedia(.asset(asset.id), in: order) })
                                 }
                             }
                         } else {
                             VStack(spacing: 3) {
+                                ForEach(folders, id: \.self) { f in
+                                    FolderRow(model: model, tree: tree, folder: f, thumbWidth: thumbWidth, picked: model.folderSelection.contains(f), pickedCount: pickedCount, clearSearch: { search = "" })
+                                        .simultaneousGesture(TapGesture().onEnded { model.clickMedia(.folder(f), in: order) })
+                                }
                                 ForEach(shown) { asset in
-                                    AssetRow(model: model, media: media, asset: asset, snippet: snippet(asset), thumbWidth: thumbWidth, offline: media.looksOffline(asset), selected: inSelection.contains(asset.id),
-                                             picked: model.mediaSelection.contains(asset.id), pickedCount: model.mediaSelection.count,
+                                    AssetRow(model: model, media: media, asset: asset, snippet: snippet(asset), place: place(asset), thumbWidth: thumbWidth, offline: media.looksOffline(asset), selected: inSelection.contains(asset.id),
+                                             picked: model.mediaSelection.contains(asset.id), pickedCount: pickedCount,
                                              matchesSequence: model.sequenceMatches(asset))
                                         // A click picks it (⇧ for a range, ⌘ to add or take away); a double-click adds it.
-                                        .simultaneousGesture(TapGesture().onEnded { model.clickMedia(asset.id, in: order) })
+                                        .simultaneousGesture(TapGesture().onEnded { model.clickMedia(.asset(asset.id), in: order) })
                                 }
                             }
                         }
-                        if shown.isEmpty {
+                        if shown.isEmpty && folders.isEmpty {
                             Text(search.contains("\"") || search.contains("“") ? "Nothing says \(search)" : "No media matches “\(search)”")
                                 .font(.system(size: 11.5))
                                 .foregroundStyle(Theme.textFaint)
@@ -170,6 +200,7 @@ extension LibraryView {
 
 private struct SearchField: View {
     @Binding var text: String
+    var prompt = "Search"
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -180,7 +211,7 @@ private struct SearchField: View {
                 .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(saying ? Theme.text : Theme.textFaint)
                 .help(saying ? "Searching what's said in your clips" : "")
-            TextField("Search", text: $text)
+            TextField(prompt, text: $text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.text)
@@ -355,7 +386,7 @@ private struct AssetActions: ViewModifier {
                 Divider()
                 // The picked items when this is one of them; otherwise just this one.
                 if picked, pickedCount > 1 {
-                    Button("Delete \(pickedCount) Items") { model.removeAssets(model.mediaSelection) }
+                    Button("Delete \(pickedCount) Items") { model.deleteSelected() }
                 } else {
                     Button("Delete") { model.removeAssets([asset.id]) }
                 }
@@ -369,6 +400,8 @@ private struct AssetRow: View {
     let asset: MediaAsset
     /// Where it says what's being searched for.
     var snippet: (before: String, match: String, after: String)?
+    /// The folder it's in, for search results from other folders.
+    var place: String?
     var thumbWidth: CGFloat = 64
     let offline: Bool
     /// Used by a clip selected on the timeline.
@@ -416,6 +449,7 @@ private struct AssetRow: View {
                     .font(Theme.mono(10))
                     .foregroundStyle(Theme.textFaint)
                     .lineLimit(1)
+                if let place { PlaceLine(place: place) }
                 if let snippet { SaidLine(snippet: snippet) }
             }
             Spacer(minLength: 0)
@@ -447,6 +481,7 @@ private struct AssetTile: View {
     let media: MediaStore
     let asset: MediaAsset
     var snippet: (before: String, match: String, after: String)?
+    var place: String?
     let offline: Bool
     let selected: Bool
     let picked: Bool
@@ -480,6 +515,7 @@ private struct AssetTile: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .padding(.horizontal, 2)
+            if let place { PlaceLine(place: place).padding(.horizontal, 2).padding(.top, -3) }
             if let snippet { SaidLine(snippet: snippet).padding(.horizontal, 2) }
         }
         .padding(3)
@@ -504,5 +540,231 @@ private struct SaidLine: View {
             .foregroundStyle(Theme.textDim)
             .lineLimit(2)
             .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+// MARK: - Folders
+
+/// The folder a search result is in.
+private struct PlaceLine: View {
+    let place: String
+    var body: some View {
+        Text(place)
+            .font(.system(size: 10.5))
+            .foregroundStyle(Theme.textFaint)
+            .lineLimit(1)
+            .truncationMode(.head)
+    }
+}
+
+/// What a folder's right-click menu and double-click do, for its tile and its row.
+private struct FolderActions: ViewModifier {
+    let model: EditorModel
+    let tree: MediaTree
+    let folder: String
+    let picked: Bool
+    let pickedCount: Int
+    let clearSearch: () -> Void
+
+    func body(content: Content) -> some View {
+        let root = tree.roots.first { $0.path == folder }
+        let missing = !MediaFolder.isFolder(folder)
+        content
+            .onTapGesture(count: 2) { open() }
+            .contextMenu {
+                if missing, let root {
+                    Button("Locate…") { model.locateFolder(root.id) }
+                    Divider()
+                }
+                Button("Open") { open() }
+                if !missing {
+                    Button("Reload Folder from Disk") { Task { await model.reloadFolder(folder) } }
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: folder)]) }
+                }
+                Divider()
+                // The picked folders and items when this is one of them; otherwise just this folder.
+                if picked, pickedCount > 1 {
+                    Button("Delete \(pickedCount) Items") { model.deleteSelected() }
+                } else {
+                    Button("Delete Folder") { model.removeFolder(folder) }
+                }
+            }
+            .help(missing ? "\(tree.name(folder)) can't be found. Right-click to locate it."
+                  : "\(tree.name(folder)) · \(tree.count(under: folder)) item\(tree.count(under: folder) == 1 ? "" : "s"). Double-click to open; it follows the folder on your Mac.")
+    }
+
+    private func open() {
+        clearSearch()
+        model.mediaSelection = []
+        model.folderSelection = []
+        model.mediaFolder = folder
+    }
+}
+
+/// A folder's picture: a folder, with how many items are in it (or a warning when it's missing).
+private struct FolderPicture: View {
+    let missing: Bool
+    let count: Int
+    var compact = false
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: compact ? 5 : 6, style: .continuous).fill(Theme.raised)
+            Image(systemName: "folder")
+                .font(.system(size: compact ? 14 : 21, weight: .light))
+                .foregroundStyle(Theme.textDim)
+            if missing {
+                Color.black.opacity(0.45)
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
+            }
+        }
+        .overlay(RoundedRectangle(cornerRadius: compact ? 5 : 6, style: .continuous).strokeBorder(Theme.ink.opacity(0.06)))
+    }
+}
+
+/// A folder in the Thumbnails layout.
+private struct FolderTile: View {
+    let model: EditorModel
+    let tree: MediaTree
+    let folder: String
+    let picked: Bool
+    let pickedCount: Int
+    let clearSearch: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            FolderPicture(missing: !MediaFolder.isFolder(folder), count: tree.count(under: folder))
+                .aspectRatio(16 / 9, contentMode: .fit)
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(Theme.ink.opacity(picked ? 0.85 : 0), lineWidth: 1.5))
+            // Its name, and how many items are in it at the right.
+            HStack(spacing: 6) {
+                Text(tree.name(folder))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(hovering || picked ? Theme.text : Theme.textDim)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 0)
+                if MediaFolder.isFolder(folder) {
+                    Text("\(tree.count(under: folder))")
+                        .font(Theme.mono(10))
+                        .foregroundStyle(Theme.textFaint)
+                        .fixedSize()
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+        .padding(3)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(picked ? Theme.ink.opacity(0.12) : hovering ? Theme.hover : .clear))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .modifier(FolderActions(model: model, tree: tree, folder: folder, picked: picked, pickedCount: pickedCount, clearSearch: clearSearch))
+    }
+}
+
+/// A folder in the List layout.
+private struct FolderRow: View {
+    let model: EditorModel
+    let tree: MediaTree
+    let folder: String
+    var thumbWidth: CGFloat = 64
+    let picked: Bool
+    let pickedCount: Int
+    let clearSearch: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        let missing = !MediaFolder.isFolder(folder)
+        let n = tree.count(under: folder)
+        HStack(spacing: 9) {
+            FolderPicture(missing: missing, count: n, compact: true)
+                .frame(width: thumbWidth, height: (thumbWidth * 9 / 16).rounded())
+            VStack(alignment: .leading, spacing: 2) {
+                Text(tree.name(folder))
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(hovering || picked ? Theme.text : Theme.textDim)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(missing ? "Missing" : "\(n) item\(n == 1 ? "" : "s")")
+                    .font(Theme.mono(10))
+                    .foregroundStyle(Theme.textFaint)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(4)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(picked ? Theme.ink.opacity(0.12) : hovering ? Theme.hover : .clear))
+        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Theme.ink.opacity(picked ? 0.18 : 0), lineWidth: 1))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .modifier(FolderActions(model: model, tree: tree, folder: folder, picked: picked, pickedCount: pickedCount, clearSearch: clearSearch))
+    }
+}
+
+/// The Media panel's title inside a folder: back (up one folder), and the open folder's name.
+private struct MediaTitle: View {
+    let model: EditorModel
+    let tree: MediaTree
+    let folder: String
+    @State private var hoveringBack = false
+
+    var body: some View {
+        let trail = tree.trail(folder)
+        let up = trail.count > 1 ? trail[trail.count - 2] : nil
+        HStack(spacing: 5) {
+            Button {
+                model.mediaSelection = []
+                model.folderSelection = []
+                model.mediaFolder = up
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(hoveringBack ? Theme.text : Theme.textDim)
+                    .frame(width: 20, height: 20)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(hoveringBack ? Theme.hover : .clear))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, -6)
+            .onHover { hoveringBack = $0 }
+            .animation(.easeOut(duration: 0.12), value: hoveringBack)
+            .help(up.map { "Back to \(tree.name($0))" } ?? "Back to Media")
+            Text(tree.name(folder).uppercased())
+                .font(Theme.label())
+                .kerning(1.6)
+                .foregroundStyle(Theme.textDim)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(tree.label(folder))
+        }
+    }
+}
+
+/// Inside a linked folder that can't be found: where to find it.
+private struct MissingFolder: View {
+    let model: EditorModel
+    let folder: MediaFolder
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10.5)).foregroundStyle(.yellow)
+            Text("“\(folder.name)” can't be found")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.text)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            Button("Locate…") { model.locateFolder(folder.id) }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Theme.onText)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Theme.text))
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.raised))
     }
 }
