@@ -81,6 +81,8 @@ final class EditorModel: ObservableObject {
     /// Files being imported right now, so the same file isn't brought in twice at once.
     private var pendingImports = Set<String>()
     private var syncingFolders = false
+    /// Items taken out because their file was deleted from a linked folder: Undo doesn't bring them back.
+    private var droppedFromDisk = Set<UUID>()
     /// Files in linked folders that couldn't be imported, left alone from then on.
     private var unreadable = Set<String>()
     @Published var tool: Tool = .move
@@ -804,6 +806,9 @@ final class EditorModel: ObservableObject {
         redoKnown.append(Set(prev.assets.map(\.id)))
         // The library isn't undone (imports and relinks stay), except that items a step deleted come back.
         prev.assets = Self.restoring(prev.assets, into: project.assets)
+        // Except items whose file was deleted from a linked folder, unless this step's clips use them.
+        let usedThen = Set(prev.clips.compactMap(\.assetID))
+        prev.assets.removeAll { droppedFromDisk.contains($0.id) && !usedThen.contains($0.id) }
         Self.keepFolders(&prev, from: project, importing: importingFolders)
         // Magic's prompt history isn't undone either.
         prev.magicHistory = project.magicHistory
@@ -1431,6 +1436,27 @@ final class EditorModel: ObservableObject {
             if let open = mediaFolder, !MediaTree(project).exists(open) { mediaFolder = nil }
         }
         if !moved.isEmpty { await reopenMedia(moved) }
+        // Deleted from a linked folder on disk (or put in the Trash) and not used on the timeline: gone from Media too,
+        // as from the folder. Used ones stay, shown missing, so the edit doesn't lose a clip without a word. (The
+        // folder itself has to be there: a whole linked folder gone is found again with Locate.)
+        let used = Set(project.clips.compactMap(\.assetID))
+        let gone = Set(project.assets.filter { a in
+            !used.contains(a.id) && !FileManager.default.fileExists(atPath: a.path)
+                && project.linkedFolder(holding: a.path).map { MediaFolder.isFolder($0.path) } == true
+        }.map(\.id))
+        if !gone.isEmpty {
+            commitLive()
+            project.assets.removeAll { gone.contains($0.id) }
+            droppedFromDisk.formUnion(gone)
+            mediaSelection.subtract(gone)
+            isDirty = true
+            if let open = mediaFolder, !MediaTree(project).exists(open) {
+                let tree = MediaTree(project)
+                var up: String? = open
+                while let u = up, !tree.exists(u) { up = tree.root(of: u) == nil ? nil : (u as NSString).deletingLastPathComponent }
+                mediaFolder = up
+            }
+        }
         var added: [URL] = []
         for f in project.folders ?? [] where MediaFolder.isFolder(f.path) {
             let path = f.path

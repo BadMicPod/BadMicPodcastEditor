@@ -1018,14 +1018,6 @@ enum SelfTest {
             let folderOK = m.project.folders?.first?.path == movedPath && m.project.assets.count == 4
                 && m.project.assets.allSatisfy { $0.path.hasPrefix(movedPath + "/") && fm.fileExists(atPath: $0.path) }
                 && tree.count(under: movedPath) == 4 && m.missingAssets.isEmpty
-            // In the Trash: not followed there (it's missing, as a deleted file is).
-            let airURL = moved.appendingPathComponent("B-roll/Drone/air.mp4").standardizedFileURL
-            let air = m.project.assets.first { $0.path.hasSuffix("air.mp4") } ?? added
-            var trashed: NSURL?
-            try? fm.trashItem(at: airURL, resultingItemURL: &trashed)
-            await m.syncFolders(); await settle()
-            let trashOK = m.project.asset(air.id)?.path == airURL.path
-            if let t = trashed as URL? { try? fm.removeItem(at: t) }
             // Picked with an item and deleted together (Delete key): the folder's items and the item go.
             let picks = m.project.assets.count
             let interview = m.project.assets.first { $0.path.hasSuffix("/interview.mp4") }
@@ -1035,9 +1027,28 @@ enum SelfTest {
             let pickedOK = m.project.assets.count == picks - 2 && m.folderSelection.isEmpty && m.mediaSelection.isEmpty
                 && m.project.isHidden(movedPath + "/B-roll/Drone/air.mp4")
             m.undo()
-            // Delete Folder: all of it goes; the files stay.
+            // Deleted on disk: put in the Trash and not on the timeline, it leaves Media (and its Drone folder with it),
+            // and Undo doesn't bring it back; deleted while on the timeline, it stays, shown missing.
+            let airURL = moved.appendingPathComponent("B-roll/Drone/air.mp4").standardizedFileURL
+            let air = m.project.assets.first { $0.path.hasSuffix("air.mp4") }
+            let street2 = m.project.assets.first { $0.path.hasSuffix("street-2.mp4") }
+            if let street2 { m.mutate { $0.clips.append(Clip(trackID: $0.videoTracks[0].id, kind: .video, assetID: street2.id, start: 0, duration: 1)) } }
+            var trashed: NSURL?
+            try? fm.trashItem(at: airURL, resultingItemURL: &trashed)
+            try? fm.removeItem(at: moved.appendingPathComponent("B-roll/street-2.mp4"))
+            await m.syncFolders(); await settle()
+            let goneOK = air != nil && m.project.asset(air!.id) == nil && !MediaTree(m.project).exists(movedPath + "/B-roll/Drone")
+            m.undo()
+            let staysGone = air != nil && m.project.asset(air!.id) == nil
+            m.redo()
+            let usedStays = street2 != nil && m.project.asset(street2!.id) != nil
+            let trashOK = goneOK && staysGone && usedStays
+            if let t = trashed as URL? { try? fm.removeItem(at: t) }
+            // Delete Folder: all of it goes; the files stay. (Timeline cleared first, so it doesn't stop to ask.)
+            m.mutate { $0.clips.removeAll() }
             m.removeFolder(movedPath)
             let deleteOK = m.project.assets.isEmpty && m.project.folders == nil && fm.fileExists(atPath: movedPath + "/interview.mp4")
+            if !trashOK { log("FOLDERS detail goneFromMedia=\(goneOK) undoKeepsItGone=\(staysGone) usedOneStays=\(usedStays)") }
             let good = importOK && addOK && renameOK && hiddenOK && undoOK && folderOK && trashOK && pickedOK && deleteOK
             log("FOLDERS \(good ? "OK" : "FAIL") import=\(importOK) added=\(addOK) rename=\(renameOK) hidden=\(hiddenOK) undo=\(undoOK) moved=\(folderOK) trash=\(trashOK) picked=\(pickedOK) delete=\(deleteOK)")
             ok = ok && good
