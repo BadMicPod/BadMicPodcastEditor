@@ -577,6 +577,7 @@ private struct MagicSettings: View {
                                 ? "On: connected apps can edit here, with their own cursor, and every change can be undone. Only apps on this Mac can reach Editroom."
                                 : "Off: no app can reach Editroom, and Magic only makes quick cuts on this Mac.",
                               isOn: $server.enabled)
+                    OwnAgentRow(enabled: server.enabled)
                     if let problem = server.problem, server.enabled {
                         Text(problem).font(.system(size: 11.5)).foregroundStyle(Color(hex: 0xE5735C))
                     }
@@ -605,6 +606,46 @@ private struct MagicSettings: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             connect.refresh()
         }
+    }
+}
+
+/// For agents without a Connect button: one prompt to paste into them, which they follow to connect and start.
+private struct OwnAgentRow: View {
+    let enabled: Bool
+    @State private var copied = false
+
+    private var prompt: String {
+        let launcher = Bundle.main.executablePath ?? "/Applications/Editroom.app/Contents/MacOS/Editroom"
+        return """
+        Connect to Editroom, the video editor on my Mac, and edit only through its MCP tools (never screenshots or clicks). \
+        Its MCP server runs as the command "\(launcher)" with the argument --mcp (stdio; it opens Editroom when needed), \
+        or at \(MCPServer.endpoint) (Streamable HTTP) while Editroom is open. Add it to your MCP settings as "editroom" \
+        (or use the entry if it's already there). Until its tools appear in a new session, call the address directly. \
+        Then call get_project and list_media, and follow the instructions Editroom sends when you connect.
+        """
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Your own agent").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
+                Text("Using another agent? Copy this prompt and paste it in. It connects itself and can start editing.")
+                    .font(.system(size: 11.5)).foregroundStyle(Theme.textDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            Button(copied ? "Copied" : "Copy Prompt") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(prompt, forType: .string)
+                copied = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+            }
+            .controlSize(.small)
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.field))
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.4)
     }
 }
 
