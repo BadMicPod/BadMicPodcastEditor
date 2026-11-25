@@ -3,17 +3,16 @@
   <channel>
     <title>Editroom</title>
     <item>
-      <title>Version 1.0.4</title>
-      <pubDate>Wed, 25 Nov 2026 18:54:41 +0000</pubDate>
-      <sparkle:version>5</sparkle:version>
-      <sparkle:shortVersionString>1.0.4</sparkle:shortVersionString>
+      <title>Version 1.0.5</title>
+      <pubDate>Wed, 25 Nov 2026 19:40:41 +0000</pubDate>
+      <sparkle:version>6</sparkle:version>
+      <sparkle:shortVersionString>1.0.5</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <link>https://github.com/robbietilton/Editroom/releases/tag/v1.0.4</link>
-      <changes><![CDATA[Folders: drag a folder into Media (or pick one in Import) and it stays in sync with the folder on your Mac. New files show up, renamed or moved files are followed, and double-click opens a folder.
-Zoom with AI: Magic, Claude and ChatGPT can now add the animated zooms from Transform › Scale. Try "@selected push in".
-Connect another AI app: Settings › Magic has a prompt you can paste into any other AI app to connect it to Editroom.
-Fixes: Chinese, Japanese and other input methods now work in the Magic prompt.]]></changes>
-      <enclosure url="https://github.com/robbietilton/Editroom/releases/download/v1.0.4/Editroom.dmg" sparkle:edSignature="cfyQbErGIbG0bjTkPogcB9H/M/f2Qe9USxGBNxuC8yX2TDVO9+8nB/wjSBfU4dWf30qn42SOgE1+hk8FH9XvBQ==" length="11818027" type="application/octet-stream"/>
+      <link>https://github.com/robbietilton/Editroom/releases/tag/v1.0.5</link>
+      <changes><![CDATA[Drop folders on Editroom's Dock icon to add them to Media.
+Imports are selected and scrolled into view, and dragging over the window lights up Media.
+Fixes: no window blink on Dock icon drops, and the Media search no longer takes focus at launch.]]></changes>
+      <enclosure url="https://github.com/robbietilton/Editroom/releases/download/v1.0.5/Editroom.dmg" sparkle:edSignature="D5c2Pu+LbPlY04mjh4lfyeOUjxHVq9YOsKMsRKm8H9U2xlcnfxllX4K9yjHnD8F5BQbqeOzbbUV8y8cPa4wZCA==" length="11841287" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>
