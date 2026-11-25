@@ -168,7 +168,8 @@ struct LibraryView: View {
                 .padding(.bottom, 12)
                 // A click on empty space (between items or below them) lets go of what's picked; items take their own clicks.
                 .frame(maxWidth: .infinity, minHeight: max(0, panelHeight - 44), alignment: .top)
-                .background(Color.clear.contentShape(Rectangle()).onTapGesture {
+                .background(EmptySpaceClicks {
+                    // Only Media's picks: the timeline's selection is left as it is.
                     model.mediaSelection = []
                     model.folderSelection = []
                 })
@@ -803,5 +804,28 @@ private struct MissingFolder: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.raised))
+    }
+}
+
+/// Behind the Media panel's items: a click or right-click on empty space lets go of what's picked there (a right-click,
+/// as in Finder, then goes on to open the panel's menu). Items in front take their own clicks.
+private struct EmptySpaceClicks: NSViewRepresentable {
+    let clear: () -> Void
+
+    func makeNSView(context: Context) -> Catcher {
+        let v = Catcher()
+        v.clear = clear
+        return v
+    }
+
+    func updateNSView(_ v: Catcher, context: Context) { v.clear = clear }
+
+    final class Catcher: NSView {
+        var clear: () -> Void = {}
+        override func mouseDown(with event: NSEvent) { clear() }
+        override func rightMouseDown(with event: NSEvent) {
+            clear()
+            super.rightMouseDown(with: event)
+        }
     }
 }
