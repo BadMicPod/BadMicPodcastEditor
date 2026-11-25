@@ -70,6 +70,10 @@ final class EditorModel: ObservableObject {
     /// Folders picked in the Media panel, by path, alongside items: Delete takes them out too.
     @Published var folderSelection: Set<String> = []
     private var mediaAnchor: MediaPick?
+    /// Files are being dragged over the window outside the Media panel and timeline: the panel shows they'll land in it.
+    @Published var importDropHover = false
+    /// Something the Media panel should scroll to (what was just imported).
+    @Published var mediaReveal: MediaReveal?
     /// The folder open in the Media panel (its path); nil for the top.
     @Published var mediaFolder: String?
     /// Linked folders whose files are coming in, kept while they're still empty.
@@ -1344,20 +1348,39 @@ final class EditorModel: ObservableObject {
                 let shown = failed.prefix(8).joined(separator: ", ") + (failed.count > 8 ? " and \(failed.count - 8) more" : "")
                 importError = "Couldn't import " + shown + "." + hint
             }
-            // One thing brought in by hand: shown where it sits in Media.
-            if offer, urls.count == 1 {
-                let tree = MediaTree(project)
-                if let opened, tree.exists(opened) {
-                    mediaFolder = opened
-                } else if linked.isEmpty, let a = imported.first {
-                    mediaFolder = tree.folder(of: a)
-                    mediaSelection = [a.id]
-                    folderSelection = []
-                    mediaAnchor = .asset(a.id)
-                }
-            }
+            // Brought in by hand (not by an agent, or found in a linked folder): shown where it sits in Media,
+            // picked and scrolled to, so it's clear what came in.
+            if offer { showImported(imported, folders: linked, opened: opened) }
             completion?(imported)
         }
+    }
+
+    /// Opens the folder an import landed in, picks what came in and asks the Media panel to scroll to it: a new
+    /// linked folder's tile, or the files (those in the same folder as the first, when they're spread out).
+    private func showImported(_ assets: [MediaAsset], folders: [MediaFolder], opened: String?) {
+        let tree = MediaTree(project)
+        if let opened, tree.exists(opened) {
+            mediaFolder = opened
+            mediaSelection = []
+            folderSelection = []
+            return
+        }
+        let roots = folders.filter { f in project.folders?.contains { $0.id == f.id } == true }
+        if let first = roots.first {
+            mediaFolder = nil
+            mediaSelection = Set(assets.filter { tree.folder(of: $0) == nil }.map(\.id))
+            folderSelection = Set(roots.map(\.path))
+            mediaAnchor = .folder(first.path)
+            mediaReveal = MediaReveal(target: .folder(first.path))
+            return
+        }
+        guard let a = assets.first(where: { project.asset($0.id) != nil }) else { return }
+        let place = tree.folder(of: a)
+        mediaFolder = place
+        mediaSelection = Set(assets.filter { tree.folder(of: $0) == place }.map(\.id))
+        folderSelection = []
+        mediaAnchor = .asset(a.id)
+        mediaReveal = MediaReveal(target: .asset(a.id))
     }
 
     /// Starts following a folder brought in whole. Returns the new linked folder, or nil when it's already

@@ -58,27 +58,12 @@ struct ContentView: View {
         .id(themes.look)
         .background(Theme.bg)
         // Files dropped anywhere the timeline or library doesn't handle them are imported.
+        // It lights up the Media panel, where they go, rather than the whole window.
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
             loadURLs(providers) { model.handleOpen($0) }
             return true
         }
-        .overlay {
-            if dropTargeted {
-                ZStack {
-                    Theme.accent.opacity(0.06)
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Theme.accent, lineWidth: 2)
-                        .padding(6)
-                    Text("Drop to import")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.text)
-                        .padding(.horizontal, 14)
-                        .frame(height: 32)
-                        .background(Capsule().fill(Theme.raised))
-                }
-                .allowsHitTesting(false)
-            }
-        }
+        .onChange(of: dropTargeted) { _, on in model.importDropHover = on }
         .preferredColorScheme(Theme.scheme)
         // The title bar in the panel black, not macOS's lighter default.
         .toolbarBackground(Theme.panel, for: .windowToolbar)

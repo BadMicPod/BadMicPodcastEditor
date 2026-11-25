@@ -890,6 +890,33 @@ enum SelfTest {
             log("LOCAL ZOOM \(good ? "OK" : "FAIL") asks=\(asked) selected=\(selOK) inOutAtPlayhead=\(inOutOK) off=\(offOK)")
             ok = ok && good
         }
+        // Shown after importing by hand: files picked and scrolled to; a folder's tile picked and scrolled to; an agent's
+        // import leaves the panel alone.
+        do {
+            let fm = FileManager.default
+            let dir = outDir.appendingPathComponent("reveal-test/Clips")
+            try? fm.removeItem(at: dir.deletingLastPathComponent())
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            try? fm.copyItem(at: mediaDir.appendingPathComponent("c_clip.mp4"), to: dir.appendingPathComponent("one.mp4"))
+            var p = Project()
+            p.settingsLocked = true   // no "match the sequence?" question
+            let m = EditorModel()
+            m.load(p, url: nil)
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            let files = [mediaDir.appendingPathComponent("a_clip.mp4"), mediaDir.appendingPathComponent("d_clip.mp4")]
+            let got: [MediaAsset] = await withCheckedContinuation { c in m.importFiles(files, offerMatch: true) { c.resume(returning: $0) } }
+            let filesOK = got.count == 2 && m.mediaSelection == Set(got.map(\.id)) && m.mediaReveal?.target == .asset(got[0].id)
+            let folderPath = dir.standardizedFileURL.path
+            _ = await withCheckedContinuation { c in m.importFiles([dir], offerMatch: true) { c.resume(returning: $0) } } as [MediaAsset]
+            let folderOK = m.folderSelection == [folderPath] && m.mediaReveal?.target == .folder(folderPath) && m.mediaFolder == nil
+            let before = (m.mediaSelection, m.folderSelection, m.mediaReveal)
+            _ = await withCheckedContinuation { c in m.importFiles([mediaDir.appendingPathComponent("e_clip.mp4")], offerMatch: false) { c.resume(returning: $0) } } as [MediaAsset]
+            let agentOK = m.mediaSelection == before.0 && m.folderSelection == before.1 && m.mediaReveal == before.2
+            let good = filesOK && folderOK && agentOK
+            log("IMPORT SHOWN \(good ? "OK" : "FAIL") files=\(filesOK) folder=\(folderOK) agentLeavesIt=\(agentOK)")
+            ok = ok && good
+            try? fm.removeItem(at: dir.deletingLastPathComponent())
+        }
         // Folders: a folder brought in whole is mirrored in Media and followed on disk: files added later come in,
         // a file renamed or the folder moved is followed (same items, nothing to locate), a file taken out stays out
         // (Undo brings it back), one put in the Trash isn't followed there, and Delete Folder takes it all out.

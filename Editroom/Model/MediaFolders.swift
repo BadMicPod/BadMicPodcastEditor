@@ -127,6 +127,12 @@ enum MediaPick: Hashable {
     case folder(String)
 }
 
+/// A request for the Media panel to scroll to an item or folder; each one is new, even for the same target.
+struct MediaReveal: Equatable {
+    let target: MediaPick
+    let token = UUID()
+}
+
 /// The Media panel's folders, worked out from the project: the linked folders at the top, and inside
 /// each, the folders its files are in. A folder is named by its path.
 struct MediaTree {

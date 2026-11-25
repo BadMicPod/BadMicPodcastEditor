@@ -103,6 +103,7 @@ struct LibraryView: View {
             // Right-click: the header buttons' actions in words, and how the list looks.
             .contextMenu { panelMenu }
 
+            ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     if model.project.assets.isEmpty && folders.isEmpty {
@@ -124,12 +125,14 @@ struct LibraryView: View {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8, alignment: .top)], spacing: 10) {
                                 ForEach(folders, id: \.self) { f in
                                     FolderTile(model: model, tree: tree, folder: f, picked: model.folderSelection.contains(f), pickedCount: pickedCount, clearSearch: { search = "" })
+                                        .id(MediaPick.folder(f))
                                         .simultaneousGesture(TapGesture().onEnded { model.clickMedia(.folder(f), in: order) })
                                 }
                                 ForEach(shown) { asset in
                                     AssetTile(model: model, media: media, asset: asset, snippet: snippet(asset), place: place(asset), offline: media.looksOffline(asset), selected: inSelection.contains(asset.id),
                                               picked: model.mediaSelection.contains(asset.id), pickedCount: pickedCount,
                                               matchesSequence: model.sequenceMatches(asset))
+                                        .id(MediaPick.asset(asset.id))
                                         .simultaneousGesture(TapGesture().onEnded { model.clickMedia(.asset(asset.id), in: order) })
                                 }
                             }
@@ -137,6 +140,7 @@ struct LibraryView: View {
                             VStack(spacing: 3) {
                                 ForEach(folders, id: \.self) { f in
                                     FolderRow(model: model, tree: tree, folder: f, thumbWidth: thumbWidth, picked: model.folderSelection.contains(f), pickedCount: pickedCount, clearSearch: { search = "" })
+                                        .id(MediaPick.folder(f))
                                         .simultaneousGesture(TapGesture().onEnded { model.clickMedia(.folder(f), in: order) })
                                 }
                                 ForEach(shown) { asset in
@@ -144,6 +148,7 @@ struct LibraryView: View {
                                              picked: model.mediaSelection.contains(asset.id), pickedCount: pickedCount,
                                              matchesSequence: model.sequenceMatches(asset))
                                         // A click picks it (⇧ for a range, ⌘ to add or take away); a double-click adds it.
+                                        .id(MediaPick.asset(asset.id))
                                         .simultaneousGesture(TapGesture().onEnded { model.clickMedia(.asset(asset.id), in: order) })
                                 }
                             }
@@ -164,6 +169,15 @@ struct LibraryView: View {
             .background(MagicAnchor(key: "libraryList"))
             // The same menu on the space around the items (each item keeps its own).
             .contextMenu { panelMenu }
+            // Just imported: scrolled into view (after the folder it's in has opened and drawn).
+            .onChange(of: model.mediaReveal) { _, reveal in
+                guard let reveal else { return }
+                search = ""
+                DispatchQueue.main.async {
+                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(reveal.target, anchor: .center) }
+                }
+            }
+            }
         }
         .background(Theme.panel)
         .background(GeometryReader { g in
@@ -171,11 +185,25 @@ struct LibraryView: View {
                 .onAppear { panelWidth = g.size.width }
                 .onChange(of: g.size.width) { _, w in panelWidth = w }
         })
-        .overlay(
-            RoundedRectangle(cornerRadius: 0)
-                .strokeBorder(Theme.accent.opacity(dropTargeted ? 0.9 : 0), lineWidth: 2)
+        // Files dragged over the panel, or anywhere else in the window that imports: they'll land here.
+        .overlay {
+            if dropTargeted || model.importDropHover {
+                ZStack(alignment: .bottom) {
+                    // What happens, on a dark fade up from the bottom, so it reads over any pictures and the media stays in view.
+                    LinearGradient(stops: [.init(color: .black.opacity(0.92), location: 0), .init(color: .black.opacity(0.7), location: 0.45),
+                                           .init(color: .black.opacity(0), location: 1)], startPoint: .bottom, endPoint: .top)
+                        .frame(height: 150)
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.down.to.line").font(.system(size: 11, weight: .semibold))
+                        Text("Add to Media").font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundStyle(Color(hex: 0xF2F2F0))
+                    .padding(.bottom, 22)
+                    Rectangle().strokeBorder(Theme.accent.opacity(0.9), lineWidth: 2)
+                }
                 .allowsHitTesting(false)
-        )
+            }
+        }
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
             loadURLs(providers) { model.importFiles($0) }
             return true
