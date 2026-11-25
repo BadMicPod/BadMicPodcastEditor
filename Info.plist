@@ -2,12 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>SUFeedURL</key>
-	<string>https://raw.githubusercontent.com/robbietilton/Editroom/main/appcast.xml</string>
-	<key>SUEnableAutomaticChecks</key>
-	<true/>
-	<key>SUPublicEDKey</key>
-	<string>vbFPYYiK4V1vHIpbrWv3a1N7qQwOQVRpeqEuWGmh9QA=</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -35,14 +29,24 @@
 				<string>public.audio</string>
 				<string>public.image</string>
 				<string>public.audiovisual-content</string>
+				<string>public.folder</string>
 			</array>
 		</dict>
 	</array>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/robbietilton/Editroom/main/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>vbFPYYiK4V1vHIpbrWv3a1N7qQwOQVRpeqEuWGmh9QA=</string>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>
-			<key>UTTypeIdentifier</key>
-			<string>com.wonderassembly.editroom.project</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+				<string>public.content</string>
+			</array>
 			<key>UTTypeDescription</key>
 			<string>Editroom Project</string>
 			<key>UTTypeIcons</key>
@@ -52,11 +56,8 @@
 				<key>UTTypeIconText</key>
 				<string>ROOM</string>
 			</dict>
-			<key>UTTypeConformsTo</key>
-			<array>
-				<string>public.data</string>
-				<string>public.content</string>
-			</array>
+			<key>UTTypeIdentifier</key>
+			<string>com.wonderassembly.editroom.project</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
