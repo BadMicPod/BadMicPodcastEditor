@@ -3,14 +3,17 @@
   <channel>
     <title>Editroom</title>
     <item>
-      <title>Version 1.0.3</title>
-      <pubDate>Wed, 25 Nov 2026 06:34:00 +0000</pubDate>
-      <sparkle:version>4</sparkle:version>
-      <sparkle:shortVersionString>1.0.3</sparkle:shortVersionString>
+      <title>Version 1.0.4</title>
+      <pubDate>Wed, 25 Nov 2026 18:54:41 +0000</pubDate>
+      <sparkle:version>5</sparkle:version>
+      <sparkle:shortVersionString>1.0.4</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <link>https://github.com/robbietilton/Editroom/releases/tag/v1.0.3</link>
-      <changes><![CDATA[Animated Zooms: turn on the button in Transform › Scale to zoom in, out, or in and back out over a clip, easing in or at a steady pace. Great for screen recordings.]]></changes>
-      <enclosure url="https://github.com/robbietilton/Editroom/releases/download/v1.0.3/Editroom.dmg" sparkle:edSignature="nd6ew+w8QD/xkyuqYEVgAYtwOMigPp5Pzj4PJbkRnxkY3yWCLyi4I+LnzFsXCmmkGghpdLNg9mtyz2zJO8KCDg==" length="11585741" type="application/octet-stream"/>
+      <link>https://github.com/robbietilton/Editroom/releases/tag/v1.0.4</link>
+      <changes><![CDATA[Folders: drag a folder into Media (or pick one in Import) and it stays in sync with the folder on your Mac. New files show up, renamed or moved files are followed, and double-click opens a folder.
+Zoom with AI: Magic, Claude and ChatGPT can now add the animated zooms from Transform › Scale. Try "@selected push in".
+Connect another AI app: Settings › Magic has a prompt you can paste into any other AI app to connect it to Editroom.
+Fixes: Chinese, Japanese and other input methods now work in the Magic prompt.]]></changes>
+      <enclosure url="https://github.com/robbietilton/Editroom/releases/download/v1.0.4/Editroom.dmg" sparkle:edSignature="cfyQbErGIbG0bjTkPogcB9H/M/f2Qe9USxGBNxuC8yX2TDVO9+8nB/wjSBfU4dWf30qn42SOgE1+hk8FH9XvBQ==" length="11818027" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>
