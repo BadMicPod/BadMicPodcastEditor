@@ -609,7 +609,7 @@ private struct MagicSettings: View {
     }
 }
 
-/// For agents without a Connect button: one prompt to paste into them, which they follow to connect and start.
+/// For AI apps without a Connect button: one prompt to paste into them, which they follow to connect and start.
 private struct OwnAgentRow: View {
     let enabled: Bool
     @State private var copied = false
@@ -628,17 +628,23 @@ private struct OwnAgentRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("Your own agent").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
-                Text("Using another agent? Copy this prompt and paste it in. It connects itself and can start editing.")
+                Text("Connect another AI app").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
+                Text("Using a different AI app? Copy this prompt and paste it in, and it connects itself and can start editing.")
                     .font(.system(size: 11.5)).foregroundStyle(Theme.textDim)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
-            Button(copied ? "Copied" : "Copy Prompt") {
+            Button {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(prompt, forType: .string)
                 copied = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+            } label: {
+                // Always as wide as "Copy Prompt", so the note beside it doesn't rewrap when it says "Copied".
+                ZStack {
+                    Text("Copy Prompt").hidden()
+                    Text(copied ? "Copied" : "Copy Prompt")
+                }
             }
             .controlSize(.small)
         }
