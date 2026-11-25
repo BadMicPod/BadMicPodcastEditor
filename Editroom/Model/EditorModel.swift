@@ -848,6 +848,12 @@ final class EditorModel: ObservableObject {
         }
     }
 
+    /// Applies a change waiting to be rebuilt now, so the viewer shows it before anything else moves (a zoom
+    /// dot dragged on its graph: the curve first, then the playhead to the dot).
+    func flushRebuild() {
+        rebuildNow()
+    }
+
     private func rebuildNow() {
         guard rebuildPending else { return }
         rebuildPending = false
@@ -1519,6 +1525,43 @@ final class EditorModel: ObservableObject {
         let range = head ? (edges.map(\.start).max()!, t) : (t, edges.map(\.end).min()!)
         guard range.1 - range.0 >= 0.5 / p.fps else { return nil }
         return (range.0, range.1, tracks.filter { !p.isLocked($0) })
+    }
+
+    // MARK: Zoom
+
+    /// Set while a speed or zoom dot is dragged in the inspector: the playhead, which follows the dot, shows
+    /// its time on the timeline as when it's dragged itself.
+    @Published var showPlayheadTime = false
+
+    /// The zoom button on Scale: on, the clip moves between the full frame and its Scale over its length
+    /// (zoomed to 200% if it was at 100%); off, its Scale stays as a plain size.
+    func toggleZoom(_ id: UUID) {
+        guard let c = project.clip(id), c.isTransformable else { return }
+        if c.transform?.zoom != nil {
+            mutate { p in
+                guard let i = p.index(of: id) else { return }
+                p.clips[i].transform?.zoom = nil
+                if p.clips[i].transform?.isIdentity == true { p.clips[i].transform = nil }
+            }
+            return
+        }
+        mutate { p in
+            guard let i = p.index(of: id) else { return }
+            var t = p.clips[i].transform ?? ClipTransform()
+            if t.scale <= 1.01 { t.scale = 2 }
+            t.zoom = .starter(ZoomMove.lastMode, length: p.clips[i].duration)
+            p.clips[i].transform = t
+        }
+        showZoomed(id)
+    }
+
+    /// Moves the playhead to where a zooming clip is all the way in, so its framing can be set on the
+    /// picture it zooms into. Leaves it if it's there already, and never while playing.
+    func showZoomed(_ id: UUID) {
+        guard !isPlaying, let c = project.clip(id), let z = c.transform?.zoom else { return }
+        let u = playhead - c.start
+        if u >= 0, u < c.duration, z.amount(at: u) > 0.999 { return }
+        seek(to: c.start + z.zoomedTime(length: c.duration))
     }
 
     func split(clip id: UUID, at t: Double) {

@@ -236,7 +236,7 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
             if let w = layer.wipe(at: t) {
                 image = image.cropped(to: CGRect(x: 0, y: 0, width: size.width * w, height: size.height))
             }
-            if let tf = layer.transform {
+            if let tf = layer.transform?.at(t - layer.fadeStart) {
                 // Scale about the frame's centre, then offset (Core Image's y runs up).
                 let cx = size.width / 2, cy = size.height / 2
                 let m = CGAffineTransform(translationX: -cx, y: -cy)

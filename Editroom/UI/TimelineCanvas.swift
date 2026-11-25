@@ -93,6 +93,7 @@ final class TimelineCanvas: NSView {
     }
     /// While dragging the playhead, the time shown beside it on the ruler.
     private var scrubReadout: Double?
+    private var lastShownTime: Double?
     /// ⌥ held during a move: drop copies instead of moving the clips.
     private var duplicating = false
     private var lastScrubSnap: Double?
@@ -248,6 +249,11 @@ final class TimelineCanvas: NSView {
     }
 
     private func tick() {
+        // A graph dot dragged in the inspector moves the playhead; its time tag goes with it.
+        if model.showPlayheadTime, lastShownTime != model.playhead {
+            lastShownTime = model.playhead
+            needsDisplay = true
+        }
         var px = x(model.playhead)
         if model.isPlaying, px > bounds.width - 28 || px < 0 {
             model.setView(scrollX: CGFloat(model.playhead) * pps - 48)
@@ -1420,7 +1426,7 @@ final class TimelineCanvas: NSView {
         }
 
         // The playhead's time beside its flag while it's being dragged.
-        if let t = scrubReadout {
+        if let t = scrubReadout ?? (model.showPlayheadTime ? model.playhead : nil) {
             let text = NSAttributedString(string: Timecode.string(t, fps: project.fps), attributes: Self.readoutAttrs)
             let size = text.size()
             var r = CGRect(x: x(t) + 10, y: 4, width: size.width + 12, height: size.height + 4)

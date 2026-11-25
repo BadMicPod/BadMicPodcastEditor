@@ -10,6 +10,8 @@ struct InspectorView: View {
     @State private var rampOrigin: [Clip]?
     /// Where the playhead was before a ramp dot's drag moved it to the dot; put back when the drag ends.
     @State private var rampPlayhead: Double?
+    /// While a zoom dot is dragged: where the playhead was, to go back to after.
+    @State private var zoomPlayhead: Double?
 
     private var selected: [Clip] {
         model.project.clips.filter { model.selection.contains($0.id) }
@@ -259,6 +261,7 @@ struct InspectorView: View {
                     // The ramp, while the clip has one (kept up mid-drag, even if a dot is pulled back out).
                     if ramped || rampOrigin != nil {
                         SpeedRampGraph(clip: first, fps: model.project.fps, onEditing: { began in
+                            model.showPlayheadTime = began
                             if began {
                                 rampOrigin = model.project.clips
                             } else {
@@ -319,7 +322,11 @@ struct InspectorView: View {
         } else {
             let mid = abs(clip.speed - 1) < 0.001 ? 0.5 : clip.speed
             // In the shape last picked on the graph: easing in and back out, or just in (2-point).
-            let points = SpeedRampGraph.twoPoint ? (0.3, 0.6, 1.0, 1.0) : (0.3, 0.4, 0.6, 0.7)
+            let points: (Double, Double, Double, Double)
+            switch SpeedRampGraph.lastMode {
+            case .rampIn: points = (0.3, 0.6, 1.0, 1.0)
+            case .inOut: points = (0.3, 0.4, 0.6, 0.7)
+            }
             model.mutate { p in p.setRamp(ids: group, speed: mid, points: points, start: 1, end: 1, sticky: sticky) }
         }
     }
@@ -356,14 +363,74 @@ struct InspectorView: View {
             }
         }), collapsedByDefault: true, marked: !tf.isIdentity) {
             ParamRow(icon: .symbol("arrow.up.left.and.arrow.down.right"), label: "Scale", value: tf.scale * 100,
-                     range: 5...1000, logarithmic: true, step: 1, format: Self.percentTenths, onEditing: done,
-                     onChange: { v in live { $0.scale = ((v * 10).rounded() / 1000).clamped(to: ClipTransform.scaleRange) } })
-            ParamRow(icon: .symbol("arrow.left.and.right"), label: "X", value: tf.x * w, range: -w...w,
-                     step: 1, format: Self.tenths, onEditing: done,
-                     onChange: { v in live { $0.x = (v * 10).rounded() / 10 / w } })
-            ParamRow(icon: .symbol("arrow.up.and.down"), label: "Y", value: tf.y * h, range: -h...h,
-                     step: 1, format: Self.tenths, onEditing: done,
-                     onChange: { v in live { $0.y = (v * 10).rounded() / 10 / h } })
+                     range: 5...1000, logarithmic: true, step: 1, format: Self.percentTenths,
+                     onEditing: { began in
+                         // Zooming: show the zoomed-in framing while its scale is set.
+                         if began, clips.count == 1 { model.showZoomed(clips[0].id) }
+                         done(began)
+                     },
+                     onChange: { v in live { t in
+                         t.scale = ((v * 10).rounded() / 1000).clamped(to: ClipTransform.scaleRange)
+                         if t.fills { (t.x, t.y) = t.zoomedOffset }
+                     } },
+                     inside: clips.count == 1 ? AnyView(RampButton(on: tf.zoom != nil,
+                                                                    help: tf.zoom != nil ? "Remove the zoom" : "Zoom: move between the full frame and this scale over the clip") {
+                         model.toggleZoom(clips[0].id)
+                     }) : nil)
+            if clips.count == 1, let zoom = tf.zoom {
+                let c = clips[0]
+                ZoomGraph(clip: c, zoom: zoom, scale: tf.scale, fps: model.project.fps, onEditing: { began in
+                    model.showPlayheadTime = began
+                    if !began {
+                        model.commitLive()
+                        if let back = zoomPlayhead { zoomPlayhead = nil; model.seek(to: back) }
+                    }
+                }, onChange: { z, scale, focus in
+                    live { t in t.zoom = z; t.scale = scale; (t.x, t.y) = t.zoomedOffset }
+                    // The playhead and viewer follow the dot being dragged (never while playing), showing the
+                    // new curve there, not the one from before the drag moved.
+                    if let focus, !model.isPlaying {
+                        model.flushRebuild()
+                        if zoomPlayhead == nil { zoomPlayhead = model.playhead }
+                        model.scrub(to: c.start + focus)
+                    }
+                }, onSet: { z in
+                    UserDefaults.standard.set(z.mode.rawValue, forKey: ZoomMove.modeKey)
+                    model.mutate { p in if let i = p.index(of: c.id) { p.clips[i].transform?.zoom = z } }
+                })
+                // Each clip starts its graph at its own height.
+                .id(c.id)
+                .transition(.opacity)
+            }
+            if tf.fills {
+                // Bigger than the frame (zoomed in, or zooming): X and Y say where it frames (right and down are
+                // positive), only as far as the picture reaches. The picture itself moves the other way.
+                let m = max(0, tf.scale - 1) / 2
+                let at = tf.zoomedOffset
+                ParamRow(icon: .symbol("arrow.left.and.right"), label: "X", value: -at.x * w, range: -m * w...max(m * w, 0.001),
+                         step: 1, format: Self.tenths,
+                         onEditing: { began in
+                             if began, clips.count == 1 { model.showZoomed(clips[0].id) }
+                             done(began)
+                         },
+                         onChange: { v in live { $0.x = -((v * 10).rounded() / 10 / w).clamped(to: -m...m) } })
+                ParamRow(icon: .symbol("arrow.up.and.down"), label: "Y", value: -at.y * h, range: -m * h...max(m * h, 0.001),
+                         step: 1, format: Self.tenths,
+                         onEditing: { began in
+                             if began, clips.count == 1 { model.showZoomed(clips[0].id) }
+                             done(began)
+                         },
+                         onChange: { v in live { $0.y = -((v * 10).rounded() / 10 / h).clamped(to: -m...m) } })
+            } else {
+                // The frame's size or smaller: where the picture sits, as far as fully off the frame.
+                let reach = (1 + tf.scale) / 2
+                ParamRow(icon: .symbol("arrow.left.and.right"), label: "X", value: tf.x * w, range: -reach * w...reach * w,
+                         step: 1, format: Self.tenths, onEditing: done,
+                         onChange: { v in live { $0.x = (v * 10).rounded() / 10 / w } })
+                ParamRow(icon: .symbol("arrow.up.and.down"), label: "Y", value: tf.y * h, range: -reach * h...reach * h,
+                         step: 1, format: Self.tenths, onEditing: done,
+                         onChange: { v in live { $0.y = (v * 10).rounded() / 10 / h } })
+            }
         }
     }
 
@@ -1298,6 +1365,7 @@ private struct ColorWheel: View {
 /// curve, lit like an active fade curve when on.
 private struct RampButton: View {
     let on: Bool
+    var help: String?
     let action: () -> Void
     @State private var hovering = false
 
@@ -1314,7 +1382,7 @@ private struct RampButton: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
-        .help(on ? "Remove the speed ramp" : "Speed ramp: ease into and out of the speed")
+        .help(help ?? (on ? "Remove the speed ramp" : "Speed ramp: ease into and out of the speed"))
     }
 }
 
@@ -1349,8 +1417,9 @@ private struct SpeedRampGraph: View {
         var end: Double
         var hasIn: Bool { p2 - p1 > 0.001 }
         var hasOut: Bool { p4 - p3 > 0.001 }
-        /// Eases in and holds: the 2-point shape.
+        /// Eases in and holds: the In shape.
         var isTwoPoint: Bool { hasIn && !hasOut }
+        var mode: Mode { isTwoPoint ? .rampIn : .inOut }
     }
 
     let clip: Clip
@@ -1366,14 +1435,22 @@ private struct SpeedRampGraph: View {
     @State private var drawn: Shape?
     /// The shape the graph was in when the drag began, kept until it ends (a dot pulled away mid-drag
     /// doesn't switch it).
-    @State private var draggingTwo = false
+    @State private var draggingMode = Mode.rampIn
+
+    /// In (ease from one speed into another and hold) or In/Out (ease in and back out). There's no Out: easing
+    /// from one speed into another at the end is an In with its dots further along.
+    enum Mode: String, CaseIterable { case rampIn = "in", inOut }
 
     private static let lo = 0.1, hi = 10.0
     private static let height: CGFloat = 76
 
-    /// The shape last picked, which new ramps start in (2-point until another is picked).
-    private static let twoPointKey = "speedRampTwoPoint"
-    static var twoPoint: Bool { UserDefaults.standard.object(forKey: twoPointKey) as? Bool ?? true }
+    /// The shape last picked, which new ramps start in (In until another is picked).
+    private static let modeKey = "speedRampMode"
+    static var lastMode: Mode {
+        if let m = UserDefaults.standard.string(forKey: modeKey).flatMap(Mode.init(rawValue:)) { return m }
+        // Picked before there were three: 2-point is In, 4-point In/Out.
+        return UserDefaults.standard.object(forKey: "speedRampTwoPoint") as? Bool ?? true ? .rampIn : .inOut
+    }
 
     /// Timeline time of a point `f` of the way across a clip's footage.
     static func time(of f: Double, in clip: Clip) -> Double {
@@ -1401,7 +1478,7 @@ private struct SpeedRampGraph: View {
         return out
     }
 
-    private func two(_ s: Shape) -> Bool { dragging != nil ? draggingTwo : s.isTwoPoint }
+    private func mode(_ s: Shape) -> Mode { dragging != nil ? draggingMode : s.mode }
 
     private func y(_ v: Double, _ h: CGFloat) -> CGFloat {
         let n = (log(min(max(v, Self.lo), Self.hi)) - log(Self.lo)) / (log(Self.hi) - log(Self.lo))
@@ -1419,9 +1496,10 @@ private struct SpeedRampGraph: View {
     private func points(_ s: Shape, w: CGFloat, h: CGFloat) -> [(Part, CGPoint)] {
         let midY = y(s.mid, h)
         let x = { (f: Double) in min(max(5, CGFloat(f) * w), w - 5) }
-        var out: [(Part, CGPoint)] = [(.inEnd, CGPoint(x: x(s.p2), y: midY))]
-        // 2-point has no way back out, so no dot to start one.
-        if !two(s) { out.append((.outStart, CGPoint(x: x(s.p3), y: midY))) }
+        var out: [(Part, CGPoint)] = []
+        // In has no way back out, so no dot to start one.
+        out.append((.inEnd, CGPoint(x: x(s.p2), y: midY)))
+        if mode(s) != .rampIn { out.append((.outStart, CGPoint(x: x(s.p3), y: midY))) }
         if s.hasIn { out.append((.inStart, CGPoint(x: x(s.p1), y: y(s.start, h)))) }
         if s.hasOut { out.append((.outEnd, CGPoint(x: x(s.p4), y: y(s.end, h)))) }
         return out
@@ -1464,7 +1542,7 @@ private struct SpeedRampGraph: View {
                 .gesture(DragGesture(minimumDistance: 0).onChanged { g in
                     if dragging == nil {
                         guard let part = hit(g.startLocation, s: s, w: w, h: h) else { return }
-                        draggingTwo = s.isTwoPoint
+                        draggingMode = s.mode
                         dragging = part
                         drawn = s
                         onEditing(true)
@@ -1480,7 +1558,7 @@ private struct SpeedRampGraph: View {
                         d.p2 = min(max(f, d.p1), d.p3)
                         if !d.hasIn { d.p1 = d.p2; d.start = d.mid } else if !had { d.p1 = 0; d.start = 1 }
                         // 2-point: the right dot is also the speed it eases to.
-                        if draggingTwo { d.mid = speed(p.y, h) }
+                        if draggingMode == .rampIn { d.mid = speed(p.y, h) }
                     case .outStart:
                         let had = d.hasOut
                         d.p3 = max(min(f, d.p4), d.p2)
@@ -1510,7 +1588,7 @@ private struct SpeedRampGraph: View {
                     guard dragging == nil else { return }
                     if case .active(let p) = phase {
                         switch hit(p, s: s, w: w, h: h) {
-                        case .inEnd: (two(s) ? NSCursor.openHand : NSCursor.resizeLeftRight).set()
+                        case .inEnd: (mode(s) == .rampIn ? NSCursor.openHand : NSCursor.resizeLeftRight).set()
                         case .outStart: NSCursor.resizeLeftRight.set()
                         case .inStart, .outEnd: NSCursor.openHand.set()
                         case .line: NSCursor.resizeUpDown.set()
@@ -1525,59 +1603,46 @@ private struct SpeedRampGraph: View {
             HStack(spacing: 0) {
                 modes(s)
                 Spacer()
-                // While a dot is held, the timecode it's at; otherwise how long the clip plays with its ramp.
-                if let part = dragging, part != .line {
-                    Text(Timecode.string(Self.time(of: fraction(part, s), in: clip), fps: fps))
-                        .font(Theme.mono(10.5))
-                        .foregroundStyle(Theme.text)
-                } else {
-                    Text(String(format: "%.1fs", clip.duration))
-                        .font(Theme.mono(10.5))
+                // How long the clip plays with its ramp. (A held dot's time shows on the playhead, which follows it.)
+                HStack(spacing: 4) {
+                    Text("Length")
+                        .font(.system(size: 10.5))
                         .foregroundStyle(Theme.textFaint)
-                        .help("How long the clip plays")
+                    Text(RangeReadout.length(clip.duration))
+                        .font(Theme.mono(10.5))
+                        .foregroundStyle(Theme.textDim)
                 }
+                .help("How long the clip plays with its ramp")
             }
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
     }
 
-    /// The 2-point and 4-point buttons.
+    /// In, In/Out.
     private func modes(_ s: Shape) -> some View {
-        let isTwo = two(s)
-        return HStack(spacing: 1.5) {
-            ForEach([true, false], id: \.self) { twoPoint in
-                Button { pick(twoPoint: twoPoint, from: s) } label: {
-                    RampModeGlyph(twoPoint: twoPoint)
-                        .stroke(Theme.text.opacity(isTwo == twoPoint ? 1 : 0.55), lineWidth: 1.3)
-                        .frame(width: 12, height: 7)
-                        .frame(width: 20, height: 13)
-                        .background(RoundedRectangle(cornerRadius: 3).fill(isTwo == twoPoint ? Theme.ink.opacity(0.14) : .clear))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(twoPoint ? "2-point: ease from one speed to another" : "4-point: ease into the speed and back out")
-            }
-        }
-        .padding(1.5)
-        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.bg))
+        ShapeLabels(options: [(Mode.rampIn, "In", "Ease from one speed into another"),
+                              (.inOut, "In/Out", "Ease into the speed and back out")],
+                    picked: mode(s)) { pick($0, from: s) }
     }
 
     /// Switches shape, keeping as much of the ramp as fits the other one. Remembered for new ramps.
-    private func pick(twoPoint: Bool, from s: Shape) {
-        UserDefaults.standard.set(twoPoint, forKey: Self.twoPointKey)
-        guard twoPoint != s.isTwoPoint else { return }
-        var d = s
-        if twoPoint {
-            if d.hasIn {
-                // Drop the way back out.
-                d.p3 = 1; d.p4 = 1; d.end = d.mid
-            } else {
-                // Only a way out: it becomes the one ease, from the speed to the end speed.
-                d = Shape(mid: s.end, p1: s.p3, p2: s.p4, p3: 1, p4: 1, start: s.mid, end: s.end)
-            }
-        } else {
+    private func pick(_ m: Mode, from s: Shape) {
+        UserDefaults.standard.set(m.rawValue, forKey: Self.modeKey)
+        guard m != s.mode else { return }
+        // Just the ease in: the one ease there is, or the way out turned round to come in.
+        let asIn = { (s: Shape) -> Shape in
+            var d = s
+            if d.hasIn { d.p3 = 1; d.p4 = 1; d.end = d.mid; return d }
+            return Shape(mid: s.end, p1: s.p3, p2: s.p4, p3: 1, p4: 1, start: s.mid, end: s.end)
+        }
+        var d: Shape
+        switch m {
+        case .rampIn:
+            d = asIn(s)
+        case .inOut:
             // Ease back to the starting speed, in the room after the first ease (made if there's little).
+            d = asIn(s)
             if d.p2 > 0.6 {
                 let k = 0.6 / d.p2
                 d.p1 *= k; d.p2 *= k
@@ -1656,7 +1721,7 @@ private struct SpeedRampGraph: View {
         }
         if let near {
             // Inner dots on top of each other: whichever side the drag is toward.
-            if !two(s), near.part == Part.inEnd || near.part == Part.outStart {
+            if mode(s) == .inOut, near.part == Part.inEnd || near.part == Part.outStart {
                 let x2 = CGFloat(s.p2) * w, x3 = CGFloat(s.p3) * w
                 if abs(x2 - x3) < 10 { return p.x < (x2 + x3) / 2 ? .inEnd : .outStart }
             }
@@ -1676,28 +1741,292 @@ private struct SpeedRampGraph: View {
     }
 }
 
-/// The ramp shapes on the graph's buttons: one ease up (2-point), or up and back down (4-point).
-private struct RampModeGlyph: SwiftUI.Shape {
-    let twoPoint: Bool
+/// The zoom on Scale, drawn like the speed ramp: across is the clip, up is the scale, from the full frame
+/// (100%) at the bottom to the zoomed-in Scale. The dots set when each move starts and ends; the top line sets
+/// the Scale. Along the bottom: In, In/Out, Out; and smooth or even moves.
+private struct ZoomGraph: View {
+    let clip: Clip
+    let zoom: ZoomMove
+    let scale: Double
+    let fps: Double
+    let onEditing: (Bool) -> Void
+    /// Mid-drag: the zoom, the scale, and the time into the clip of the dot held (nil for the top line).
+    let onChange: (ZoomMove, Double, Double?) -> Void
+    /// A change made in one go (the buttons).
+    let onSet: (ZoomMove) -> Void
+
+    private enum Part { case p1, p2, p3, p4, line }
+    @State private var dragging: Part?
+    @State private var drawn: (zoom: ZoomMove, scale: Double)?
+
+    private static let lo = 1.0
+    private static let height: CGFloat = 76
+    /// The top of the graph while a drag is under way, so it doesn't rescale under the pointer.
+    @State private var dragTop: Double?
+    /// The highest top shown for this clip: the graph steps up when a zoom needs more room, never back down.
+    @State private var keptTop = 0.0
+
+    /// The graph's height in fixed steps: 300%, then 500%, then 1000%. A zoom at (or dragged to) a step's
+    /// top moves the graph up to the next.
+    private static func step(for scale: Double) -> Double {
+        [3.0, 5.0].first { scale < $0 * 0.97 } ?? ClipTransform.scaleRange.upperBound
+    }
+
+    private var length: Double { max(clip.duration, 1e-6) }
+
+    private var top: Double { dragTop ?? max(Self.step(for: scale), keptTop) }
+
+    private func y(_ v: Double, _ h: CGFloat) -> CGFloat {
+        let n = (log(min(max(v, Self.lo), top)) - log(Self.lo)) / (log(top) - log(Self.lo))
+        return 6 + (h - 12) * CGFloat(1 - n)
+    }
+
+    private func scale(_ y: CGFloat, _ h: CGFloat) -> Double {
+        let n = Double(1 - (y - 6) / (h - 12))
+        let v = exp(log(Self.lo) + min(1, max(0, n)) * (log(top) - log(Self.lo)))
+        return max(1.05, (v * 100).rounded() / 100)
+    }
+
+    private func x(_ t: Double, _ w: CGFloat) -> CGFloat { min(max(5, CGFloat(t / length) * w), w - 5) }
+
+    private func time(_ part: Part, _ z: ZoomMove) -> Double {
+        switch part {
+        case .p1: z.p1
+        case .p2: z.p2
+        case .p3: z.p3
+        case .p4: z.p4
+        case .line: (z.mode == .zoomOut ? z.p3 : z.p2)
+        }
+    }
+
+    /// The dots this mode has, and where each sits.
+    private func dots(_ z: ZoomMove, _ s: Double, w: CGFloat, h: CGFloat) -> [(Part, CGPoint)] {
+        let top = y(s, h), bottom = y(1, h)
+        var out: [(Part, CGPoint)] = []
+        if z.mode != .zoomOut {
+            out.append((.p1, CGPoint(x: x(z.p1, w), y: bottom)))
+            out.append((.p2, CGPoint(x: x(z.p2, w), y: top)))
+        }
+        if z.mode != .zoomIn {
+            out.append((.p3, CGPoint(x: x(z.p3, w), y: top)))
+            out.append((.p4, CGPoint(x: x(z.p4, w), y: bottom)))
+        }
+        return out
+    }
+
+    var body: some View {
+        let z = drawn?.zoom ?? zoom, s = drawn?.scale ?? scale
+        VStack(spacing: 5) {
+            GeometryReader { geo in
+                let w = geo.size.width, h = geo.size.height
+                ZStack(alignment: .topLeading) {
+                    Canvas { ctx, _ in
+                        // The full frame, for reference.
+                        var base = Path()
+                        base.move(to: CGPoint(x: 0, y: y(1, h)))
+                        base.addLine(to: CGPoint(x: w, y: y(1, h)))
+                        ctx.stroke(base, with: .color(Theme.ink.opacity(0.14)), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                        let line = curve(z, s, w: w, h: h)
+                        var area = line
+                        area.addLine(to: CGPoint(x: w, y: y(1, h)))
+                        area.addLine(to: CGPoint(x: 0, y: y(1, h)))
+                        area.closeSubpath()
+                        ctx.fill(area, with: .color(Theme.ink.opacity(0.05)))
+                        ctx.stroke(line, with: .color(Theme.text), lineWidth: 1.5)
+                    }
+                    ForEach(dots(z, s, w: w, h: h), id: \.0) { part, p in dot(at: p, held: part == dragging) }
+                    if dragging == .line {
+                        let p = CGPoint(x: (x(lineSpan(z).0, w) + x(lineSpan(z).1, w)) / 2, y: y(s, h))
+                        Text("\(Int((s * 100).rounded()))%")
+                            .font(Theme.mono(10.5))
+                            .foregroundStyle(Theme.text)
+                            .fixedSize()
+                            .position(x: p.x, y: p.y < 16 ? p.y + 12 : p.y - 11)
+                    }
+                }
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0).onChanged { g in
+                    if dragging == nil {
+                        guard let part = hit(g.startLocation, z, s, w: w, h: h) else { return }
+                        dragTop = top
+                        dragging = part
+                        drawn = (z, s)
+                        onEditing(true)
+                    }
+                    guard let part = dragging, var d = drawn else { return }
+                    var t = Double(min(max(0, g.location.x), w) / w) * length
+                    if g.location.x < 6 { t = 0 }
+                    if g.location.x > w - 6 { t = length }
+                    t = (t * fps).rounded() / fps
+                    let gap = 1 / fps
+                    switch part {
+                    case .p1: d.zoom.p1 = min(t, d.zoom.p2 - gap)
+                    case .p2: d.zoom.p2 = min(max(t, d.zoom.p1 + gap), d.zoom.mode == .inOut ? d.zoom.p3 : length)
+                    case .p3: d.zoom.p3 = max(min(t, d.zoom.p4 - gap), d.zoom.mode == .inOut ? d.zoom.p2 : 0)
+                    case .p4: d.zoom.p4 = max(t, d.zoom.p3 + gap)
+                    case .line: d.scale = scale(g.location.y, h)
+                    }
+                    d.zoom.p1 = max(0, d.zoom.p1); d.zoom.p4 = min(length, d.zoom.p4)
+                    drawn = d
+                    onChange(d.zoom, d.scale, part == .line ? nil : time(part, d.zoom))
+                }.onEnded { _ in
+                    guard dragging != nil else { return }
+                    if let d = drawn { keptTop = max(keptTop, Self.step(for: d.scale), dragTop ?? 0) }
+                    dragging = nil
+                    drawn = nil
+                    dragTop = nil
+                    onEditing(false)
+                })
+                .onContinuousHover { phase in
+                    guard dragging == nil else { return }
+                    if case .active(let p) = phase {
+                        switch hit(p, z, s, w: w, h: h) {
+                        case .line: NSCursor.resizeUpDown.set()
+                        case nil: NSCursor.arrow.set()
+                        default: NSCursor.resizeLeftRight.set()
+                        }
+                    } else {
+                        NSCursor.arrow.set()
+                    }
+                }
+            }
+            .frame(height: Self.height)
+            // The shapes on the left, smooth or linear on the right. (A held dot's time shows on the playhead.)
+            HStack(spacing: 0) {
+                modes(z)
+                Spacer()
+                easing(z)
+            }
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
+    }
+
+    /// In, In/Out, Out.
+    private func modes(_ z: ZoomMove) -> some View {
+        ShapeLabels(options: [(ZoomMove.Mode.zoomIn, "In", "Zoom in"),
+                              (.inOut, "In/Out", "Zoom in, hold, and back out"),
+                              (.zoomOut, "Out", "Zoom out")],
+                    picked: z.mode) { pick($0) }
+    }
+
+    /// Smooth (eased) or even moves.
+    private func easing(_ z: ZoomMove) -> some View {
+        HStack(spacing: 1.5) {
+            ForEach([true, false], id: \.self) { smooth in
+                Button {
+                    var d = z; d.smooth = smooth
+                    if d != z { onSet(d) }
+                } label: {
+                    EaseGlyph(smooth: smooth)
+                        .stroke(Theme.text.opacity(z.smooth == smooth ? 1 : 0.55), lineWidth: 1.3)
+                        .frame(width: 9, height: 7)
+                        .frame(width: 20, height: 15)
+                        .background(RoundedRectangle(cornerRadius: 3).fill(z.smooth == smooth ? Theme.ink.opacity(0.14) : .clear))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(smooth ? "Smooth: eases into and out of each move" : "Linear: moves at an even pace")
+            }
+        }
+        .padding(1.5)
+        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.bg))
+    }
+
+    /// Another mode, starting fresh for it (keeping smooth or linear). Remembered for new zooms.
+    private func pick(_ m: ZoomMove.Mode) {
+        guard m != zoom.mode else { return }
+        var d = ZoomMove.starter(m, length: length)
+        d.smooth = zoom.smooth
+        onSet(d)
+    }
+
+    /// Where the top line runs, between the dots at the zoomed-in scale.
+    private func lineSpan(_ z: ZoomMove) -> (Double, Double) {
+        switch z.mode {
+        case .zoomIn: (z.p2, length)
+        case .zoomOut: (0, z.p3)
+        case .inOut: (z.p2, z.p3)
+        }
+    }
+
+    private func curve(_ z: ZoomMove, _ s: Double, w: CGFloat, h: CGFloat) -> Path {
+        var path = Path()
+        let n = 160
+        for i in 0...n {
+            let u = Double(i) / Double(n) * length
+            let v = exp(log(max(s, 1e-3)) * z.amount(at: u))
+            let pt = CGPoint(x: CGFloat(u / length) * w, y: y(v, h))
+            if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
+        }
+        return path
+    }
+
+    private func hit(_ p: CGPoint, _ z: ZoomMove, _ s: Double, w: CGFloat, h: CGFloat) -> Part? {
+        var near: (part: Part, d: CGFloat)?
+        for (part, at) in dots(z, s, w: w, h: h) {
+            let d = hypot(p.x - at.x, p.y - at.y)
+            if d < 10, d < (near?.d ?? .infinity) { near = (part, d) }
+        }
+        if let near { return near.part }
+        let span = lineSpan(z)
+        if p.x > x(span.0, w), p.x < x(span.1, w), abs(p.y - y(s, h)) < 8 { return .line }
+        return nil
+    }
+
+    private func dot(at p: CGPoint, held: Bool) -> some View {
+        let size: CGFloat = held ? 12 : 10
+        return Circle().fill(Theme.text).frame(width: size, height: size)
+            .overlay(Circle().strokeBorder(Theme.field, lineWidth: 2.5).padding(-2.5))
+            .position(p)
+            .allowsHitTesting(false)
+    }
+}
+
+
+/// A ramp's or zoom's shape picked by name (In, In/Out, Out), along the bottom of its graph.
+private struct ShapeLabels<M: Hashable>: View {
+    let options: [(M, String, String)]
+    let picked: M
+    let pick: (M) -> Void
+
+    var body: some View {
+        HStack(spacing: 1.5) {
+            ForEach(options, id: \.0) { value, label, help in
+                Button { pick(value) } label: {
+                    Text(label)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Theme.text.opacity(picked == value ? 1 : 0.55))
+                        .padding(.horizontal, 6)
+                        .frame(height: 15)
+                        .background(RoundedRectangle(cornerRadius: 3).fill(picked == value ? Theme.ink.opacity(0.14) : .clear))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(help)
+            }
+        }
+        .padding(1.5)
+        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.bg))
+    }
+}
+
+/// Smooth (an S-curve) or linear (a straight line), for the ease buttons.
+private struct EaseGlyph: SwiftUI.Shape {
+    let smooth: Bool
     func path(in r: CGRect) -> Path {
         var p = Path()
-        let lo = r.maxY, hi = r.minY, w = r.width
-        let at = { (f: CGFloat) in r.minX + w * f }
-        p.move(to: CGPoint(x: r.minX, y: lo))
-        if twoPoint {
-            p.addLine(to: CGPoint(x: at(0.25), y: lo))
-            p.addCurve(to: CGPoint(x: at(0.7), y: hi), control1: CGPoint(x: at(0.5), y: lo), control2: CGPoint(x: at(0.45), y: hi))
-            p.addLine(to: CGPoint(x: r.maxX, y: hi))
+        p.move(to: CGPoint(x: r.minX, y: r.maxY))
+        if smooth {
+            p.addCurve(to: CGPoint(x: r.maxX, y: r.minY), control1: CGPoint(x: r.midX + r.width * 0.15, y: r.maxY),
+                       control2: CGPoint(x: r.midX - r.width * 0.15, y: r.minY))
         } else {
-            p.addLine(to: CGPoint(x: at(0.12), y: lo))
-            p.addCurve(to: CGPoint(x: at(0.4), y: hi), control1: CGPoint(x: at(0.28), y: lo), control2: CGPoint(x: at(0.24), y: hi))
-            p.addLine(to: CGPoint(x: at(0.6), y: hi))
-            p.addCurve(to: CGPoint(x: at(0.88), y: lo), control1: CGPoint(x: at(0.76), y: hi), control2: CGPoint(x: at(0.72), y: lo))
-            p.addLine(to: CGPoint(x: r.maxX, y: lo))
+            p.addLine(to: CGPoint(x: r.maxX, y: r.minY))
         }
         return p
     }
 }
+
 
 /// Up and down arrow keys while a field is being typed in: `step(up, shift)`, and the keys go no
 /// further (a text field would otherwise move the cursor to the start or end).

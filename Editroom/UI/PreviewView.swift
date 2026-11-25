@@ -151,13 +151,20 @@ struct PreviewView: View {
                                 }
                             } else if c.isTransformable {
                                 let tf = c.transform ?? ClipTransform()
-                                if moveStart == nil { moveStart = (tf.x, tf.y) }
+                                // A zooming clip: framed on the picture all the way in.
+                                if moveStart == nil, tf.zoom != nil { model.showZoomed(c.id) }
+                                if moveStart == nil { moveStart = tf.zoomedOffset }
                                 guard let s = moveStart else { return }
                                 var nx = s.x + Double(v.translation.width / w)
                                 var ny = s.y + Double(v.translation.height / h)
                                 // Snap back to centre within a few points.
                                 if abs(nx) * Double(w) < 5 { nx = 0 }
                                 if abs(ny) * Double(h) < 5 { ny = 0 }
+                                // Zoomed in, the picture can't be pulled past the frame's edge.
+                                if tf.fills {
+                                    let m = (tf.scale - 1) / 2
+                                    nx = min(max(nx, -m), m); ny = min(max(ny, -m), m)
+                                }
                                 let width = Double(model.project.width), height = Double(model.project.height)
                                 setTransform(c.id) {
                                     $0.x = (nx * width).rounded() / width

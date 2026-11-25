@@ -152,11 +152,14 @@ struct Clip: Identifiable, Codable, Hashable {
         duration -= d
         if playsSource { sourceStart = max(0, newSource) }
         clampFades()
+        // A zoom stays on the picture it was on.
+        transform?.zoom?.shift(by: d, length: duration)
     }
 
     mutating func trimTail(to t: Double) {
         duration = t - start
         clampFades()
+        transform?.zoom?.fit(length: duration)
     }
 }
 
@@ -215,6 +218,8 @@ struct ClipTransform: Codable, Hashable {
     /// height. Positive y is down.
     var x = 0.0
     var y = 0.0
+    /// Moving between the full frame and this framing over the clip (the zoom button on Scale).
+    var zoom: ZoomMove?
 
     var isIdentity: Bool { self == ClipTransform() }
     static let scaleRange = 0.05...10.0
@@ -868,6 +873,8 @@ extension Project {
         for i in clips.indices {
             clips[i].start = max(0, clips[i].start)
             clips[i].clampFades()
+            let length = clips[i].duration
+            clips[i].transform?.zoom?.fit(length: length)
         }
         // The caption track goes with the last captioned clip (deleted, or its captions taken off): it could
         // never show anything again. Undo brings both back.

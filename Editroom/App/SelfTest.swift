@@ -836,6 +836,54 @@ enum SelfTest {
             log("RIPPLE TRIM \(good ? "OK" : "FAIL") q=\(q) [\(qShape)] w=\(w) selected=\(sel) undo=\(undone)")
             ok = ok && good
         }
+        // Zoom on Scale: in, in and out, out; kept on its picture through trims and splits (an in-and-out cut
+        // in the middle leaves an in and an out); never past the picture's edge; drawn zoomed where it's framed.
+        do {
+            var z = ZoomMove.starter(.inOut, length: 8)
+            let io = z.amount(at: 0) == 0 && z.amount(at: 0.5) > 0 && z.amount(at: 0.5) < 1 && z.amount(at: 4) == 1 && z.amount(at: 7.99) < 0.01
+            z.smooth = false
+            let linear = abs(z.amount(at: 1) - 0.5) < 1e-9 && z.p2 == 2
+            let zin = ZoomMove.starter(.zoomIn, length: 8), zout = ZoomMove.starter(.zoomOut, length: 8)
+            let modes = zin.amount(at: 7.9) == 1 && zout.amount(at: 0) == 1 && zout.amount(at: 7.99) < 0.01
+            var p = Project()
+            var c = Clip(trackID: p.videoTracks[0].id, kind: .solid, start: 0, duration: 8)
+            c.transform = ClipTransform(scale: 2, x: 0.9, y: 0, zoom: .starter(.inOut, length: 8))
+            p.clips = [c]
+            let edge = c.transform!.at(4)!.x == 0.5
+            let right = p.split(ids: [c.id], at: 4)
+            let l = p.clip(c.id)!.transform!.zoom!, r = p.clip(right.first!)!.transform!.zoom!
+            let split = l.amount(at: 3.9) == 1 && r.amount(at: 0) == 1 && r.amount(at: 3.99) < 0.01
+            // The toggle: on zooms to 200% from 100%; off keeps the scale.
+            let m = EditorModel()
+            var q = Project()
+            let clip = Clip(trackID: q.videoTracks[0].id, kind: .solid, start: 0, duration: 6)
+            q.clips = [clip]
+            m.load(q, url: nil)
+            m.toggleZoom(clip.id)
+            let on = m.project.clip(clip.id)?.transform?.scale == 2 && m.project.clip(clip.id)?.transform?.zoom != nil && m.playhead > 0
+            m.toggleZoom(clip.id)
+            let off = m.project.clip(clip.id)?.transform?.zoom == nil && m.project.clip(clip.id)?.transform?.scale == 2
+            // Red on the left, blue on the right, zoomed 2× onto the right half: blue at the left edge.
+            let size = CGSize(width: 64, height: 36)
+            let red = CIImage(color: CIColor(red: 1, green: 0, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: 32, height: 36))
+            let blue = CIImage(color: CIColor(red: 0, green: 0, blue: 1)).cropped(to: CGRect(x: 32, y: 0, width: 32, height: 36))
+            var pic = Clip(trackID: p.videoTracks[0].id, kind: .image, start: 0, duration: 4)
+            pic.transform = ClipTransform(scale: 2, x: -0.5, y: 0, zoom: .starter(.zoomIn, length: 4))
+            let ins = TimelineInstruction(timeRange: CMTimeRange(start: .zero, duration: CMTime(seconds: 4, preferredTimescale: 600)),
+                                          layers: [RenderLayer(clip: pic, source: .image(blue.composited(over: red)))], trackIDs: [], canvas: size)
+            let ctx = CIContext(options: [.workingColorSpace: NSNull()])
+            func pixel(_ t: Double) -> [UInt8] {
+                var px = [UInt8](repeating: 0, count: 4)
+                ctx.render(TimelineCompositor.compose(ins, at: t, output: size) { _, _ in nil }, toBitmap: &px, rowBytes: 4,
+                           bounds: CGRect(x: 2, y: 18, width: 1, height: 1), format: .RGBA8, colorSpace: nil)
+                return px
+            }
+            let first = pixel(0), last = pixel(3)
+            let drawn = first[0] > 200 && first[2] < 50 && last[2] > 200 && last[0] < 50
+            let good = io && linear && modes && edge && split && on && off && drawn
+            log("ZOOM \(good ? "OK" : "FAIL") inOut=\(io) linear=\(linear) modes=\(modes) edge=\(edge) split=\(split) toggle=\(on && off) drawn=\(drawn) \(first) \(last)")
+            ok = ok && good
+        }
         // Typed timecodes.
         do {
             let cases: [(String, Double?)] = [("1000", 10), ("1:02:03", 62.1), ("00:00:02:15", 2.5), ("12", 0.4), ("abc", nil)]
