@@ -42,7 +42,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { NSApp.windows.forEach(fill) }
     }
 
+    @objc private func openDocuments(_ event: NSAppleEventDescriptor, withReply reply: NSAppleEventDescriptor) {
+        guard let list = event.paramDescriptor(forKeyword: keyDirectObject) else { return }
+        var urls: [URL] = []
+        let count = list.numberOfItems
+        // A single file can come as the item itself rather than a list of one.
+        for i in 0..<max(count, 1) {
+            let item = count > 0 ? list.atIndex(i + 1) : list
+            if let url = item?.fileURLValue { urls.append(url) }
+        }
+        guard !urls.isEmpty else { return }
+        application(NSApp, open: urls)
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Files dropped on the Dock icon or opened from Finder once Editroom is running come here directly. Left to
+        // SwiftUI, each one presented the window again, fading it out and back in. (Set after SwiftUI's own handler,
+        // which replaces one set any earlier; files that open the app still arrive through it, as the window opens.)
+        DispatchQueue.main.async {
+            NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(self.openDocuments(_:withReply:)),
+                                                         forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEOpenDocuments))
+        }
         // Files that open the app arrive just before this; any after it are dropped on a running Editroom.
         DispatchQueue.main.async { self.launching = false }
         fillScreenOnFirstLaunch()
