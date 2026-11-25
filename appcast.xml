@@ -3,14 +3,14 @@
   <channel>
     <title>Editroom</title>
     <item>
-      <title>Version 1.0.2</title>
-      <pubDate>Tue, 24 Nov 2026 17:13:38 +0000</pubDate>
-      <sparkle:version>3</sparkle:version>
-      <sparkle:shortVersionString>1.0.2</sparkle:shortVersionString>
+      <title>Version 1.0.3</title>
+      <pubDate>Wed, 25 Nov 2026 06:34:00 +0000</pubDate>
+      <sparkle:version>4</sparkle:version>
+      <sparkle:shortVersionString>1.0.3</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <link>https://github.com/robbietilton/Editroom/releases/tag/v1.0.2</link>
-      <changes><![CDATA[Ripple Trim: press Q to trim a clip from its start to the playhead, or W from the playhead to its end. The gap closes on its own.]]></changes>
-      <enclosure url="https://github.com/robbietilton/Editroom/releases/download/v1.0.2/Editroom.dmg" sparkle:edSignature="BRy2M7FT8tEAOYR0GSPJJTasgD3DmwcaWAIACXqB71gOYip0pyISgch1jFVJ5u6gdvRu90OTyCHcawen5f9TAg==" length="11481790" type="application/octet-stream"/>
+      <link>https://github.com/robbietilton/Editroom/releases/tag/v1.0.3</link>
+      <changes><![CDATA[Animated Zooms: turn on the button in Transform › Scale to zoom in, out, or in and back out over a clip, easing in or at a steady pace. Great for screen recordings.]]></changes>
+      <enclosure url="https://github.com/robbietilton/Editroom/releases/download/v1.0.3/Editroom.dmg" sparkle:edSignature="nd6ew+w8QD/xkyuqYEVgAYtwOMigPp5Pzj4PJbkRnxkY3yWCLyi4I+LnzFsXCmmkGghpdLNg9mtyz2zJO8KCDg==" length="11585741" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>
