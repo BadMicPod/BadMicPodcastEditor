@@ -6,7 +6,7 @@
 set -e
 [[ -f "$1" ]] || { echo "usage: scripts/make-icon.sh <square image>"; exit 1 }
 root="${0:A:h:h}"
-set_dir="$root/Editroom/Assets.xcassets/AppIcon.appiconset"
+set_dir="$root/BadMicPodcastEditor/Assets.xcassets/AppIcon.appiconset"
 master="$(mktemp -d)/icon_1024.png"
 swift "$root/scripts/make-icon.swift" "$1" "$master" "${2:-1}"
 for n in 16 32 128 256 512; do

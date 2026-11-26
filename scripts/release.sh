@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Builds a signed, notarized Editroom DMG that opens without warnings on any Mac: dist/Editroom-<version>.dmg.
+# Builds a signed, notarized BadMic Podcast Editor DMG that opens without warnings on any Mac: dist/BadMicPodcastEditor-<version>.dmg.
 # Then scripts/publish.sh puts it on GitHub and in the update feed.
 #
 # Needs, all kept out of this repository:
@@ -12,12 +12,12 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-APP=Editroom
+APP=BadMicPodcastEditor
 TEAM=3E4X3B9Z9T
 IDENTITY="Developer ID Application"
 NOTARY_PROFILE=editroom-notary
 # Built outside Dropbox: the extended attributes it adds to files make code signing fail.
-WORK="$HOME/Library/Caches/EditroomRelease"
+WORK="$HOME/Library/Caches/BadMicPodcastEditorRelease"
 DIST="$PROJECT_DIR/dist"
 
 command -v create-dmg >/dev/null || { echo "create-dmg is missing: brew install create-dmg"; exit 1 }

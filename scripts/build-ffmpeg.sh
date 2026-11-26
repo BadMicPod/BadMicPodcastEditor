@@ -1,6 +1,6 @@
 #!/bin/bash
-# Builds the small ffmpeg Editroom ships in Vendor/ffmpeg/ffmpeg (about 4.6 MB, Apple silicon,
-# LGPL). Editroom only uses it to rewrap or convert files macOS can't open itself (MXF, MKV, WebM…),
+# Builds the small ffmpeg BadMic Podcast Editor ships in Vendor/ffmpeg/ffmpeg (about 4.6 MB, Apple silicon,
+# LGPL). BadMic Podcast Editor only uses it to rewrap or convert files macOS can't open itself (MXF, MKV, WebM…),
 # so it has container readers, a .mov writer, decoders for codecs macOS lacks, and Apple's hardware
 # encoder; nothing else. Run it to update ffmpeg (for security fixes): ./scripts/build-ffmpeg.sh 9.1
 set -euo pipefail

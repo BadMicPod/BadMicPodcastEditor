@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Publishes the DMG that release.sh built: a GitHub Release (v<version>) holding Editroom.dmg, then the Sparkle
+# Publishes the DMG that release.sh built: a GitHub Release (v<version>) holding BadMicPodcastEditor.dmg, then the Sparkle
 # update feed (appcast.xml, committed to main) pointing at it.
 #
 # Run release.sh first. Needs the Sparkle signing key (keychain account "editroom", made with generate_keys --account editroom)
@@ -9,9 +9,9 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-APP=Editroom
-REPO=robbietilton/Editroom
-WORK="$HOME/Library/Caches/EditroomRelease"
+APP=BadMicPodcastEditor
+REPO=BadMicPod/BadMicPodcastEditor
+WORK="$HOME/Library/Caches/BadMicPodcastEditorRelease"
 SIGN_UPDATE="$WORK/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update"
 
 settings=$(xcodebuild -project "$PROJECT_DIR/$APP.xcodeproj" -scheme "$APP" -configuration Release -showBuildSettings 2>/dev/null)
@@ -28,7 +28,7 @@ if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
 fi
 
 echo "==> $APP $VERSION ($BUILD)"
-# Every release names its file Editroom.dmg, so …/releases/latest/download/Editroom.dmg always works.
+# Every release names its file BadMicPodcastEditor.dmg, so …/releases/latest/download/BadMicPodcastEditor.dmg always works.
 mkdir -p "$WORK/publish"
 DMG="$WORK/publish/$APP.dmg"
 cp "$SOURCE" "$DMG"

@@ -1,18 +1,18 @@
-<p align="center"><img src="docs/icon.png" width="128" alt="Editroom icon"></p>
+<p align="center"><img src="docs/icon.png" width="128" alt="BadMic Podcast Editor icon"></p>
 
-# Editroom
+# BadMic Podcast Editor
 
 Fast and powerful video editing for Mac. Free, open source, and always yours.
 
-Editroom has the pro editing tools you need — color grading, speed ramps, transitions, audio mixing, loudness targets and exports in any shape — in a 7.5 MB app that plays 4K in realtime, with no proxies or buffering. Say what you want and watch Claude, ChatGPT or your Mac cut it for you.
+BadMic Podcast Editor has the pro editing tools you need — color grading, speed ramps, transitions, audio mixing, loudness targets and exports in any shape — in a 7.5 MB app that plays 4K in realtime, with no proxies or buffering. Say what you want and watch Claude, ChatGPT or your Mac cut it for you.
 
 Because it's open source, you can download the Xcode project and add, remove, or modify any feature to fit your workflow.
 
-![Editroom](docs/screenshot.webp)
+![BadMic Podcast Editor](docs/screenshot.webp)
 
 ## Installation
 
-Download the latest release from [GitHub Releases](https://github.com/robbietilton/Editroom/releases/latest), open the DMG and drag Editroom to Applications. Editroom checks for updates itself (Editroom › Check for Updates…).
+Download the latest release from [GitHub Releases](https://github.com/BadMicPod/BadMicPodcastEditor/releases/latest), open the DMG and drag BadMic Podcast Editor to Applications. BadMic Podcast Editor checks for updates itself (BadMic Podcast Editor › Check for Updates…).
 
 ## Features
 
@@ -67,11 +67,11 @@ Mention a clip with `@` or point at the playhead with `@playhead`. Every Magic e
 
 ## Building
 
-Open `Editroom.xcodeproj` and run the **Editroom** scheme.
+Open `BadMicPodcastEditor.xcodeproj` and run the **BadMicPodcastEditor** scheme.
 
 ## Releasing
 
-`scripts/release.sh` builds a Release version, signs it with Developer ID, notarizes and staples it, and packages it into `dist/Editroom-<version>.dmg`. `scripts/publish.sh` then creates the GitHub Release and updates the Sparkle feed (`appcast.xml`).
+`scripts/release.sh` builds a Release version, signs it with Developer ID, notarizes and staples it, and packages it into `dist/BadMicPodcastEditor-<version>.dmg`. `scripts/publish.sh` then creates the GitHub Release and updates the Sparkle feed (`appcast.xml`).
 
 They need, all kept outside this repository:
 
@@ -84,4 +84,4 @@ They need, all kept outside this repository:
 
 MIT — see [LICENSE](LICENSE).
 
-Editroom includes [FFmpeg](https://ffmpeg.org) 9.1, licensed under the GNU LGPL 2.1 or later, which it runs as a separate program to open formats macOS can't. See [Vendor/ffmpeg](Vendor/ffmpeg/README.md) for its source and build options. Updates are handled by [Sparkle](https://sparkle-project.org) (MIT).
+BadMic Podcast Editor includes [FFmpeg](https://ffmpeg.org) 9.1, licensed under the GNU LGPL 2.1 or later, which it runs as a separate program to open formats macOS can't. See [Vendor/ffmpeg](Vendor/ffmpeg/README.md) for its source and build options. Updates are handled by [Sparkle](https://sparkle-project.org) (MIT).

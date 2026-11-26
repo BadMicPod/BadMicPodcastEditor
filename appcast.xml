@@ -1,21 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
-    <title>Editroom</title>
+    <title>BadMic Podcast Editor</title>
     <item>
       <title>Version 1.0.7</title>
       <pubDate>Thu, 26 Nov 2026 05:08:50 +0000</pubDate>
       <sparkle:version>8</sparkle:version>
       <sparkle:shortVersionString>1.0.7</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <link>https://github.com/robbietilton/Editroom/releases/tag/v1.0.7</link>
+      <link>https://github.com/BadMicPod/BadMicPodcastEditor/releases/tag/v1.0.7</link>
       <changes><![CDATA[Apple Photos App: drag videos straight in from Photos.
 iPhone HDR: clips now look as they do in macOS, no longer blown out.
 Smoother playback: no flicker or stutter when editing clips while playing.
 Reveal in Media: Shift-F finds a timeline clip's file in Media.
 Replaced files: a file swapped or saved over with the same name is picked up.
 Fixes: Command-A and Delete on the timeline, vertical-to-wide switching, and no beep from the Match the sequence alert.]]></changes>
-      <enclosure url="https://github.com/robbietilton/Editroom/releases/download/v1.0.7/Editroom.dmg" sparkle:edSignature="FEzDTDExgIYfGSJ3YmM2TBgG3IDxGyCLddsfTU2rJg3rjsX7U7XxUK/66yfvpSLle1t2UlWZOFKYn3HZlWPOBQ==" length="12056793" type="application/octet-stream"/>
+      <enclosure url="https://github.com/BadMicPod/BadMicPodcastEditor/releases/download/v1.0.7/BadMicPodcastEditor.dmg" sparkle:edSignature="FEzDTDExgIYfGSJ3YmM2TBgG3IDxGyCLddsfTU2rJg3rjsX7U7XxUK/66yfvpSLle1t2UlWZOFKYn3HZlWPOBQ==" length="12056793" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>
