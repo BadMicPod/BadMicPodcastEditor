@@ -420,20 +420,20 @@ final class PlaybackEngine {
         // Sent to about where it'll take over before it draws anything: left alone, it first makes the
         // frame at the start, which costs a decode the playing picture needs (and, from frames decoded
         // ahead, pushes out the ones playing).
-        spare.seek(to: CompositionBuilder.time(now + max(0.06, handoffPrep * 1.5 + 0.03)), toleranceBefore: .zero, toleranceAfter: .zero)
+        spare.seek(to: CompositionBuilder.time(now + max(0.035, handoffPrep * 1.5 + 0.02) + 0.03), toleranceBefore: .zero, toleranceAfter: .zero)
         spareOutput = output
         spareSignature = sig
         handingOff = true
         let next = spare
         Task { @MainActor [weak self] in
-            for _ in 0..<150 where item.status != .readyToPlay || next.status != .readyToPlay {
+            for _ in 0..<750 where item.status != .readyToPlay || next.status != .readyToPlay {
                 if item.status == .failed { break }
-                try? await Task.sleep(nanoseconds: 10_000_000)
+                try? await Task.sleep(nanoseconds: 2_000_000)
             }
             guard let self, generation == self.priming else { return }
             // Just long enough ahead for the seek and decode to finish before the playhead gets
             // there: what they took last time, with room to spare. Footage that's slower to ready gets more.
-            var lead = max(0.06, self.handoffPrep * 1.5 + 0.03)
+            var lead = max(0.035, self.handoffPrep * 1.5 + 0.02)
             for _ in 0..<3 {
                 guard item.status == .readyToPlay, self.isPlaying else { break }
                 let asked = CACurrentMediaTime()
