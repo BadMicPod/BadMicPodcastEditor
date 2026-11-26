@@ -194,11 +194,15 @@ final class MediaStore: ObservableObject {
     struct FileStamp: Equatable {
         let size: Int
         let date: Date
+        /// The file's identity on its disk: a file replaced by another of the same name (a rotated copy, say, that
+        /// kept its size and date) is a different file.
+        let number: Int
         init?(_ path: String) {
             guard let a = try? FileManager.default.attributesOfItem(atPath: path),
                   let date = a[.modificationDate] as? Date else { return nil }
             size = (a[.size] as? NSNumber)?.intValue ?? 0
             self.date = date
+            number = (a[.systemFileNumber] as? NSNumber)?.intValue ?? 0
         }
     }
     private var stamps: [UUID: FileStamp] = [:]
@@ -702,7 +706,7 @@ enum FFmpeg {
             FileHandle.standardError.write("IMPORT converting with \(bin)\n".data(using: .utf8)!)
         }
         let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
-        let stamp = "\(url.path)|\(attrs?[.size] ?? 0)|\(attrs?[.modificationDate] ?? Date.distantPast)"
+        let stamp = "\(url.path)|\(attrs?[.size] ?? 0)|\(attrs?[.modificationDate] ?? Date.distantPast)|\(attrs?[.systemFileNumber] ?? 0)"
         // A hash that is the same on every launch, so re-converting a file reuses its copy's name.
         var hash: UInt64 = 0xcbf29ce484222325
         for byte in stamp.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100000001b3 }

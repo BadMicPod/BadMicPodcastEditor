@@ -118,7 +118,7 @@ enum CompositionBuilder {
                         var shown = clip
                         shown.start -= plan.leadIn
                         shown.sourceStart = clip.sourceTime(at: shown.start)
-                        hash(shown, into: &hasher)
+                        hash(shown, media: media, into: &hasher)
                         let limit = Int(max(canvas.width, canvas.height).rounded())
                         layers.append(RenderLayer(clip: clip, source: .reversed(frames, rt.orientation, limit: limit, clock: SourceClock(shown), length: length),
                                                   cube: GradeBaker.cube(for: clip.grade), color: rt.sourceColor, plan: plan,
@@ -130,7 +130,7 @@ enum CompositionBuilder {
                         var shown = clip
                         shown.start -= plan.leadIn
                         if !clip.isFreeze { shown.sourceStart = clip.sourceTime(at: shown.start) }
-                        hash(shown, into: &hasher)
+                        hash(shown, media: media, into: &hasher)
                         let limit = Int(max(canvas.width, canvas.height).rounded())
                         layers.append(RenderLayer(clip: clip, source: .decoded(frames, rt.orientation, limit: limit, clock: SourceClock(shown)),
                                                   cube: GradeBaker.cube(for: clip.grade), color: rt.sourceColor, plan: plan))
@@ -147,7 +147,7 @@ enum CompositionBuilder {
                         if !clip.isFreeze { shown.sourceStart = clip.sourceTime(at: shown.start) }
                         shown.duration += plan.leadIn + plan.tailOut
                         guard let ct = compTracks[lane], insert(shown, source: src, range: rt.videoRange, into: ct, cursor: &cursors[lane]) else { continue }
-                        hash(shown, into: &hasher)
+                        hash(shown, media: media, into: &hasher)
                         layers.append(RenderLayer(clip: clip, source: .track(ct.trackID, rt.orientation), cube: GradeBaker.cube(for: clip.grade), color: rt.sourceColor, plan: plan,
                                                   scrub: ScrubSource(asset: id, clock: SourceClock(shown))))
                     case .image:
@@ -216,7 +216,7 @@ enum CompositionBuilder {
                         }
                     }
                     guard let ct = compTrack, let p = params, insert(clip, source: src, range: sourceRange, into: ct, cursor: &cursor) else { continue }
-                    hash(clip, into: &hasher)
+                    hash(clip, media: media, into: &hasher)
 
                     let gain = Float(trackGain * dbToLinear(clip.gainDB))
                     if let spans = duckSpans, !spans.isEmpty {
@@ -293,8 +293,11 @@ enum CompositionBuilder {
         }
     }
 
-    private static func hash(_ clip: Clip, into hasher: inout Hasher) {
+    @MainActor private static func hash(_ clip: Clip, media: MediaStore, into hasher: inout Hasher) {
         hasher.combine(clip.assetID)
+        // The file the item has open: reloaded from disk (a rotated copy saved over it), it's a new one, so the
+        // player builds afresh instead of keeping what it made from the old file.
+        if let id = clip.assetID, let rt = media.runtimes[id] { hasher.combine(ObjectIdentifier(rt)) }
         hasher.combine(clip.start)
         hasher.combine(clip.duration)
         hasher.combine(clip.sourceStart)

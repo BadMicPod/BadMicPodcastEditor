@@ -1014,6 +1014,89 @@ enum SelfTest {
             ok = ok && good
             try? fm.removeItem(at: held.deletingLastPathComponent())
         }
+        // Replaced in another format: clip.mp4 deleted, clip.mov saved beside it. The same item takes the new file, and its
+        // clip on the timeline stays; with two candidates (clip.mov and clip.mkv), nothing is guessed.
+        do {
+            let fm = FileManager.default
+            let dir = outDir.appendingPathComponent("replace-test", isDirectory: true)
+            try? fm.removeItem(at: dir)
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            let mp4 = dir.appendingPathComponent("amusement-park.mp4")
+            try? fm.copyItem(at: mediaDir.appendingPathComponent("c_clip.mp4"), to: mp4)
+            var p = Project()
+            p.settingsLocked = true
+            let m = EditorModel()
+            m.load(p, url: nil)
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            let got: [MediaAsset] = await withCheckedContinuation { c in m.importFiles([mp4], offerMatch: false) { c.resume(returning: $0) } }
+            var good = false
+            if let a = got.first {
+                m.mutate { $0.clips.append(Clip(trackID: $0.videoTracks[0].id, kind: .video, assetID: a.id, start: 0, duration: 2)) }
+                try? fm.removeItem(at: mp4)
+                let mov = dir.appendingPathComponent("amusement-park.mov")
+                try? fm.copyItem(at: mediaDir.appendingPathComponent("d_clip.mp4"), to: mov)
+                await m.syncFolders()
+                let now = m.project.asset(a.id)
+                let movPath = mov.standardizedFileURL.path
+                let swapped = now?.path == movPath && m.project.assets.count == 1 && m.project.clips.count == 1
+                    && abs((now?.duration ?? 0) - 3) < 0.1
+                // Two candidates: left missing, not guessed.
+                try? fm.removeItem(at: mov)
+                try? fm.copyItem(at: mediaDir.appendingPathComponent("c_clip.mp4"), to: dir.appendingPathComponent("amusement-park.m4v"))
+                try? fm.copyItem(at: mediaDir.appendingPathComponent("e_clip.mp4"), to: dir.appendingPathComponent("amusement-park.mkv"))
+                await m.adoptReplacements()
+                let notGuessed = m.project.asset(a.id)?.path == movPath
+                good = swapped && notGuessed
+                log("REPLACED FILE \(good ? "OK" : "FAIL") sameItemNewFile=\(swapped) twoCandidatesLeftAlone=\(notGuessed)")
+            } else {
+                log("REPLACED FILE FAIL no import")
+            }
+            ok = ok && good
+            try? fm.removeItem(at: dir)
+        }
+        // Reload from Disk after the file is replaced by a rotated version (same name): the item becomes portrait and the
+        // picture is drawn turned (black at the sides of a wide frame), not the old landscape picture.
+        do {
+            let fm = FileManager.default
+            let dir = outDir.appendingPathComponent("rotate-test", isDirectory: true)
+            try? fm.removeItem(at: dir)
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            let file = dir.appendingPathComponent("clip.mov")
+            let plain = outDir.deletingLastPathComponent().appendingPathComponent("rot/plain.mov")
+            let tagged = outDir.deletingLastPathComponent().appendingPathComponent("rot/tagged.mov")
+            if fm.fileExists(atPath: plain.path), fm.fileExists(atPath: tagged.path) {
+                try? fm.copyItem(at: plain, to: file)
+                var p = Project()
+                p.settingsLocked = true
+                p.width = 1280; p.height = 720
+                let m = EditorModel()
+                m.load(p, url: nil)
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                let got: [MediaAsset] = await withCheckedContinuation { c in m.importFiles([file], offerMatch: false) { c.resume(returning: $0) } }
+                if let a = got.first {
+                    m.mutate { $0.clips.append(Clip(trackID: $0.videoTracks[0].id, kind: .video, assetID: a.id, start: 0, duration: 2)) }
+                    try? fm.removeItem(at: file)
+                    try? fm.copyItem(at: tagged, to: file)
+                    await m.reloadMedia([a.id])
+                    let now = m.project.asset(a.id)
+                    let sizeOK = now?.width == 720 && now?.height == 1280
+                    var drawnOK = false
+                    if let img = await m.snapshot(at: 0.5)?.cgImage(forProposedRect: nil, context: nil, hints: nil),
+                       let data = img.dataProvider?.data, let bytes = CFDataGetBytePtr(data) {
+                        // The left edge of a wide frame holding a portrait picture is black.
+                        let bpr = img.bytesPerRow, y = img.height / 2
+                        let edge = Int(bytes[y * bpr + 4]) + Int(bytes[y * bpr + 5]) + Int(bytes[y * bpr + 6])
+                        drawnOK = edge < 30
+                    }
+                    let good = sizeOK && drawnOK
+                    log("RELOAD ROTATED \(good ? "OK" : "FAIL") portraitSize=\(sizeOK) (\(now?.width ?? 0)x\(now?.height ?? 0)) drawnTurned=\(drawnOK)")
+                    ok = ok && good
+                }
+            } else {
+                log("RELOAD ROTATED SKIP needs rot/plain.mov and rot/tagged.mov next to the out folder")
+            }
+            try? fm.removeItem(at: dir)
+        }
         // Folders: a folder brought in whole is mirrored in Media and followed on disk: files added later come in,
         // a file renamed or the folder moved is followed (same items, nothing to locate), a file taken out stays out
         // (Undo brings it back), one put in the Trash isn't followed there, and Delete Folder takes it all out.

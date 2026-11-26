@@ -1476,6 +1476,9 @@ final class EditorModel: ObservableObject {
             if let open = mediaFolder, !MediaTree(project).exists(open) { mediaFolder = nil }
         }
         if !moved.isEmpty { await reopenMedia(moved) }
+        // Replaced with the same name in another format (beach.mp4 deleted, beach.mov saved beside it): the item takes
+        // the new file, keeping its clips, as Locate would. Only when that one file is the obvious match.
+        await adoptReplacements()
         // Deleted from a linked folder on disk (or put in the Trash) and not used on the timeline: gone from Media too,
         // as from the folder. Used ones stay, shown missing, so the edit doesn't lose a clip without a word. (The
         // folder itself has to be there: a whole linked folder gone is found again with Locate.)
@@ -1520,6 +1523,36 @@ final class EditorModel: ObservableObject {
 
     /// Items whose files were moved by Editroom itself (held copies going beside a newly saved project).
     func reopenMovedMedia(_ ids: Set<UUID>) async { await reopenMedia(ids) }
+
+    /// Items whose file is gone, with exactly one media file of the same name (another extension) beside where it was,
+    /// that nothing else in the project uses: pointed at that file. Undo history is kept (the library isn't undone).
+    func adoptReplacements() async {
+        let fm = FileManager.default
+        let used = Set(project.assets.map(\.path))
+        var taken = Set<String>()
+        for old in project.assets where !fm.fileExists(atPath: old.path) {
+            let gone = URL(fileURLWithPath: old.path)
+            let dir = gone.deletingLastPathComponent()
+            let stem = gone.deletingPathExtension().lastPathComponent.lowercased()
+            guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { continue }
+            let matches = names.map { dir.appendingPathComponent($0) }.filter { u in
+                u.deletingPathExtension().lastPathComponent.lowercased() == stem && u.pathExtension.lowercased() != gone.pathExtension.lowercased()
+                    && MediaFolder.isMedia(u) && !used.contains(u.standardizedFileURL.path) && !taken.contains(u.standardizedFileURL.path)
+            }
+            guard matches.count == 1, let url = matches.first,
+                  var fresh = await media.importFile(url, replacing: old),
+                  let i = project.assets.firstIndex(where: { $0.id == old.id }) else { continue }
+            taken.insert(url.standardizedFileURL.path)
+            fresh.bookmark = Bookmark.make(fresh.path)
+            fresh.relativePath = nil
+            commitLive()
+            project.assets[i] = fresh
+            isDirty = true
+            mutate { $0.fitClips(toMedia: [old.id]) }
+        }
+        objectWillChange.send()
+        setNeedsRebuild()
+    }
 
     /// Opens items again at their new place on disk (after a rename or a move).
     private func reopenMedia(_ ids: Set<UUID>) async {

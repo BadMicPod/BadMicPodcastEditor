@@ -220,7 +220,9 @@ enum ReverseAudio {
     /// A file's name plus a hash of its path, size and date: changes whenever the file does.
     static func cacheName(for source: URL) -> String {
         let attrs = try? FileManager.default.attributesOfItem(atPath: source.path)
-        let stamp = "\(source.path)|\(attrs?[.size] ?? 0)|\(attrs?[.modificationDate] ?? Date.distantPast)"
+        // The file's number on its disk too: one replaced by another of the same name, size and date (a rotated copy)
+        // is a new file, so its frames and sound are made again rather than the old ones shown.
+        let stamp = "\(source.path)|\(attrs?[.size] ?? 0)|\(attrs?[.modificationDate] ?? Date.distantPast)|\(attrs?[.systemFileNumber] ?? 0)"
         var hash: UInt64 = 0xcbf29ce484222325
         for byte in stamp.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100000001b3 }
         return source.deletingPathExtension().lastPathComponent + "-" + String(hash, radix: 36)
