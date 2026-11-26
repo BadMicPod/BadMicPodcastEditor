@@ -22,6 +22,7 @@ Download the latest release from [GitHub Releases](https://github.com/BadMicPod/
 - Markers and in/out points, to mark the moments that matter and work on or export just part of your edit
 - Split, ripple delete, close gaps, detach audio, duplicate, freeze frame and reverse
 - Text and solids, on as many video and audio tracks as you need
+- Multicam: angles from one recording, synced by sound and switched in a click
 - Editable keyboard shortcuts
 
 ### Color
@@ -54,6 +55,8 @@ Say what you want, and watch it get cut. Type a request like *"Make an intro mon
 - **Local** — runs entirely on your Mac with Apple's on-device model, with nothing sent anywhere
 
 Mention a clip with `@` or point at the playhead with `@playhead`. Every Magic edit can be undone.
+
+Client styles: pick a client in the Magic box and Magic follows their house style, so you don't explain it every episode. Teach a client from a finished episode (**Train from This Episode**) or an edit XML, and add notes for anything the timeline can't show.
 
 ### Works with AI agents
 - Claude and ChatGPT can edit an open project directly over MCP, with their own cursor on the timeline. Connect them in Settings › Magic; no API keys needed.
