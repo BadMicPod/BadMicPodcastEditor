@@ -53,7 +53,11 @@ final class ReverseFrames: @unchecked Sendable {
     private static let registryLock = NSLock()
     private let decodeQueue = DispatchQueue(label: "editroom.reverse", qos: .userInitiated, attributes: .concurrent)
 
-    init(asset: AVAsset, track: AVAssetTrack, naturalSize: CGSize, tenBit: Bool = false) {
+    /// Extra reader settings: SDR Rec.709 for HDR, so AVFoundation converts it as it's read.
+    private let readSettings: [String: Any]
+
+    init(asset: AVAsset, track: AVAssetTrack, naturalSize: CGSize, tenBit: Bool = false, readSettings: [String: Any] = [:]) {
+        self.readSettings = readSettings
         self.asset = asset
         self.track = track
         self.naturalSize = naturalSize
@@ -161,10 +165,12 @@ final class ReverseFrames: @unchecked Sendable {
 
     private func decode(from start: Double, to end: Double, limit: Int) -> [(pts: Double, buffer: CVPixelBuffer)] {
         guard let reader = try? AVAssetReader(asset: asset) else { return [] }
-        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+        var settings: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: pixelFormat,
             kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
-        ])
+        ]
+        settings.merge(readSettings) { $1 }
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
         output.alwaysCopiesSampleData = false
         guard reader.canAdd(output) else { return [] }
         reader.add(output)

@@ -20,6 +20,22 @@ enum SourceColor: Equatable {
 
     var isStandard: Bool { self == .standard }
 
+    /// HDR (HLG, PQ) is converted to SDR Rec.709 by AVFoundation as it's read, exactly as macOS's own export does it
+    /// (iPhone Dolby Vision metadata included), so it looks as it does in every Apple app's SDR. Apple Log keeps its
+    /// own conversion below.
+    var convertedOnRead: Bool { self == .hlg || self == .pq }
+
+    /// What to ask a frame reader for: SDR Rec.709 for HDR, so AVFoundation does the conversion.
+    var readSettings: [String: Any] {
+        guard convertedOnRead else { return [:] }
+        // RGB out: asked for in 10-bit YUV, HEVC HDR came back unconverted (washed out); in RGB it matches macOS's
+        // own SDR export, ProRes and HEVC alike.
+        return [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                AVVideoColorPropertiesKey: [AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+                                            AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+                                            AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2]]
+    }
+
     static func of(_ track: AVAssetTrack) -> SourceColor {
         guard let fd = track.formatDescriptions.first else { return .standard }
         let desc = fd as! CMFormatDescription
@@ -54,9 +70,8 @@ enum SourceColor: Equatable {
     private var cube: Data? {
         let key: String
         switch self {
-        case .standard: return nil
-        case .hlg: key = "hlg"
-        case .pq: key = "pq"
+        // HDR arrives already converted (see `convertedOnRead`).
+        case .standard, .hlg, .pq: return nil
         case .appleLog: key = "log"
         case .appleLog2: key = "log2"
         }
@@ -250,10 +265,12 @@ final class ColorFrameGrabber: FrameGrabber, @unchecked Sendable {
 
     private func grab(_ t: CMTime) -> (CGImage?, CMTime) {
         guard let reader = try? AVAssetReader(asset: asset) else { return (nil, t) }
-        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+        var settings: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
             kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
-        ])
+        ]
+        settings.merge(color.readSettings) { $1 }
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
         output.alwaysCopiesSampleData = false
         guard reader.canAdd(output) else { return (nil, t) }
         reader.add(output)
