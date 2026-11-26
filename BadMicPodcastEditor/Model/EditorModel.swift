@@ -1645,6 +1645,12 @@ final class EditorModel: ObservableObject {
         isDirty = true
     }
 
+    /// Keeps a Magic turn (request and reply) in the project so follow-ups keep the context. Not an undoable edit.
+    func addMagicConversation(request: String, response: String, tab: String) {
+        project.magicConversation = MagicConversation.adding(request: request, response: response, tab: tab, to: project.magicConversation ?? [])
+        isDirty = true
+    }
+
     /// Remembers where exports go. Not an undoable edit.
     func setExportTarget(name: String, directory: String) {
         guard project.exportName != name || project.exportDir != directory else { return }

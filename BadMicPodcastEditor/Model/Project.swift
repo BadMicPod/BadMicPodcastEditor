@@ -373,6 +373,8 @@ struct Project: Codable, Equatable {
     var outPoint: Double?
     /// Prompts sent with Magic in this project, newest first (optional so older projects open).
     var magicHistory: [MagicHistory.Entry]?
+    /// The Magic conversation so far (request and reply), so a follow-up keeps the context.
+    var magicConversation: [MagicConversation.Turn]?
     /// The caption track, when there is one (see Captions.swift).
     var captions: CaptionTrack?
     /// Words fixed or left out on captions, by file.

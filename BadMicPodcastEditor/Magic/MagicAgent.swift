@@ -63,6 +63,7 @@ final class MagicAgent: ObservableObject {
     private var started = Date()
     /// From the AI's output: its last words, and whether it said it failed.
     private var lastMessage = ""
+    private var currentRequest = ""
     private var failure: String?
     private var startedServer = false
 
@@ -203,6 +204,16 @@ final class MagicAgent: ObservableObject {
                 : "They didn't ask for anything in particular: make the best short video you can from the library, the way a skilled editor would cut it to share.")
         } else {
             lines.append("What they asked for: \"\(ask)\"")
+        }
+        let convo = (p.magicConversation ?? []).suffix(8)
+        if !convo.isEmpty {
+            var cl: [String] = ["Conversation so far (most recent last):"]
+            for t in convo {
+                cl.append("They: \"\(t.request)\"")
+                if !t.response.isEmpty { cl.append("You: \"\(t.response)\"") }
+            }
+            lines.append(cl.joined(separator: "\n"))
+            lines.append("Continue this conversation: build on what was already done; don't redo work already finished unless they ask.")
         }
         if let pointers, let said = pointing(pointers, request: ask, project: p) { lines.append(said) }
         if hasEdit {
@@ -366,6 +377,7 @@ final class MagicAgent: ObservableObject {
         let cli: URL? = kind == .claude ? AgentConnect.shared.claudeCLI : AgentConnect.shared.codexCLI
         guard let cli else { return }
         self.model = model
+        self.currentRequest = request
         // What they're pointing at, before Magic locks the window and clears the selection.
         let pointers = MagicPointers.now(model)
         // Nothing plays while the AI works out the edit.
@@ -640,6 +652,10 @@ final class MagicAgent: ObservableObject {
         let edits = draft?.edits ?? []
         let seconds = Date().timeIntervalSince(started)
         lastSeconds = seconds
+        if let model, let kind = agent {
+            let tab = kind == .claude ? "claude" : "chatgpt"
+            model.addMagicConversation(request: currentRequest, response: lastMessage, tab: tab)
+        }
         done()
         if stopped { return log("MAGIC AI stopped") }
         let stderr = String(data: errorText, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

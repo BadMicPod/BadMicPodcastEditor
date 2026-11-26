@@ -1318,6 +1318,7 @@ enum LocalMagic {
                         FileHandle.standardError.write("MAGIC LOCAL captions \(model.captionBlocks.count)\n".data(using: .utf8)!)
                     }
                     note(said, changed: changed, detail: ["On this Mac", "\(Int(Date().timeIntervalSince(started).rounded()))s"])
+                    model.addMagicConversation(request: request, response: said, tab: "local")
                 }
             }
         }
