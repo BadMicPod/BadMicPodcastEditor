@@ -1873,10 +1873,12 @@ final class EditorModel: ObservableObject {
         return candidates.first
     }
 
-    func createMulticamGroup(from ids: [UUID]) -> UUID? {
+    func createMulticamGroup(from ids: [UUID]) async -> UUID? {
         let assets = ids.compactMap { project.asset($0) }.filter { $0.kind == .video }
         guard assets.count >= 2 else { return nil }
-        let group = MulticamGroup(name: "Multicam", angleAssetIDs: assets.map(\.id))
+        let urls = assets.map { URL(fileURLWithPath: $0.path) }
+        let offs = await MulticamSync.offsets(for: urls)
+        let group = MulticamGroup(name: "Multicam", angleAssetIDs: assets.map(\.id), syncOffsets: offs)
         mutate { p in
             if p.multicamGroups == nil { p.multicamGroups = [] }
             p.multicamGroups?.append(group)
@@ -1888,8 +1890,10 @@ final class EditorModel: ObservableObject {
         let ids = project.assets.map(\.id).filter { mediaSelection.contains($0) }
         let videos = ids.filter { project.asset($0)?.kind == .video }
         guard videos.count >= 2 else { return }
-        guard let groupID = createMulticamGroup(from: videos) else { return }
-        addMulticamAtPlayhead(groupID)
+        Task { @MainActor in
+            guard let groupID = await self.createMulticamGroup(from: videos) else { return }
+            self.addMulticamAtPlayhead(groupID)
+        }
     }
 
     func addMulticamAtPlayhead(_ groupID: UUID) {
