@@ -59,8 +59,10 @@ enum MulticamSync {
             CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
             if let p = dataPointer {
                 let count = length / MemoryLayout<Float>.size
-                let floats = UnsafeBufferPointer(start: p.withMemoryRebound(to: Float.self, capacity: count) { $0 }, count: count)
-                collected.append(contentsOf: floats)
+                p.withMemoryRebound(to: Float.self, capacity: count) { ptr in
+                    let floats = UnsafeBufferPointer(start: ptr, count: count)
+                    collected.append(contentsOf: floats)
+                }
             }
         }
         reader.cancelReading()
@@ -70,35 +72,49 @@ enum MulticamSync {
 
     /// Cross-correlation: returns the lag (in samples) of `candidate` relative to `reference`
     /// that maximises correlation. Positive lag means candidate is shifted right (later).
+    /// Coarse-to-fine: decimate 8x to find the rough lag cheaply, then refine at full rate.
     private static func bestLag(reference: [Float], candidate: [Float]) -> Int {
         guard !reference.isEmpty, !candidate.isEmpty else { return 0 }
         let n = min(reference.count, candidate.count)
         let ref = Array(reference.prefix(n))
         let cand = Array(candidate.prefix(n))
         let maxLag = Int(maxLagSeconds * rate)
-        var bestLag = 0
+        // Coarse pass: every 8th sample.
+        let step = 8
+        let coarseRef = stride(from: 0, to: n, by: step).map { ref[$0] }
+        let coarseCand = stride(from: 0, to: n, by: step).map { cand[$0] }
+        let coarseMaxLag = maxLag / step
+        var bestCoarse = 0
         var bestScore: Double = -.infinity
-        // Normalise by energy.
-        for lag in -maxLag...maxLag {
-            var dot: Double = 0
-            var er: Double = 0
-            var ec: Double = 0
+        for lag in -coarseMaxLag...coarseMaxLag {
+            var dot: Double = 0; var er: Double = 0; var ec: Double = 0
+            for i in 0..<coarseRef.count {
+                let j = i + lag
+                guard j >= 0, j < coarseCand.count else { continue }
+                let a = Double(coarseRef[i]); let b = Double(coarseCand[j])
+                dot += a*b; er += a*a; ec += b*b
+            }
+            let denom = sqrt(er*ec)
+            let score = denom > 0 ? dot/denom : 0
+            if score > bestScore { bestScore = score; bestCoarse = lag }
+        }
+        // Fine pass around the coarse lag.
+        let center = bestCoarse * step
+        var bestFine = center
+        bestScore = -.infinity
+        for lag in (center-8)...(center+8) {
+            guard lag >= -maxLag, lag <= maxLag else { continue }
+            var dot: Double = 0; var er: Double = 0; var ec: Double = 0
             for i in 0..<n {
                 let j = i + lag
                 guard j >= 0, j < n else { continue }
-                let a = Double(ref[i])
-                let b = Double(cand[j])
-                dot += a * b
-                er += a * a
-                ec += b * b
+                let a = Double(ref[i]); let b = Double(cand[j])
+                dot += a*b; er += a*a; ec += b*b
             }
-            let denom = sqrt(er * ec)
-            let score = denom > 0 ? dot / denom : 0
-            if score > bestScore {
-                bestScore = score
-                bestLag = lag
-            }
+            let denom = sqrt(er*ec)
+            let score = denom > 0 ? dot/denom : 0
+            if score > bestScore { bestScore = score; bestFine = lag }
         }
-        return bestLag
+        return bestFine
     }
 }

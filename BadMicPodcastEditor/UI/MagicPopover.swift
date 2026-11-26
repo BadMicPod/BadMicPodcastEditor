@@ -356,6 +356,12 @@ private struct PromptForm: View {
                 }
             }
             .padding(.bottom, 8)
+            // Whose style it cuts in: learned from an episode they already like.
+            HStack(spacing: 0) {
+                ClientStyleBar(model: model, hasEdit: hasEdit)
+                Spacer(minLength: 0)
+            }
+            .padding(.bottom, 8)
             PromptBox(model: model, text: $request, placeholder: placeholder, submit: go)
                 .padding(.bottom, 11)
             HStack(alignment: .center, spacing: 5) {

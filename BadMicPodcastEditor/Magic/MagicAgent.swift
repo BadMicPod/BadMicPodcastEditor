@@ -216,6 +216,13 @@ final class MagicAgent: ObservableObject {
             lines.append("Continue this conversation: build on what was already done; don't redo work already finished unless they ask.")
         }
         if let pointers, let said = pointing(pointers, request: ask, project: p) { lines.append(said) }
+        if let style = StyleStore.shared.active, !style.summary.isEmpty {
+            lines.append("""
+            This episode is for \(style.name). This is their house style, learned from episodes they were \
+            happy with and from their own notes. Follow it unless they ask for something different:
+            \(style.summary)
+            """)
+        }
         if hasEdit {
             lines.append(String(format: """
             The timeline already has an edit (%d clips, about %.0f seconds). Work on that edit: change it to do what they \
@@ -422,6 +429,7 @@ final class MagicAgent: ObservableObject {
         process = nil
         running = false
         status = nil
+        currentRequest = ""
         if startedServer, !MCPServer.shared.enabled { MCPServer.shared.stop() }
         startedServer = false
     }
