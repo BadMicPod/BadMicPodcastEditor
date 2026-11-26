@@ -285,6 +285,8 @@ struct EditroomApp: App {
                 Divider()
                 Button("Match Sequence to Clip") { if let a = model.matchableAsset { model.matchSequence(to: a) } }
                     .disabled(model.matchableAsset.map { model.sequenceMatches($0) } ?? true)
+                Button("Reveal in Media") { model.revealInMedia() }.keyboardShortcut(keys.menu(.revealInMedia))
+                    .disabled(model.revealableAsset == nil)
                 Divider()
                 Button("Delete") { model.deleteSelected() }.keyboardShortcut(keys.menu(.delete))
                     .disabled(!model.canDeleteSelected)

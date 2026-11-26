@@ -226,6 +226,7 @@ enum KeyCommands {
         case .rippleDelete: model.deleteSelected(ripple: true)
         case .rippleTrimStart: model.rippleTrim(head: true)
         case .rippleTrimEnd: model.rippleTrim(head: false)
+        case .revealInMedia: model.revealInMedia()
         case .addText: model.addAtPlayhead(.text)
         case .addMarker: model.addMarker()
         case .setIn: model.setInPoint()

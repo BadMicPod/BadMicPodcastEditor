@@ -84,6 +84,9 @@ final class TimelineCanvas: NSView {
     private var drag = Drag.none
     private var overrides: [UUID: Clip] = [:]
     private var ghosts: [Clip] = []
+    /// Files being dragged in from Finder: their name, shown on the drop's outline (it has no library item yet,
+    /// which would otherwise read "Missing").
+    private var fileGhostLabel: String?
     private var hover: (id: UUID, zone: Zone)?
     /// Where the current drag has snapped to. Landing on a new edge gives a light tap on the trackpad.
     private var snapLine: Double? {
@@ -112,6 +115,12 @@ final class TimelineCanvas: NSView {
     private var autoscrollVelocity: CGFloat = 0
 
     // MARK: Setup
+
+    /// The track headers beside the timeline, in window coordinates: a drop over them lands at the start of that row.
+    var headersInWindow: CGRect {
+        let frame = convert(bounds, to: nil)
+        return CGRect(x: frame.minX - TimelineLayout.headerWidth - 1, y: frame.minY, width: TimelineLayout.headerWidth + 1, height: frame.height)
+    }
 
     /// The window's timeline, for the magic overlay.
     static weak var current: TimelineCanvas?
@@ -1022,6 +1031,7 @@ final class TimelineCanvas: NSView {
             let t = model.playhead
             menu.addItem(ActionItem("Split at Playhead", enabled: t > h.clip.start && t < h.clip.end) { model.splitAtPlayhead() })
             menu.addItem(ActionItem("Detach Audio", enabled: model.selectionIsLinked) { model.detachAudio() })
+            menu.addItem(ActionItem("Reveal in Media", enabled: h.clip.assetID.flatMap { model.project.asset($0) } != nil) { model.revealInMedia(h.clip.id) })
             if h.clip.kind.usesSource {
                 menu.addItem(ActionItem("Freeze Frame at Playhead", enabled: h.clip.kind == .video && !h.clip.isFreeze && t >= h.clip.start && t < h.clip.end) { model.freezeFrame() })
                 menu.addItem(ActionItem(!h.clip.isReversed ? "Reverse" : "Play Forwards", enabled: !h.clip.isFreeze) { model.reverseSelection() })
@@ -1170,7 +1180,8 @@ final class TimelineCanvas: NSView {
         aTrack = open(aTrack, .audio)
 
         let duration = payloads.isEmpty ? 5 : payloads.reduce(0) { $0 + model.payloadDuration($1) }
-        var start = max(0, time(atX: p.x))
+        // Over the track headers (left of the first frame): the very start of the timeline, on the row it's over.
+        var start = p.x < 0 ? 0 : max(0, time(atX: p.x))
         if let s = snap([start, start + duration], to: project.snapTargets(excluding: []) + [model.playhead]), start + s.delta >= -1e-9 {
             start = max(0, start + s.delta)
             snapLine = s.target
@@ -1188,6 +1199,11 @@ final class TimelineCanvas: NSView {
             }
         } else {
             ghosts = [Clip(trackID: overAudio ? aTrack : vTrack, kind: overAudio ? .audio : .video, start: start, duration: duration)]
+            let files = (sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+            fileGhostLabel = files.first.map { f in
+                let name = f.deletingPathExtension().lastPathComponent
+                return files.count > 1 ? "\(name) + \(files.count - 1) more" : name
+            }
         }
         dropInfo = (vTrack, aTrack, start)
         needsDisplay = true
@@ -1196,6 +1212,7 @@ final class TimelineCanvas: NSView {
 
     private func clearDrop() {
         ghosts = []
+        fileGhostLabel = nil
         dropInfo = nil
         snapLine = nil
         needsDisplay = true
@@ -1223,12 +1240,16 @@ final class TimelineCanvas: NSView {
                     t += model.payloadDuration(payload)
                 }
                 model.insert(clips)
+                // Only the new timeline clips are picked, so Delete takes them off the timeline, not out of Media.
+                model.clearMediaPicks()
             }
             return true
         }
         guard !pending.isEmpty else { return false }
         model.insert(pending)
         model.dragPayload = nil
+        // Only the new timeline clips are picked, so Delete takes them off the timeline, not out of Media.
+        model.clearMediaPicks()
         window?.makeFirstResponder(self)
         return true
     }
@@ -1739,7 +1760,9 @@ final class TimelineCanvas: NSView {
                 ctx.setFillColor(NSColor(white: 0, alpha: 0.45).cgColor)
                 ctx.fill(CGRect(x: r.minX, y: r.minY, width: r.width, height: 17))
             }
-            var label = model.project.name(of: c)
+            // Files from Finder being dropped have no library item yet: their outline shows the file's name, not "Missing".
+            var label = c.assetID == nil && c.kind.usesSource && ghosts.contains(where: { $0.id == c.id })
+                ? (fileGhostLabel ?? "") : model.project.name(of: c)
             if c.isFreeze { label += "   Freeze" } else if abs(c.speed - 1) > 0.001 { label += "   \(Int((c.speed * 100).rounded()))%" }
             if c.isReversed { label += "   Reversed" }
             if c.kind == .audio, abs(c.gainDB) > 0.05 { label += "   " + formatDB(c.gainDB) }

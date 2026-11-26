@@ -912,8 +912,18 @@ enum SelfTest {
             let before = (m.mediaSelection, m.folderSelection, m.mediaReveal)
             _ = await withCheckedContinuation { c in m.importFiles([mediaDir.appendingPathComponent("e_clip.mp4")], offerMatch: false) { c.resume(returning: $0) } } as [MediaAsset]
             let agentOK = m.mediaSelection == before.0 && m.folderSelection == before.1 && m.mediaReveal == before.2
-            let good = filesOK && folderOK && agentOK
-            log("IMPORT SHOWN \(good ? "OK" : "FAIL") files=\(filesOK) folder=\(folderOK) agentLeavesIt=\(agentOK)")
+            // Reveal in Media: a timeline clip's file is picked and scrolled to; the timeline keeps its selection.
+            var revealOK = false
+            if let first = got.first {
+                let clip = Clip(trackID: m.project.videoTracks[0].id, kind: .video, assetID: first.id, start: 0, duration: 1)
+                m.mutate { $0.clips.append(clip) }
+                m.selection = [clip.id]
+                m.mediaSelection = []
+                m.revealInMedia()
+                revealOK = m.mediaSelection == [first.id] && m.mediaReveal?.target == .asset(first.id) && m.selection == [clip.id]
+            }
+            let good = filesOK && folderOK && agentOK && revealOK
+            log("IMPORT SHOWN \(good ? "OK" : "FAIL") files=\(filesOK) folder=\(folderOK) agentLeavesIt=\(agentOK) revealInMedia=\(revealOK)")
             ok = ok && good
             try? fm.removeItem(at: dir.deletingLastPathComponent())
         }

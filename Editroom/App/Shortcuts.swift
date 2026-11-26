@@ -108,7 +108,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
     case undo, redo
     case playPause, stepBack, stepForward, previousEdit, nextEdit, goToStart, goToEnd, loop, fullScreenViewer
     case selectTool, cutTool
-    case split, addDissolve, detachAudio, duplicate, freezeFrame, reverse, copyGrade, pasteGrade, delete, rippleDelete, rippleTrimStart, rippleTrimEnd, addText
+    case split, addDissolve, detachAudio, duplicate, freezeFrame, reverse, copyGrade, pasteGrade, delete, rippleDelete, rippleTrimStart, rippleTrimEnd, addText, revealInMedia
     case addMarker, setIn, setOut, clearInOut
     case zoomIn, zoomOut, zoomToFit, snapping, sticky, skimming, audioScrubbing
 
@@ -147,6 +147,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
         case .rippleDelete: "Ripple Delete"
         case .rippleTrimStart: "Ripple Trim Start to Playhead"
         case .rippleTrimEnd: "Ripple Trim End to Playhead"
+        case .revealInMedia: "Reveal in Media"
         case .addText: "Add Text"
         case .addMarker: "Add Marker"
         case .setIn: "Set In"
@@ -172,7 +173,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
         case .undo, .redo: .edit
         case .playPause, .stepBack, .stepForward, .previousEdit, .nextEdit, .goToStart, .goToEnd, .loop, .fullScreenViewer: .playback
         case .selectTool, .cutTool: .tools
-        case .split, .addDissolve, .detachAudio, .duplicate, .freezeFrame, .reverse, .copyGrade, .pasteGrade, .delete, .rippleDelete, .rippleTrimStart, .rippleTrimEnd, .addText: .clip
+        case .split, .addDissolve, .detachAudio, .duplicate, .freezeFrame, .reverse, .copyGrade, .pasteGrade, .delete, .rippleDelete, .rippleTrimStart, .rippleTrimEnd, .addText, .revealInMedia: .clip
         case .addMarker, .setIn, .setOut, .clearInOut: .mark
         case .zoomIn, .zoomOut, .zoomToFit, .snapping, .sticky, .skimming, .audioScrubbing: .view
         }
@@ -220,6 +221,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
         case .rippleDelete: [KeyCombo("delete", shift: true), KeyCombo("forwardDelete", shift: true)]
         case .rippleTrimStart: [KeyCombo("q")]
         case .rippleTrimEnd: [KeyCombo("w")]
+        // As in Final Cut Pro (Reveal in Browser).
+        case .revealInMedia: [KeyCombo("f", shift: true)]
         case .addText: [.cmd("t")]
         case .addMarker: [KeyCombo("m")]
         case .setIn: [KeyCombo("i")]

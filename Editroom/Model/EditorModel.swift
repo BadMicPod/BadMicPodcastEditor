@@ -1368,6 +1368,32 @@ final class EditorModel: ObservableObject {
         }
     }
 
+    /// Nothing picked in Media (after a drop on the timeline, say: the new clips there are what's picked).
+    func clearMediaPicks() {
+        mediaSelection = []
+        folderSelection = []
+        incomingSelection = []
+    }
+
+    /// The library item behind the clip selected on the timeline (the first, if several), for Reveal in Media.
+    var revealableAsset: MediaAsset? {
+        project.clips.filter { selection.contains($0.id) }.sorted { $0.start < $1.start }
+            .lazy.compactMap { $0.assetID.flatMap { self.project.asset($0) } }.first
+    }
+
+    /// Reveal in Media (⇧F, as Final Cut's Reveal in Browser): the clip's file is opened in Media, in its folder,
+    /// picked and scrolled to. The timeline's selection is left as it is.
+    func revealInMedia(_ clipID: UUID? = nil) {
+        let asset = clipID.flatMap { project.clip($0)?.assetID }.flatMap { project.asset($0) } ?? revealableAsset
+        guard let asset else { return }
+        mediaFolder = MediaTree(project).folder(of: asset)
+        mediaSelection = [asset.id]
+        folderSelection = []
+        incomingSelection = []
+        mediaAnchor = .asset(asset.id)
+        mediaReveal = MediaReveal(target: .asset(asset.id))
+    }
+
     /// Opens the folder an import landed in, picks what came in and asks the Media panel to scroll to it: a new
     /// linked folder's tile, or the files (those in the same folder as the first, when they're spread out).
     private func showImported(_ assets: [MediaAsset], folders: [MediaFolder], opened: String?) {

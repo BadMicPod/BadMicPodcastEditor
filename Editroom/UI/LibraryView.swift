@@ -64,8 +64,6 @@ struct LibraryView: View {
     }
 
     var body: some View {
-        // Library items used by whatever is selected on the timeline.
-        let inSelection = Set(model.selection.compactMap { model.project.clip($0)?.assetID })
         // Folders: the one open (if it's still there), what's in it, and while searching, everything inside it.
         let tree = MediaTree(model.project)
         let folder = model.mediaFolder.flatMap { tree.exists($0) ? $0 : nil }
@@ -132,7 +130,7 @@ struct LibraryView: View {
                                         .simultaneousGesture(TapGesture().onEnded { model.clickMedia(.folder(f), in: order) })
                                 }
                                 ForEach(shown) { asset in
-                                    AssetTile(model: model, media: media, asset: asset, snippet: snippet(asset), place: place(asset), offline: media.looksOffline(asset), selected: inSelection.contains(asset.id),
+                                    AssetTile(model: model, media: media, asset: asset, snippet: snippet(asset), place: place(asset), offline: media.looksOffline(asset), selected: false,
                                               picked: model.mediaSelection.contains(asset.id), pickedCount: pickedCount,
                                               matchesSequence: model.sequenceMatches(asset))
                                         .id(MediaPick.asset(asset.id))
@@ -156,7 +154,7 @@ struct LibraryView: View {
                                         .simultaneousGesture(TapGesture().onEnded { model.clickMedia(.folder(f), in: order) })
                                 }
                                 ForEach(shown) { asset in
-                                    AssetRow(model: model, media: media, asset: asset, snippet: snippet(asset), place: place(asset), thumbWidth: thumbWidth, offline: media.looksOffline(asset), selected: inSelection.contains(asset.id),
+                                    AssetRow(model: model, media: media, asset: asset, snippet: snippet(asset), place: place(asset), thumbWidth: thumbWidth, offline: media.looksOffline(asset), selected: false,
                                              picked: model.mediaSelection.contains(asset.id), pickedCount: pickedCount,
                                              matchesSequence: model.sequenceMatches(asset))
                                         // A click picks it (⇧ for a range, ⌘ to add or take away); a double-click adds it.
