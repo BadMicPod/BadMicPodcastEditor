@@ -1863,6 +1863,81 @@ final class EditorModel: ObservableObject {
         mutate { p in _ = p.split(ids: targets, at: t) }
     }
 
+    // MARK: Multicam
+
+    /// The multicam clip under the playhead, if any (prefers the selected one).
+    var multicamClipAtPlayhead: Clip? {
+        let t = playhead
+        let candidates = project.clips.filter { $0.isMulticam && $0.start < t + 1e-6 && $0.end > t - 1e-6 }
+        if let sel = candidates.first(where: { selection.contains($0.id) }) { return sel }
+        return candidates.first
+    }
+
+    func createMulticamGroup(from ids: [UUID]) -> UUID? {
+        let assets = ids.compactMap { project.asset($0) }.filter { $0.kind == .video }
+        guard assets.count >= 2 else { return nil }
+        let group = MulticamGroup(name: "Multicam", angleAssetIDs: assets.map(\.id))
+        mutate { p in
+            if p.multicamGroups == nil { p.multicamGroups = [] }
+            p.multicamGroups?.append(group)
+        }
+        return group.id
+    }
+
+    func createMulticamFromSelection() {
+        let ids = project.assets.map(\.id).filter { mediaSelection.contains($0) }
+        let videos = ids.filter { project.asset($0)?.kind == .video }
+        guard videos.count >= 2 else { return }
+        guard let groupID = createMulticamGroup(from: videos) else { return }
+        addMulticamAtPlayhead(groupID)
+    }
+
+    func addMulticamAtPlayhead(_ groupID: UUID) {
+        guard let group = project.multicamGroup(groupID), !group.angleAssetIDs.isEmpty else { return }
+        guard let firstAsset = project.asset(group.angleAssetIDs[0]) else { return }
+        let dur = max(1 / project.fps, floor((firstAsset.duration - group.syncOffsets[0]) * project.fps) / project.fps)
+        let start = playhead
+        let vTrack = project.freeTrack(.video, start: start, duration: dur) ?? TrackToken.newVideo
+        let aTrack = project.freeTrack(.audio, start: start, duration: dur) ?? TrackToken.newAudio
+        var v = Clip(trackID: vTrack, kind: .video, assetID: group.angleAssetIDs[0], start: start, duration: dur)
+        v.multicamGroupID = groupID
+        v.multicamAngle = 0
+        v.sourceStart = group.syncOffsets[0]
+        var clips: [Clip] = [v]
+        if firstAsset.hasAudio {
+            let link = UUID()
+            v.linkID = link
+            var au = Clip(trackID: aTrack, kind: .audio, assetID: group.angleAssetIDs[0], start: start, duration: dur)
+            au.linkID = link
+            clips = [v, au]
+        }
+        insert(clips)
+    }
+
+    func switchMulticamAngle(at t: Double, to angle: Int) {
+        guard let c = multicamClipAtPlayhead, let group = project.multicamGroup(c.multicamGroupID) else { return }
+        guard angle >= 0, angle < group.angleAssetIDs.count else { return }
+        let curAngle = c.multicamAngle ?? 0
+        guard angle != curAngle else { return }
+        let clipID = c.id
+        // Split at t if inside the clip.
+        if t > c.start + 1.0/project.fps, t < c.end - 1.0/project.fps {
+            split(clip: clipID, at: t)
+        }
+        // Find the segment covering t.
+        let seg = project.clips.first { $0.isMulticam && $0.multicamGroupID == c.multicamGroupID && $0.start <= t + 1e-6 && $0.end > t - 1e-6 }
+        guard let segID = seg?.id else { return }
+        let oldOffset = group.syncOffsets[curAngle]
+        let newOffset = group.syncOffsets[angle]
+        let newAsset = group.angleAssetIDs[angle]
+        mutate { p in
+            guard let i = p.clips.firstIndex(where: { $0.id == segID }) else { return }
+            p.clips[i].multicamAngle = angle
+            p.clips[i].assetID = newAsset
+            p.clips[i].sourceStart = p.clips[i].sourceStart - oldOffset + newOffset
+        }
+    }
+
     /// Ripple Trim (Q and W, as in Premiere): takes out the clip under the playhead from its start up to the
     /// playhead (`head`), or from the playhead to its end, and closes the gap. With clips under the playhead
     /// selected, only their tracks (and their linked audio or video) change; otherwise every track does, so

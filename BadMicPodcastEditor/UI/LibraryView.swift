@@ -426,6 +426,9 @@ private struct AssetActions: ViewModifier {
                     Divider()
                 }
                 Button("Add to Timeline") { model.addAtPlayhead(.asset(asset.id)) }
+                if picked && pickedCount > 1 {
+                    Button("New Multicam Clip") { model.createMulticamFromSelection() }
+                }
                 if asset.kind == .video {
                     Button("Match Sequence to Clip") { model.matchSequence(to: asset) }
                         .disabled(matchesSequence)

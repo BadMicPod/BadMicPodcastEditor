@@ -148,6 +148,13 @@ struct PreviewView: View {
                     if let s = source.current {
                         SourceFrame(current: s).frame(width: w, height: h)
                     }
+                    // Multicam: quick angle switcher at the bottom of the viewer.
+                    if let mc = model.multicamClipAtPlayhead, let group = model.project.multicamGroup(mc.multicamGroupID) {
+                        MulticamAngleBar(model: model, clip: mc, group: group)
+                            .frame(width: w, height: 36)
+                            .padding(.bottom, 8)
+                            .frame(width: w, height: h, alignment: .bottom)
+                    }
                 }
                 .frame(width: w, height: h, alignment: .topLeading)
                 .coordinateSpace(name: "viewer")
@@ -443,5 +450,28 @@ private struct PlayButton: View {
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
         .help("Play / Pause (Space)")
+    }
+}
+
+
+struct MulticamAngleBar: View {
+    @ObservedObject var model: EditorModel
+    let clip: Clip
+    let group: MulticamGroup
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(group.angleAssetIDs.indices, id: \.self) { i in
+                let name = model.project.asset(group.angleAssetIDs[i])?.name ?? "Angle \(i + 1)"
+                Button(name) { model.switchMulticamAngle(at: model.playhead, to: i) }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(i == (clip.multicamAngle ?? 0) ? Theme.bg : Theme.text)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(i == (clip.multicamAngle ?? 0) ? Theme.accent : Theme.field))
+                    .buttonStyle(.plain)
+            }
+        }
+        .padding(6)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.panel.opacity(0.85)))
     }
 }

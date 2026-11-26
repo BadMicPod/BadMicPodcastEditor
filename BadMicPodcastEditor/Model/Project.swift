@@ -117,6 +117,12 @@ struct Clip: Identifiable, Codable, Hashable {
     var ramp: SpeedRamp?
     /// A sound clip whose speech shows on the caption track.
     var captioned: Bool?
+    /// Multicam: the group this clip plays an angle of; nil for ordinary clips.
+    var multicamGroupID: UUID?
+    /// Which angle of the group is currently shown.
+    var multicamAngle: Int?
+
+    var isMulticam: Bool { multicamGroupID != nil }
 
     var isFreeze: Bool { freeze == true }
     var playsBackwards: Bool { reversed == true }
@@ -160,6 +166,38 @@ struct Clip: Identifiable, Codable, Hashable {
         duration = t - start
         clampFades()
         transform?.zoom?.fit(length: duration)
+    }
+}
+
+extension Clip {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        trackID = try c.decode(UUID.self, forKey: .trackID)
+        kind = try c.decode(ClipKind.self, forKey: .kind)
+        assetID = try c.decodeIfPresent(UUID.self, forKey: .assetID)
+        start = try c.decode(Double.self, forKey: .start)
+        duration = try c.decode(Double.self, forKey: .duration)
+        sourceStart = try c.decodeIfPresent(Double.self, forKey: .sourceStart) ?? 0
+        speed = try c.decodeIfPresent(Double.self, forKey: .speed) ?? 1
+        fadeIn = try c.decodeIfPresent(Double.self, forKey: .fadeIn) ?? 0
+        fadeOut = try c.decodeIfPresent(Double.self, forKey: .fadeOut) ?? 0
+        fadeInCurve = try c.decodeIfPresent(FadeCurve.self, forKey: .fadeInCurve)
+        fadeOutCurve = try c.decodeIfPresent(FadeCurve.self, forKey: .fadeOutCurve)
+        gainDB = try c.decodeIfPresent(Double.self, forKey: .gainDB) ?? 0
+        linkID = try c.decodeIfPresent(UUID.self, forKey: .linkID)
+        color = try c.decodeIfPresent(RGBA.self, forKey: .color) ?? RGBA(r: 0.16, g: 0.16, b: 0.2, a: 1)
+        text = try c.decodeIfPresent(TextStyle.self, forKey: .text) ?? TextStyle()
+        grade = try c.decodeIfPresent(ColorGrade.self, forKey: .grade)
+        transform = try c.decodeIfPresent(ClipTransform.self, forKey: .transform)
+        transitionIn = try c.decodeIfPresent(Transition.self, forKey: .transitionIn)
+        freeze = try c.decodeIfPresent(Bool.self, forKey: .freeze)
+        reversedFrom = try c.decodeIfPresent(ReverseSource.self, forKey: .reversedFrom)
+        reversed = try c.decodeIfPresent(Bool.self, forKey: .reversed)
+        ramp = try c.decodeIfPresent(SpeedRamp.self, forKey: .ramp)
+        captioned = try c.decodeIfPresent(Bool.self, forKey: .captioned)
+        multicamGroupID = try c.decodeIfPresent(UUID.self, forKey: .multicamGroupID)
+        multicamAngle = try c.decodeIfPresent(Int.self, forKey: .multicamAngle)
     }
 }
 
@@ -248,6 +286,22 @@ struct MediaAsset: Identifiable, Codable, Hashable {
     var url: URL { URL(fileURLWithPath: playablePath ?? path) }
 }
 
+/// A group of camera angles that play together, kept in sync by their offsets.
+struct MulticamGroup: Identifiable, Codable, Hashable {
+    var id = UUID()
+    var name: String
+    /// Asset ids for each angle, in order.
+    var angleAssetIDs: [UUID]
+    /// Seconds each angle is shifted relative to angle 0, so they line up.
+    var syncOffsets: [Double]
+
+    init(name: String, angleAssetIDs: [UUID], syncOffsets: [Double]? = nil) {
+        self.name = name
+        self.angleAssetIDs = angleAssetIDs
+        self.syncOffsets = syncOffsets ?? Array(repeating: 0, count: angleAssetIDs.count)
+    }
+}
+
 extension Project {
     /// Records where each file sits relative to the project's folder.
     mutating func stampRelativePaths(projectDir: URL) {
@@ -328,6 +382,8 @@ struct Project: Codable, Equatable {
     /// Files (or whole folders) in those folders taken out of the project, so they don't come back when
     /// the folder is next looked at.
     var hiddenMedia: [String]?
+    /// Multicam groups: sets of camera angles played together.
+    var multicamGroups: [MulticamGroup]?
 }
 
 struct Marker: Codable, Hashable, Identifiable {
@@ -366,6 +422,10 @@ extension Project {
     }
 
     func clip(_ id: UUID) -> Clip? { clips.first { $0.id == id } }
+    func multicamGroup(_ id: UUID?) -> MulticamGroup? {
+        guard let id else { return nil }
+        return multicamGroups?.first { $0.id == id }
+    }
 
     func track(_ id: UUID) -> Track? { (videoTracks + audioTracks).first { $0.id == id } }
     func isLocked(_ trackID: UUID) -> Bool { track(trackID)?.locked ?? false }
