@@ -108,7 +108,7 @@ struct LibraryView: View {
             ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    if model.project.assets.isEmpty && folders.isEmpty {
+                    if model.project.assets.isEmpty && folders.isEmpty && model.incomingFiles.isEmpty {
                         SearchField(text: $search)
                         Text("Imported media\nappears here")
                             .font(.system(size: 11.5))
@@ -122,7 +122,8 @@ struct LibraryView: View {
                         }
                         SearchField(text: $search, prompt: folder == nil ? "Search" : "Search folder")
                         let order = folders.map(MediaPick.folder) + shown.map { MediaPick.asset($0.id) }
-                        let pickedCount = model.mediaSelection.count + model.folderSelection.count
+                            + (folder == nil && !searching ? model.incomingFiles.map(MediaPick.incoming) : [])
+                        let pickedCount = model.mediaSelection.count + model.folderSelection.count + model.incomingSelection.count
                         if layout == .thumbnails {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8, alignment: .top)], spacing: 10) {
                                 ForEach(folders, id: \.self) { f in
@@ -136,6 +137,15 @@ struct LibraryView: View {
                                               matchesSequence: model.sequenceMatches(asset))
                                         .id(MediaPick.asset(asset.id))
                                         .simultaneousGesture(TapGesture().onEnded { model.clickMedia(.asset(asset.id), in: order) })
+                                }
+                                // Files another app is still writing (Photos): where they'll land.
+                                if folder == nil && !searching {
+                                    ForEach(model.incomingFiles, id: \.self) { id in
+                                        IncomingTile(picked: model.incomingSelection.contains(id))
+                                            .id(MediaPick.incoming(id))
+                                            .simultaneousGesture(TapGesture().onEnded { model.clickMedia(.incoming(id), in: order) })
+                                            .modifier(IncomingActions(model: model, id: id))
+                                    }
                                 }
                             }
                         } else {
@@ -153,9 +163,17 @@ struct LibraryView: View {
                                         .id(MediaPick.asset(asset.id))
                                         .simultaneousGesture(TapGesture().onEnded { model.clickMedia(.asset(asset.id), in: order) })
                                 }
+                                if folder == nil && !searching {
+                                    ForEach(model.incomingFiles, id: \.self) { id in
+                                        IncomingRow(thumbWidth: thumbWidth, picked: model.incomingSelection.contains(id))
+                                            .id(MediaPick.incoming(id))
+                                            .simultaneousGesture(TapGesture().onEnded { model.clickMedia(.incoming(id), in: order) })
+                                            .modifier(IncomingActions(model: model, id: id))
+                                    }
+                                }
                             }
                         }
-                        if shown.isEmpty && folders.isEmpty {
+                        if shown.isEmpty && folders.isEmpty && (model.incomingFiles.isEmpty || searching) {
                             Text(search.contains("\"") || search.contains("“") ? "Nothing says \(search)" : "No media matches “\(search)”")
                                 .font(.system(size: 11.5))
                                 .foregroundStyle(Theme.textFaint)
@@ -172,6 +190,7 @@ struct LibraryView: View {
                     // Only Media's picks: the timeline's selection is left as it is.
                     model.mediaSelection = []
                     model.folderSelection = []
+                    model.incomingSelection = []
                 })
             }
             // The part of the list on screen, for Magic's scans.
@@ -635,6 +654,7 @@ private struct FolderActions: ViewModifier {
         clearSearch()
         model.mediaSelection = []
         model.folderSelection = []
+        model.incomingSelection = []
         model.mediaFolder = folder
     }
 }
@@ -755,6 +775,7 @@ private struct MediaTitle: View {
             Button {
                 model.mediaSelection = []
                 model.folderSelection = []
+                model.incomingSelection = []
                 model.mediaFolder = up
             } label: {
                 Image(systemName: "chevron.left")
@@ -826,6 +847,73 @@ private struct EmptySpaceClicks: NSViewRepresentable {
         override func rightMouseDown(with event: NSEvent) {
             clear()
             super.rightMouseDown(with: event)
+        }
+    }
+}
+
+// MARK: - Files on their way
+
+/// A file another app is still writing for a drop (Photos fetching a video): a dim tile with a spinner, where it'll land.
+private struct IncomingTile: View {
+    var picked = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.ink.opacity(0.02))
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(Theme.ink.opacity(picked ? 0.85 : 0.06), lineWidth: picked ? 1.5 : 1)
+                ProgressView().controlSize(.small).scaleEffect(0.7)
+            }
+            .aspectRatio(16 / 9, contentMode: .fit)
+            Text("Importing…")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Theme.textFaint)
+                .lineLimit(1)
+                .padding(.horizontal, 2)
+        }
+        .padding(3)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(picked ? Theme.ink.opacity(0.12) : .clear))
+        .contentShape(Rectangle())
+        .help("Being written by the app it came from (Photos may be fetching it from iCloud). Delete cancels it.")
+    }
+}
+
+/// The same, in the List layout.
+private struct IncomingRow: View {
+    var thumbWidth: CGFloat = 64
+    var picked = false
+
+    var body: some View {
+        HStack(spacing: 9) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Theme.ink.opacity(0.02))
+                RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Theme.ink.opacity(0.06))
+                ProgressView().controlSize(.small).scaleEffect(0.6)
+            }
+            .frame(width: thumbWidth, height: (thumbWidth * 9 / 16).rounded())
+            Text("Importing…")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(Theme.textFaint)
+            Spacer(minLength: 0)
+        }
+        .padding(4)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(picked ? Theme.ink.opacity(0.12) : .clear))
+        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Theme.ink.opacity(picked ? 0.18 : 0), lineWidth: 1))
+        .contentShape(Rectangle())
+        .help("Being written by the app it came from (Photos may be fetching it from iCloud). Delete cancels it.")
+    }
+}
+
+/// A placeholder's right-click: cancel it (or every picked one, when it's one of them).
+private struct IncomingActions: ViewModifier {
+    let model: EditorModel
+    let id: UUID
+
+    func body(content: Content) -> some View {
+        content.contextMenu {
+            let ids = model.incomingSelection.contains(id) ? model.incomingSelection : [id]
+            Button(ids.count > 1 ? "Cancel \(ids.count) Imports" : "Cancel Import") { model.cancelIncoming(ids) }
         }
     }
 }

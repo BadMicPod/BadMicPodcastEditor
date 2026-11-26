@@ -125,6 +125,8 @@ extension Project {
 enum MediaPick: Hashable {
     case asset(UUID)
     case folder(String)
+    /// A file another app is still writing (a placeholder in the panel).
+    case incoming(UUID)
 }
 
 /// A request for the Media panel to scroll to an item or folder; each one is new, even for the same target.

@@ -11,7 +11,8 @@ struct WindowDropCatcher: NSViewRepresentable {
     func makeNSView(context: Context) -> Catcher {
         let v = Catcher()
         v.model = model
-        v.registerForDraggedTypes([.fileURL])
+        // Files, and files another app promises (Photos, Mail).
+        v.registerForDraggedTypes([.fileURL] + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) })
         return v
     }
 
@@ -38,35 +39,45 @@ struct WindowDropCatcher: NSViewRepresentable {
             info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
         }
 
+        /// Files another app will write when asked (Photos, whose library can't be read directly).
+        private func promises(_ info: NSDraggingInfo) -> [NSFilePromiseReceiver] {
+            info.draggingPasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self], options: nil) as? [NSFilePromiseReceiver] ?? []
+        }
+
+        private func accepts(_ info: NSDraggingInfo) -> Bool { !fileURLs(info).isEmpty || !promises(info).isEmpty }
+
         override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-            guard !fileURLs(sender).isEmpty else { return [] }
+            guard accepts(sender) else { return [] }
             MainActor.assumeIsolated { model?.importDropHover = true }
             return .copy
         }
 
         override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-            fileURLs(sender).isEmpty ? [] : .copy
+            accepts(sender) ? .copy : []
         }
 
         override func draggingExited(_ sender: NSDraggingInfo?) {
             MainActor.assumeIsolated { model?.importDropHover = false }
         }
 
-        override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool { !fileURLs(sender).isEmpty }
+        override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool { accepts(sender) }
 
         override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-            let urls = fileURLs(sender)
-            guard !urls.isEmpty else { return false }
+            // A promise wins: Photos puts a ready-made preview picture of a video on the drag as a file, and the video
+            // itself only as a promise. Finder never promises, so its files are taken as they are.
+            let promised = promises(sender)
+            let urls = promised.isEmpty ? fileURLs(sender) : []
+            guard !urls.isEmpty || !promised.isEmpty else { return false }
             // No drop animation: the dragged pictures vanish the moment they're let go (they're in Media at once).
             sender.animatesToDestination = true
-            sender.enumerateDraggingItems(options: [], for: self, classes: [NSURL.self], searchOptions: [:]) { item, _, _ in
+            sender.enumerateDraggingItems(options: [], for: self, classes: [NSURL.self, NSFilePromiseReceiver.self], searchOptions: [:]) { item, _, _ in
                 item.imageComponentsProvider = { [] }
             }
             // Imported at once: the pictures jump straight into Media (the import keeps the main thread busy through
             // the animation, which reads as an instant hand-off, and was preferred over waiting for a glide).
             MainActor.assumeIsolated {
                 model?.importDropHover = false
-                model?.handleOpen(urls)
+                if !promised.isEmpty { model?.importPromised(promised) } else { model?.handleOpen(urls) }
             }
             return true
         }

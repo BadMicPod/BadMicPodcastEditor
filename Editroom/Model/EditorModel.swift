@@ -72,6 +72,14 @@ final class EditorModel: ObservableObject {
     private var mediaAnchor: MediaPick?
     /// Files are being dragged over the window outside the Media panel and timeline: the panel shows they'll land in it.
     @Published var importDropHover = false
+    /// Files another app is still writing for a drop (Photos): shown as placeholders at the end of Media.
+    @Published var incomingFiles: [UUID] = []
+    /// Placeholders picked in Media: Delete cancels them.
+    @Published var incomingSelection: Set<UUID> = []
+    /// For each drop, how many of its files were cancelled: those are thrown away as they arrive.
+    var incomingCancels: [UUID: Int] = [:]
+    /// The drop each placeholder belongs to.
+    var incomingDrop: [UUID: UUID] = [:]
     /// Something the Media panel should scroll to (what was just imported).
     @Published var mediaReveal: MediaReveal?
     /// The folder open in the Media panel (its path); nil for the top.
@@ -1468,6 +1476,19 @@ final class EditorModel: ObservableObject {
         if !added.isEmpty { importFiles(added, offerMatch: false) }
     }
 
+    /// While another app writes files it promised (Photos fetching from iCloud): the Media spinner shows.
+    func beginWaitingForFiles() { importCount += 1 }
+    func endWaitingForFiles() { importCount = max(0, importCount - 1) }
+
+    /// A library item's file is somewhere else now (moved by Editroom itself).
+    func repointAsset(at i: Int, to path: String) {
+        project.assets[i].path = path
+        project.assets[i].bookmark = Bookmark.make(path)
+    }
+
+    /// Items whose files were moved by Editroom itself (held copies going beside a newly saved project).
+    func reopenMovedMedia(_ ids: Set<UUID>) async { await reopenMedia(ids) }
+
     /// Opens items again at their new place on disk (after a rename or a move).
     private func reopenMedia(_ ids: Set<UUID>) async {
         for id in ids {
@@ -1582,6 +1603,7 @@ final class EditorModel: ObservableObject {
     func clickMedia(_ id: MediaPick, in order: [MediaPick]) {
         let flags = NSEvent.modifierFlags
         var picked = Set(mediaSelection.map(MediaPick.asset)).union(folderSelection.map(MediaPick.folder))
+            .union(incomingSelection.map(MediaPick.incoming))
         if flags.contains(.shift), let anchor = mediaAnchor, let a = order.firstIndex(of: anchor), let b = order.firstIndex(of: id) {
             picked = Set(order[min(a, b)...max(a, b)])
         } else if flags.contains(.command) {
@@ -1593,6 +1615,7 @@ final class EditorModel: ObservableObject {
         }
         mediaSelection = Set(picked.compactMap { if case .asset(let a) = $0 { a } else { nil } })
         folderSelection = Set(picked.compactMap { if case .folder(let f) = $0 { f } else { nil } })
+        incomingSelection = Set(picked.compactMap { if case .incoming(let i) = $0 { i } else { nil } })
         // One thing selected at a time: Delete then means these.
         selection = []
         // Out of the search field, so Delete reaches the editor rather than the text.
@@ -1665,9 +1688,12 @@ final class EditorModel: ObservableObject {
 
     /// Delete: the picked Media panel items if there are any, otherwise what's selected on the timeline.
     func deleteSelected(ripple: Bool = false) {
+        // Picked placeholders: their imports are cancelled. Media's picks come before the timeline's, as ever.
+        let cancelling = incomingSelection
+        if !cancelling.isEmpty { cancelIncoming(cancelling) }
         if !mediaSelection.isEmpty || !folderSelection.isEmpty {
             removeAssets(mediaSelection, folders: folderSelection)
-        } else {
+        } else if cancelling.isEmpty {
             deleteSelection(ripple: ripple)
         }
     }
@@ -2247,7 +2273,7 @@ final class EditorModel: ObservableObject {
     var canDuplicate: Bool { !selectedForCopy.isEmpty }
     var canReverse: Bool { project.clips.contains { selection.contains($0.id) && $0.playsSource && !project.isLocked($0.trackID) } }
     var canFreezeFrame: Bool { freezeTarget != nil }
-    var canDeleteSelected: Bool { !selection.isEmpty || !mediaSelection.isEmpty || !folderSelection.isEmpty || !captionSelection.isEmpty }
+    var canDeleteSelected: Bool { !selection.isEmpty || !mediaSelection.isEmpty || !folderSelection.isEmpty || !incomingSelection.isEmpty || !captionSelection.isEmpty }
     /// Picked clips with sound to caption (or captions to remove).
     var canCaption: Bool { Transcripts.available && !project.captionTargets(selection).isEmpty }
 
@@ -2428,11 +2454,16 @@ final class EditorModel: ObservableObject {
         noteRecent(url)
     }
 
+    /// Self-tests: saves as Save As would, without its panel.
+    func saveForTest(to url: URL) { write(to: url) }
+
     private func write(to url: URL) {
         commitLive()
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            // Copies dropped from Photos while it was unsaved go beside the project now.
+            adoptHeldMedia(projectDir: url.deletingLastPathComponent())
             var saved = project
             saved.stampRelativePaths(projectDir: url.deletingLastPathComponent())
             try encoder.encode(SavedDocument(project: saved)).write(to: url, options: .atomic)
@@ -2478,6 +2509,8 @@ final class EditorModel: ObservableObject {
             self.objectWillChange.send()
             self.setNeedsRebuild()
             await self.syncFolders()
+            // Copies held for an unsaved project that's been left behind.
+            if !CommandLine.arguments.contains("--selftest") { self.clearUnusedHeldMedia() }
             if offerLocate, !self.missingAssets.isEmpty { self.offerToLocateMissing() }
         }
     }

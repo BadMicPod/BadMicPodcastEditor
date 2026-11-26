@@ -182,6 +182,7 @@ enum KeyCommands {
             model.selection = []
             model.mediaSelection = []
             model.folderSelection = []
+            model.incomingSelection = []
             model.tool = .move
             return true
         }

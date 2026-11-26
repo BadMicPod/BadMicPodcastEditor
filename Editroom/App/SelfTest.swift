@@ -964,6 +964,42 @@ enum SelfTest {
                 ok = ok && good
             }
         }
+        // Files promised by another app (Photos): held for an unsaved project, moved beside it on the first save (and the
+        // clip follows), and held copies no project uses cleared away. Uses a throwaway holding folder, never the real one.
+        do {
+            let fm = FileManager.default
+            let held = outDir.appendingPathComponent("held-test/From Photos", isDirectory: true)
+            let projectDir = outDir.appendingPathComponent("held-test/Project", isDirectory: true)
+            try? fm.removeItem(at: held.deletingLastPathComponent())
+            try? fm.createDirectory(at: held, withIntermediateDirectories: true)
+            try? fm.createDirectory(at: projectDir, withIntermediateDirectories: true)
+            EditorModel.heldMediaFolderForTests = held.standardizedFileURL
+            defer { EditorModel.heldMediaFolderForTests = nil }
+            let clip = held.appendingPathComponent("IMG_0001.mov")
+            let stray = held.appendingPathComponent("IMG_0002.mov")
+            try? fm.copyItem(at: mediaDir.appendingPathComponent("c_clip.mp4"), to: clip)
+            try? fm.copyItem(at: mediaDir.appendingPathComponent("d_clip.mp4"), to: stray)
+            var p = Project()
+            p.settingsLocked = true
+            let m = EditorModel()
+            m.load(p, url: nil)
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            let got: [MediaAsset] = await withCheckedContinuation { c in m.importFiles([clip], offerMatch: false) { c.resume(returning: $0) } }
+            let heldOK = m.promisedMediaFolder.standardizedFileURL.path == held.standardizedFileURL.path && got.count == 1
+            // Cleared: the stray copy (unused) goes, the one in the project stays.
+            m.clearUnusedHeldMedia()
+            let clearOK = !fm.fileExists(atPath: stray.path) && fm.fileExists(atPath: clip.path)
+            // Saved: the held copy moves beside the project and the clip points there.
+            let saveURL = projectDir.appendingPathComponent("Trip.room")
+            m.saveForTest(to: saveURL)
+            let moved = projectDir.appendingPathComponent("From Photos/IMG_0001.mov").standardizedFileURL.path
+            let movedOK = got.first.flatMap { m.project.asset($0.id) }?.path == moved && fm.fileExists(atPath: moved) && !fm.fileExists(atPath: clip.path)
+                && m.promisedMediaFolder.standardizedFileURL.path == projectDir.appendingPathComponent("From Photos").standardizedFileURL.path
+            let good = heldOK && clearOK && movedOK
+            log("PROMISED FILES \(good ? "OK" : "FAIL") heldWhileUnsaved=\(heldOK) unusedCleared=\(clearOK) movedOnSave=\(movedOK)")
+            ok = ok && good
+            try? fm.removeItem(at: held.deletingLastPathComponent())
+        }
         // Folders: a folder brought in whole is mirrored in Media and followed on disk: files added later come in,
         // a file renamed or the folder moved is followed (same items, nothing to locate), a file taken out stays out
         // (Undo brings it back), one put in the Trash isn't followed there, and Delete Folder takes it all out.
