@@ -364,10 +364,11 @@ final class EditorModel: ObservableObject {
                 if args.contains("--show-export") { self.showExport = true }
                 if args.contains("--show-agents") { self.showAgents = true }
                 // `--import-test <file>` (testing): imports it and times its Media poster and a timeline frame.
+                // `--import-offer`: offering to match the sequence to it, as a drop does.
                 if let k = args.firstIndex(of: "--import-test"), args.count > k + 1 {
                     let url = URL(fileURLWithPath: args[k + 1])
                     let t0 = Date()
-                    self.importFiles([url], offerMatch: false) { assets in
+                    self.importFiles([url], offerMatch: args.contains("--import-offer")) { assets in
                         guard let a = assets.first else { return }
                         FileHandle.standardError.write(String(format: "IMPORT imported %.2fs\n", Date().timeIntervalSince(t0)).data(using: .utf8)!)
                         if args.contains("--to-timeline") {
@@ -1356,7 +1357,7 @@ final class EditorModel: ObservableObject {
                     project.assets.append(asset)
                     isDirty = true
                     imported.append(asset)
-                    if offer { await offerMatch(asset) }
+                    if offer { offerMatch(asset) }
                 } else {
                     // Not tried again when its folder is next looked at.
                     unreadable.insert(path)
@@ -1616,17 +1617,11 @@ final class EditorModel: ObservableObject {
     func removeFolder(_ folder: String) { removeAssets([], folders: [folder]) }
 
     /// Asked once, on the first video brought into a project: adopt its frame size and rate?
-    private func offerMatch(_ asset: MediaAsset) async {
+    private func offerMatch(_ asset: MediaAsset) {
         guard asset.kind == .video, !project.settingsLocked, asset.width > 0, asset.height > 0 else { return }
         let fps = Self.standardFPS(asset.fps)
         project.settingsLocked = true
         if asset.width == project.width, asset.height == project.height, fps == project.fps { return }
-        // Brought to the front first: files dropped from Finder leave Finder in front, and an alert opening
-        // in an app that isn't makes macOS play its alert sound.
-        if !NSApp.isActive {
-            NSApp.activate()
-            for _ in 0..<50 where !NSApp.isActive { try? await Task.sleep(nanoseconds: 10_000_000) }
-        }
         let alert = EditroomAlert()
         alert.messageText = "Match the sequence to “\(asset.name)”?"
         alert.informativeText = "\(asset.width) × \(asset.height) · \(InspectorView.fpsLabel(fps))\nThe sequence is currently \(project.width) × \(project.height) · \(InspectorView.fpsLabel(project.fps))."
