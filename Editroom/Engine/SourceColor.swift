@@ -85,11 +85,27 @@ enum SourceColor: Equatable {
         // The file's primaries to Rec.709.
         let m = self == .appleLog2 ? Self.wideGamutTo709 : Self.rec2020To709
         var c = (0..<3).map { i in max(0, m[i][0] * lin[0] + m[i][1] * lin[1] + m[i][2] * lin[2]) }
+        // HDR (HLG, PQ) is compressed into SDR the way macOS does it: 0.317 × light^0.88 + 0.014, fitted to macOS's own
+        // frames of iPhone HLG (within about 2% from shadows to highlights; the small lift fades out toward black, so black
+        // stays black). The far greater range above white (sun, sky, lit skin) has room instead of being squeezed into the
+        // last few percent, which made outdoor iPhone video look blown out.
+        let hdr = self == .hlg || self == .pq
+        if hdr {
+            let y = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+            if y > 1e-6 {
+                let target = Self.hdrGain * pow(y, Self.hdrPower) + Self.hdrLift * min(1, y / 0.02)
+                let scale = target / y
+                c = c.map { $0 * scale }
+                // Darkened, colours read richer than they did; eased a little toward grey, as macOS's conversion is.
+                let g = y * scale
+                c = c.map { g + ($0 - g) * Self.hdrSaturation }
+            }
+        }
         // Brighter than white rolls off smoothly instead of clipping; scaling all three channels
-        // together keeps the hue.
+        // together keeps the hue. HDR starts easing sooner, with more to fit in.
+        let k = hdr ? Self.hdrKnee : Self.knee
         let peak = c.max() ?? 0
-        if peak > Self.knee {
-            let k = Self.knee
+        if peak > k {
             let eased = k + (1 - k) * (1 - exp(-(peak - k) / (1 - k)))
             c = c.map { $0 * eased / peak }
         }
@@ -98,6 +114,12 @@ enum SourceColor: Equatable {
     }
 
     private static let knee = 0.9
+    /// Where HDR's reference white lands in SDR linear light, and where its highlights start easing.
+    private static let hdrGain = 0.317
+    private static let hdrPower = 0.88
+    private static let hdrLift = 0.0143
+    private static let hdrKnee = 0.85
+    private static let hdrSaturation = 0.88
 
     // MARK: Primaries
 
