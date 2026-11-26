@@ -35,13 +35,31 @@ final class PreviewSurface: NSView {
         link = l
     }
 
+    /// Whether a frame has the viewer's shape. A frame made for the sequence's old shape (it went from vertical to
+    /// wide, say) would be stretched to fill: it isn't shown, so the viewer is black for that moment instead.
+    private func fits(_ buffer: CVPixelBuffer) -> Bool {
+        let w = CGFloat(CVPixelBufferGetWidth(buffer)), h = CGFloat(CVPixelBufferGetHeight(buffer))
+        guard w > 0, h > 0, bounds.width > 0, bounds.height > 0 else { return true }
+        return abs((w / h) / (bounds.width / bounds.height) - 1) < 0.02
+    }
+
+    private func show(_ buffer: CVPixelBuffer?) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer?.contents = buffer.flatMap { fits($0) ? CVPixelBufferGetIOSurface($0)?.takeUnretainedValue() : nil }
+        CATransaction.commit()
+    }
+
+    // Resized to a new shape: the frame showing is hidden if it no longer fits (the new one follows).
+    override func layout() {
+        super.layout()
+        if let current, !fits(current) { show(nil) }
+    }
+
     @objc private func step(_ sender: CADisplayLink) {
         if let buffer = model.engine.pullFrame() {
             current = buffer
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            layer?.contents = CVPixelBufferGetIOSurface(buffer)?.takeUnretainedValue()
-            CATransaction.commit()
+            show(buffer)
         } else if model.engine.isEmpty, current != nil {
             current = nil
             layer?.contents = nil
@@ -319,14 +337,20 @@ private struct EmptyViewerPrompt: View {
                     ctx.stroke(arrow, with: .color(text), style: style)
                 }
                 .frame(width: 96, height: 70)
+                // Centred when they wrap (a vertical frame is narrow), and kept off the dashed edge.
                 Text(hasMedia ? "Drag media from the library to the timeline" : "Drop video, audio or images anywhere")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(text)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(hasMedia ? "or double-click it to add it at the playhead"
                               : "or press ⌘I to import  ·  MP4, MOV, MKV, WebM, WAV, MP3, JPG, PNG")
                     .font(.system(size: 11.5))
                     .foregroundStyle(faint)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .padding(.horizontal, 22)
             .frame(width: g.size.width * 0.62, height: g.size.height * 0.58)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)

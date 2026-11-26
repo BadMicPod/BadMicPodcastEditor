@@ -52,7 +52,13 @@ final class EditorModel: ObservableObject {
         didSet { lastEdit = Date() }
     }
     @Published var selection: Set<UUID> = [] {
-        didSet { if !selection.isEmpty, !captionSelection.isEmpty || captionsFocused { captionSelection = []; captionsFocused = false } }
+        didSet {
+            if !selection.isEmpty, !captionSelection.isEmpty || captionsFocused { captionSelection = []; captionsFocused = false }
+            // Clips picked on the timeline (a click, ⌘A, a drop): Media lets go of its picks, so Delete is for the clips.
+            if !selection.isEmpty, selection != oldValue, !mediaSelection.isEmpty || !folderSelection.isEmpty || !incomingSelection.isEmpty {
+                clearMediaPicks()
+            }
+        }
     }
     /// Captions picked on the caption track (by `CaptionBlock.id`); picking clips clears them.
     @Published var captionSelection: Set<String> = []
@@ -1907,6 +1913,10 @@ final class EditorModel: ObservableObject {
 
     func selectAll() {
         selection = Set(project.clips.map(\.id))
+        // Even when every clip was already picked (so the selection didn't change): Media lets go.
+        clearMediaPicks()
+        // The timeline has the keys now (out of the Media search, say), so Delete reaches the clips.
+        if let timeline = TimelineCanvas.current, let window = timeline.window { window.makeFirstResponder(timeline) }
     }
 
     // MARK: Captions

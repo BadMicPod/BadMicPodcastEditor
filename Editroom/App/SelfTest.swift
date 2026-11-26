@@ -922,8 +922,12 @@ enum SelfTest {
                 m.revealInMedia()
                 revealOK = m.mediaSelection == [first.id] && m.mediaReveal?.target == .asset(first.id) && m.selection == [clip.id]
             }
-            let good = filesOK && folderOK && agentOK && revealOK
-            log("IMPORT SHOWN \(good ? "OK" : "FAIL") files=\(filesOK) folder=\(folderOK) agentLeavesIt=\(agentOK) revealInMedia=\(revealOK)")
+            // ⌘A on the timeline: Media lets go of its picks, so Delete is for the clips.
+            m.mediaSelection = Set(got.map(\.id))
+            m.selectAll()
+            let selectAllOK = m.mediaSelection.isEmpty && !m.selection.isEmpty
+            let good = filesOK && folderOK && agentOK && revealOK && selectAllOK
+            log("IMPORT SHOWN \(good ? "OK" : "FAIL") files=\(filesOK) folder=\(folderOK) agentLeavesIt=\(agentOK) revealInMedia=\(revealOK) selectAll=\(selectAllOK)")
             ok = ok && good
             try? fm.removeItem(at: dir.deletingLastPathComponent())
         }
