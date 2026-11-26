@@ -3,16 +3,17 @@
   <channel>
     <title>Editroom</title>
     <item>
-      <title>Version 1.0.5</title>
-      <pubDate>Wed, 25 Nov 2026 19:40:41 +0000</pubDate>
-      <sparkle:version>6</sparkle:version>
-      <sparkle:shortVersionString>1.0.5</sparkle:shortVersionString>
+      <title>Version 1.0.6</title>
+      <pubDate>Thu, 26 Nov 2026 00:11:25 +0000</pubDate>
+      <sparkle:version>7</sparkle:version>
+      <sparkle:shortVersionString>1.0.6</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <link>https://github.com/robbietilton/Editroom/releases/tag/v1.0.5</link>
-      <changes><![CDATA[Drop folders on Editroom's Dock icon to add them to Media.
-Imports are selected and scrolled into view, and dragging over the window lights up Media.
-Fixes: no window blink on Dock icon drops, and the Media search no longer takes focus at launch.]]></changes>
-      <enclosure url="https://github.com/robbietilton/Editroom/releases/download/v1.0.5/Editroom.dmg" sparkle:edSignature="D5c2Pu+LbPlY04mjh4lfyeOUjxHVq9YOsKMsRKm8H9U2xlcnfxllX4K9yjHnD8F5BQbqeOzbbUV8y8cPa4wZCA==" length="11841287" type="application/octet-stream"/>
+      <link>https://github.com/robbietilton/Editroom/releases/tag/v1.0.6</link>
+      <changes><![CDATA[Sharper exports: exporting bigger than your sequence (like 1080p to 4K) now upscales with Apple's MetalFX instead of stretching.
+One Audio menu in Export: choose No audio, As mixed, or a loudness target in one place.
+Linked folders: files you delete in Finder leave Media too, unless they're on your timeline.
+Smoother Media: click empty space to deselect, and improved drag and drop import animation.]]></changes>
+      <enclosure url="https://github.com/robbietilton/Editroom/releases/download/v1.0.6/Editroom.dmg" sparkle:edSignature="CG3E44JBOH4vJHQJObGrnSg2owmHykJ8W6NWwEpF3zLXXXGy3zulumUedBMTX3vJscd9F4I7lTk6bKFLd12EBA==" length="11898625" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>
