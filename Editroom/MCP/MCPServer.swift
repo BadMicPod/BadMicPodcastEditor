@@ -246,9 +246,22 @@ enum MCPHandler {
             return ok([:])
         case "tools/list":
             return ok(["tools": MCPTools.definitions])
+        // Asked by some agents as they start (Codex): Editroom has neither, and saying so mustn't open it.
+        case "resources/list":
+            return ok(["resources": [Any]()])
+        case "resources/templates/list":
+            return ok(["resourceTemplates": [Any]()])
+        case "prompts/list":
+            return ok(["prompts": [Any]()])
         default:
             return nil
         }
+    }
+
+    /// What an agent asks just to get started: answered without opening Editroom when it's closed.
+    nonisolated static func isStartup(_ method: String) -> Bool {
+        ["initialize", "ping", "tools/list", "resources/list", "resources/templates/list", "prompts/list"].contains(method)
+            || method.hasPrefix("notifications/")
     }
 
     static func handle(_ req: [String: Any], client: MCPServer.Client?, draft token: String? = nil) async -> [String: Any] {

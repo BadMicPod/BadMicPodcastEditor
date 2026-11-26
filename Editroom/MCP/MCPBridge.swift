@@ -63,9 +63,9 @@ enum MCPBridge {
             let id = json?["id"]
             let method = json?["method"] as? String ?? ""
             var reply: Data?
-            // Hello, ping, the tool list and notifications: Editroom's own answer if it's open; this one, and
-            // no opening it, if it's closed.
-            if let json, method == "initialize" || method == "ping" || method == "tools/list" || method.hasPrefix("notifications/") {
+            // Hello, ping, the lists of tools (and of resources and prompts, which it has none of) and
+            // notifications: Editroom's own answer if it's open; this one, and no opening it, if it's closed.
+            if let json, MCPHandler.isStartup(method) {
                 let (body, status) = post(data)
                 if status == 200 || status == 202 {
                     reply = status == 200 ? body : nil
