@@ -17,6 +17,16 @@ enum SelfTest {
             }
             return
         }
+        // `--bench-files <file>...`: how fast the preview pipeline makes frames for each file (HDR included), alone and
+        // with a second copy over it as a picture-in-picture, at the file's own size and rate.
+        if let i = args.firstIndex(of: "--bench-files") {
+            let files = args[(i + 1)...].map { URL(fileURLWithPath: $0) }
+            Task { @MainActor in
+                await benchFiles(files)
+                exit(0)
+            }
+            return
+        }
         // `--reverse-bench <file>...`: how long reversing each whole file takes.
         if let i = args.firstIndex(of: "--reverse-bench") {
             let files = args[(i + 1)...].map { URL(fileURLWithPath: $0) }
@@ -109,6 +119,46 @@ enum SelfTest {
             while output.copyNextSampleBuffer() != nil { frames += 1 }
             let secs = CACurrentMediaTime() - t0
             log(String(format: "BENCH %@: %d frames at %dx%d in %.2fs = %.0f fps (playback needs 60)", name, frames, Int(size.width), Int(size.height), secs, Double(frames) / secs))
+        }
+    }
+
+    static func benchFiles(_ files: [URL]) async {
+        await BaseVideo.load()
+        let media = MediaStore()
+        for f in files {
+            guard let a = await media.importFile(f) else { log("BENCH can't open \(f.lastPathComponent)"); continue }
+            let kind = media.runtimes[a.id]?.sourceColor ?? .standard
+            for layers in [1, 2] {
+                var p = Project()
+                p.width = a.width; p.height = a.height; p.fps = a.fps > 1 ? a.fps : 30
+                p.assets = [a]
+                let length = min(8, a.duration)
+                var clips = [Clip(trackID: p.videoTracks[0].id, kind: .video, assetID: a.id, start: 0, duration: length)]
+                if layers == 2 {
+                    var pip = Clip(trackID: p.videoTracks[1].id, kind: .video, assetID: a.id, start: 0, duration: length)
+                    pip.sourceStart = min(1, a.duration / 4)
+                    pip.transform = ClipTransform(scale: 0.45, x: 0.22, y: -0.2)
+                    clips.append(pip)
+                }
+                p.clips = clips
+                let size = CompositionBuilder.previewSize(for: p)
+                guard let built = CompositionBuilder.build(project: p, media: media, renderSize: size, includeAudio: false),
+                      let reader = try? AVAssetReader(asset: built.composition) else { log("BENCH \(a.name): no composition"); continue }
+                let output = AVAssetReaderVideoCompositionOutput(videoTracks: built.composition.tracks(withMediaType: .video),
+                                                                 videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+                output.videoComposition = built.videoComposition
+                output.alwaysCopiesSampleData = false
+                reader.add(output)
+                reader.timeRange = CMTimeRange(start: .zero, duration: CMTime(seconds: length, preferredTimescale: 600))
+                let t0 = CACurrentMediaTime()
+                reader.startReading()
+                var frames = 0
+                while output.copyNextSampleBuffer() != nil { frames += 1 }
+                let secs = CACurrentMediaTime() - t0
+                log(String(format: "BENCH %@ (%@, %dx%d %.0ffps) %@: %d frames at %dx%d in %.2fs = %.0f fps (needs %.0f)",
+                           a.name, "\(kind)", a.width, a.height, p.fps, layers == 1 ? "alone" : "with a picture-in-picture copy",
+                           frames, Int(size.width), Int(size.height), secs, Double(frames) / secs, p.fps))
+            }
         }
     }
 

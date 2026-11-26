@@ -510,7 +510,8 @@ final class EditorModel: ObservableObject {
                             self.play()
                             var samples: [(wall: Double, head: Double)] = []
                             let t0 = CACurrentMediaTime()
-                            var moved = false
+                            var moved = false, moves = 0
+                            var lastShown = -1.0, lastChange = CACurrentMediaTime(), frameGap = 0.0, backward = 0
                             while CACurrentMediaTime() - t0 < 3.5 {
                                 if args.contains("--handoff-mute"), !moved, CACurrentMediaTime() - t0 > 1 {
                                     // `--handoff-mute`: mutes and unmutes the first audio track instead.
@@ -523,7 +524,8 @@ final class EditorModel: ObservableObject {
                                         self.mutate { $0.audioTracks[0].muted = false }
                                     }
                                 }
-                                if !moved, CACurrentMediaTime() - t0 > 1 {
+                                if moves < (args.contains("--handoff-none") ? 0 : 3), CACurrentMediaTime() - t0 > 1 + Double(moves) * 0.8 {
+                                    moves += 1
                                     moved = true
                                     let second = self.project.clips.filter { $0.start > 0.5 }.map(\.id)
                                     if args.contains("--handoff-track") {
@@ -537,15 +539,21 @@ final class EditorModel: ObservableObject {
                                     }
                                 }
                                 if CACurrentMediaTime() - t0 > 0.5 { samples.append((CACurrentMediaTime(), self.playhead)) }
-                                try? await Task.sleep(nanoseconds: 8_000_000)
+                                if CACurrentMediaTime() - t0 > 0.5, self.engine.shownTime != lastShown {
+                                    let now = CACurrentMediaTime()
+                                    if lastShown >= 0 { frameGap = max(frameGap, now - lastChange); if self.engine.shownTime < lastShown { backward += 1 } }
+                                    lastShown = self.engine.shownTime
+                                    lastChange = now
+                                }
+                                try? await Task.sleep(nanoseconds: 2_000_000)
                             }
                             var stall = 0.0, since = samples[0].wall
                             for i in 1..<samples.count {
                                 if samples[i].head > samples[i - 1].head + 1e-6 { since = samples[i].wall } else { stall = max(stall, samples[i].wall - since) }
                             }
                             let drift = (samples.last!.head - samples[0].head) - (samples.last!.wall - samples[0].wall)
-                            FileHandle.standardError.write(String(format: "HANDOFF longest still %.0f ms, drift %.0f ms, playing=%@ len=%.1f\n",
-                                                                  stall * 1000, drift * 1000, self.isPlaying ? "yes" : "no", len).data(using: .utf8)!)
+                            FileHandle.standardError.write(String(format: "HANDOFF longest still %.0f ms, drift %.0f ms, playing=%@ len=%.1f, moves %d, longest between viewer frames %.0f ms, backward %d\n",
+                                                                  stall * 1000, drift * 1000, self.isPlaying ? "yes" : "no", len, moves, frameGap * 1000, backward).data(using: .utf8)!)
                         }
                     }
                 }

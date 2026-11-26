@@ -148,6 +148,7 @@ final class PlaybackEngine {
     /// The new edit becomes the player's at once, at `time` (a seek, so a moment's pause while playing).
     private func install(_ item: AVPlayerItem, output: AVPlayerItemVideoOutput, signature: Int, at time: Double) {
         let wasPlaying = isPlaying
+        retire()
         dropSpare()
         player.replaceCurrentItem(with: item)
         videoOutput = output
@@ -180,6 +181,7 @@ final class PlaybackEngine {
 
     func pause() {
         player.pause()
+        retire()
         audio.stop()
         afterSeek = .none
         settleHandoff()
@@ -364,16 +366,33 @@ final class PlaybackEngine {
         if handover { signature = spareSignature }
         player = spare
         videoOutput = spareOutput
-        spare = old
-        spareOutput = oldOutput
-        spareSignature = oldSignature
-        old.pause()
         if handover {
-            // The old edit is no use to loop with.
-            if loopSpan == nil { dropSpare() } else { primeSpare() }
+            // The old edit plays on until the new one's first picture is out, which can take a few frames
+            // after it starts: shown meanwhile, rather than the picture standing still. It's no use to loop with.
+            retire()
+            retiring = (old, oldOutput, CACurrentMediaTime() + 0.4)
+            spare = AVPlayer()
+            configure(spare)
+            spareOutput = nil
+            spareSignature = nil
+            if loopSpan != nil { primeSpare() }
         } else {
+            spare = old
+            spareOutput = oldOutput
+            spareSignature = oldSignature
+            old.pause()
             primeSpare()
         }
+    }
+
+    /// The edit just handed over from, still playing until the new one shows its first picture (or `until`).
+    private var retiring: (player: AVPlayer, output: AVPlayerItemVideoOutput?, until: Double)?
+
+    private func retire() {
+        guard let r = retiring else { return }
+        retiring = nil
+        r.player.pause()
+        r.player.replaceCurrentItem(with: nil)
     }
 
     // MARK: Seamless edits while playing
@@ -398,6 +417,10 @@ final class PlaybackEngine {
         spareReady = false
         spare.pause()
         spare.replaceCurrentItem(with: item)
+        // Sent to about where it'll take over before it draws anything: left alone, it first makes the
+        // frame at the start, which costs a decode the playing picture needs (and, from frames decoded
+        // ahead, pushes out the ones playing).
+        spare.seek(to: CompositionBuilder.time(now + max(0.06, handoffPrep * 1.5 + 0.03)), toleranceBefore: .zero, toleranceAfter: .zero)
         spareOutput = output
         spareSignature = sig
         handingOff = true
@@ -534,10 +557,27 @@ final class PlaybackEngine {
             }
         }
         guard let output = videoOutput else { return nil }
+        if let frame = take(from: output) {
+            retire()
+            return frame
+        }
+        // The new edit's first picture isn't out yet: the old one's, as it plays on.
+        if let r = retiring {
+            if CACurrentMediaTime() > r.until || !isPlaying { retire(); return nil }
+            if let o = r.output, let frame = take(from: o) { return frame }
+        }
+        return nil
+    }
+
+    /// The newest frame from `output` for now, if there's one not yet shown.
+    private func take(from output: AVPlayerItemVideoOutput) -> CVPixelBuffer? {
         let t = output.itemTime(forHostTime: CACurrentMediaTime())
         guard output.hasNewPixelBuffer(forItemTime: t) else { return nil }
         var shown = CMTime.zero
         let frame = output.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: &shown)
+        // Playing, a frame from somewhere else (a player just handed an edit drew one elsewhere before it
+        // got to the playhead) is never shown: the last frame stays up instead.
+        if isPlaying, frame != nil, shown.isNumeric, t.isNumeric, abs(shown.seconds - t.seconds) > 3 / max(fps, 1) { return nil }
         if frame != nil {
             lastFrame = frame
             lastPlayerFrame = frame
