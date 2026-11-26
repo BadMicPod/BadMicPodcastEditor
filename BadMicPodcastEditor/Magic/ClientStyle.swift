@@ -50,6 +50,14 @@ final class StyleStore: ObservableObject {
     }
     /// A saved file that couldn't be read and was kept aside, so nothing new overwrites it.
     @Published private(set) var loadProblem: String?
+    private var problemShown = false
+
+    /// The load problem, the first time it's asked for in this run (to show it once, not every popover).
+    func unshownProblem() -> String? {
+        guard let loadProblem, !problemShown else { return nil }
+        problemShown = true
+        return loadProblem
+    }
 
     var active: ClientStyle? { styles.first { $0.id == activeID } }
 
@@ -214,6 +222,9 @@ enum StyleAnalyzer {
             var hasAttributeDuration = false
             /// A container clip (a compound or multicam clip) whose own clips stand for it.
             var hasNested = false
+            /// Pictures inside a container, kept until the container closes.
+            var childSeconds = 0.0
+            var childClips = 0
             /// Premiere audio clips aren't picture.
             var counts = true
         }
@@ -269,18 +280,36 @@ enum StyleAnalyzer {
             default: break
             }
             if isClip(elementName) {
-                if let state = clipStates.removeValue(forKey: stack.count - 1) {
-                    // Placed length (end - start) beats the source length for a trimmed Premiere clip;
-                    // a container's own clips are counted instead of it.
-                    let length = state.end > state.start ? state.end - state.start : state.length
-                    if state.counts, !state.hasNested, length > 0 {
-                        clips += 1
-                        seconds += length
-                    }
-                }
+                settle(depth: stack.count - 1)
             }
             text = ""
             if !stack.isEmpty { stack.removeLast() }
+        }
+
+        /// Counts a finished clip. A container's pictures settle against its own trims, then go up to
+        /// the container around it (if any) rather than straight onto the timeline's totals.
+        private func settle(depth: Int) {
+            guard let state = clipStates.removeValue(forKey: depth) else { return }
+            let own = state.end > state.start ? state.end - state.start : state.length
+            let total: Double
+            let count: Int
+            if state.hasNested {
+                // A compound or multicam clip trimmed shorter than what's inside it still ran for its
+                // own length; its cuts are its children's cuts.
+                total = own > 0 ? min(state.childSeconds, own) : state.childSeconds
+                count = max(state.childClips, 1)
+            } else {
+                total = own
+                count = 1
+            }
+            guard state.counts, total > 0 else { return }
+            if let outer = stack.dropLast().lastIndex(where: isClip) {
+                clipStates[outer]?.childSeconds += total
+                clipStates[outer]?.childClips += count
+            } else {
+                clips += count
+                seconds += total
+            }
         }
 
         /// The nearest video or audio track around the open element (Premiere only).

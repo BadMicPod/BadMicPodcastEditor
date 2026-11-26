@@ -22,8 +22,9 @@ struct ClientStyleBar: View {
         Menu {
             if let problem = store.loadProblem {
                 Section("Saved styles") {
-                    Button("Couldn't read saved styles") {}.disabled(true)
-                        .help(problem)
+                    Button("Couldn't read saved styles…") {
+                        ClientStyleDialog.say("Couldn't read saved client styles", problem)
+                    }
                 }
             }
             Section("Client") {
@@ -71,6 +72,12 @@ struct ClientStyleBar: View {
                 ? "\($0.name) has no style yet: add notes or train from an episode they were happy with."
                 : "Magic follows \($0.name)'s style. Change it, or teach it from another episode." }
               ?? "Pick a client so Magic can follow their style, or teach it one from a finished episode.")
+        .onAppear {
+            // A saved file the store couldn't read: say so where it can be seen, once per run.
+            if let problem = store.unshownProblem() {
+                ClientStyleDialog.say("Couldn't read saved client styles", problem)
+            }
+        }
     }
 
     private func item(name: String, id: UUID?) -> some View {
