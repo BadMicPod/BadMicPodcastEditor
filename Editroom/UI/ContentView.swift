@@ -64,6 +64,9 @@ struct ContentView: View {
             return true
         }
         .onChange(of: dropTargeted) { _, on in model.importDropHover = on }
+        // Files from other apps are caught here first, so they vanish into Media as they're dropped
+        // (the drop above stays as a fallback).
+        .overlay { WindowDropCatcher(model: model) }
         .preferredColorScheme(Theme.scheme)
         // The title bar in the panel black, not macOS's lighter default.
         .toolbarBackground(Theme.panel, for: .windowToolbar)
