@@ -13,6 +13,27 @@ struct ClientStyle: Identifiable, Codable, Hashable {
     var trainedFrom: String = ""
     var updated = Date()
 
+    init(name: String, instructions: String = "") {
+        self.name = name
+        self.instructions = instructions
+    }
+
+    /// Every field optional: a store saved by an older or newer build still opens, rather than
+    /// taking the clients down with it.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Client"
+        instructions = try c.decodeIfPresent(String.self, forKey: .instructions) ?? ""
+        profile = try c.decodeIfPresent(String.self, forKey: .profile) ?? ""
+        trainedFrom = try c.decodeIfPresent(String.self, forKey: .trainedFrom) ?? ""
+        updated = try c.decodeIfPresent(Date.self, forKey: .updated) ?? Date()
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, instructions, profile, trainedFrom, updated
+    }
+
     var summary: String {
         [instructions, profile].filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
@@ -27,6 +48,8 @@ final class StyleStore: ObservableObject {
     @Published var activeID: UUID? {
         didSet { UserDefaults.standard.set(activeID?.uuidString, forKey: "activeClientStyle") }
     }
+    /// A saved file that couldn't be read and was kept aside, so nothing new overwrites it.
+    @Published private(set) var loadProblem: String?
 
     var active: ClientStyle? { styles.first { $0.id == activeID } }
 
@@ -38,20 +61,35 @@ final class StyleStore: ObservableObject {
     private init() {
         load()
         if let s = UserDefaults.standard.string(forKey: "activeClientStyle"), let id = UUID(uuidString: s) {
-            activeID = styles.contains { $0.id == id } ? id : nil
+            if styles.contains(where: { $0.id == id }) {
+                activeID = id
+            } else {
+                // The client was deleted: don't leave a stale id to pick up again.
+                UserDefaults.standard.removeObject(forKey: "activeClientStyle")
+            }
         }
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: file),
-              let list = try? JSONDecoder().decode([ClientStyle].self, from: data) else { return }
-        styles = list
+        guard FileManager.default.fileExists(atPath: file.path) else { return }
+        do {
+            let data = try Data(contentsOf: file)
+            styles = try JSONDecoder().decode([ClientStyle].self, from: data)
+        } catch {
+            // Keep whatever was there for a person to recover, rather than saving over it later.
+            let backup = file.appendingPathExtension("broken")
+            try? FileManager.default.removeItem(at: backup)
+            try? FileManager.default.moveItem(at: file, to: backup)
+            loadProblem = "Client styles couldn't be read. The old file is kept beside it as Styles.json.broken."
+        }
     }
 
     private func save() {
         let dir = file.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        if let data = try? JSONEncoder().encode(styles) { try? data.write(to: file) }
+        if let data = try? JSONEncoder().encode(styles) {
+            try? data.write(to: file, options: .atomic)
+        }
     }
 
     func add(_ style: ClientStyle) {
@@ -78,10 +116,10 @@ final class StyleStore: ObservableObject {
 
 /// Turns an edit (a project or an XML) into a short style profile an AI can follow.
 enum StyleAnalyzer {
-    static func profile(for p: Project) -> String {
+    static func profile(for p: Project) -> String? {
         let visual = p.clips.filter { $0.kind != .audio }
-        guard !visual.isEmpty else { return "The timeline is empty, so there was nothing to learn." }
         let duration = p.duration
+        guard !visual.isEmpty, duration >= 1 else { return nil }
         let shots = visual.count
         let avg = visual.map(\.duration).reduce(0, +) / Double(shots)
         let cutsPerMin = Double(shots) / max(duration / 60, 0.01)
@@ -143,7 +181,8 @@ enum StyleAnalyzer {
         let xml = XMLParser(data: data)
         xml.delegate = parser
         xml.parse()
-        guard parser.clips > 0 else { return nil }
+        // Nothing with a length: a stills timeline, or an XML shape this doesn't know.
+        guard parser.clips > 0, parser.seconds >= 1 else { return nil }
         let total = parser.seconds
         let avg = total / Double(parser.clips)
         let cutsPerMin = Double(parser.clips) / max(total / 60, 0.01)
@@ -157,28 +196,49 @@ enum StyleAnalyzer {
         var clips = 0
         var transitions = 0
         var seconds = 0.0
-        /// The clip element open right now: its length, and its start and end on the timeline.
+
+        /// Elements open right now, outermost first.
         private var stack: [String] = []
-        private var clipLength = 0.0
-        private var clipStart = 0.0
-        private var clipEnd = 0.0
+        /// The length and place of each open clip, by its depth in the stack.
+        private var clipStates: [Int: ClipState] = [:]
         private var text = ""
-        /// Premiere counts in frames: the sequence's own rate.
+        /// Premiere counts in frames: the sequence's rate.
         private var timebase = 30.0
+        private var haveSequenceTimebase = false
+        private var isPremiere = false
+
+        private struct ClipState {
+            var length = 0.0
+            var start = 0.0
+            var end = 0.0
+            var hasAttributeDuration = false
+            /// A container clip (a compound or multicam clip) whose own clips stand for it.
+            var hasNested = false
+            /// Premiere audio clips aren't picture.
+            var counts = true
+        }
 
         func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?,
                     qualifiedName qName: String?, attributes: [String: String] = [:]) {
+            let depth = stack.count
             stack.append(elementName)
             text = ""
-            if isClip(elementName) {
-                clipLength = attributes["duration"].map { Self.seconds($0, fps: timebase) } ?? 0
-                clipStart = 0
-                clipEnd = 0
-            } else if elementName == "duration", stack.count > 1, isClip(stack[stack.count - 2]) {
-                // A clip's length as a child element (Premiere): read below.
-                clipLength = 0
+            if elementName == "xmeml" { isPremiere = true }
+            if elementName == "transition" || elementName == "transitionitem" {
+                if !(isPremiere && inAudio()) { transitions += 1 }
             }
-            if elementName == "transition" || elementName == "transitionitem" { transitions += 1 }
+            if isClip(elementName) {
+                if let outer = stack.dropLast().lastIndex(where: isClip) {
+                    clipStates[outer]?.hasNested = true
+                }
+                var state = ClipState()
+                if let duration = attributes["duration"] {
+                    state.length = Self.seconds(duration, fps: timebase)
+                    state.hasAttributeDuration = true
+                }
+                if isPremiere, inAudio() { state.counts = false }
+                clipStates[depth] = state
+            }
         }
 
         func parser(_ parser: XMLParser, foundCharacters string: String) {
@@ -191,32 +251,50 @@ enum StyleAnalyzer {
             let value = Self.seconds(text.trimmingCharacters(in: .whitespacesAndNewlines), fps: timebase)
             switch elementName {
             case "timebase":
-                if Double(text.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0 > 0 {
-                    timebase = Double(text.trimmingCharacters(in: .whitespacesAndNewlines)) ?? timebase
+                // The sequence's rate, not a file's: a 30 fps stock clip in a 25 fps cut shouldn't
+                // change how later frame counts are read.
+                let rate = Double(text.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+                if rate > 0, stack.contains("sequence"), !stack.contains("file"), !haveSequenceTimebase {
+                    timebase = rate
+                    haveSequenceTimebase = true
                 }
-            case "duration" where isClip(parent) && clipLength == 0:
-                clipLength = value
+            case "duration" where isClip(parent):
+                if clipStates[stack.count - 2]?.hasAttributeDuration == false, value > 0 {
+                    clipStates[stack.count - 2]?.length = value
+                }
             case "start" where isClip(parent):
-                clipStart = value
+                if value > 0 { clipStates[stack.count - 2]?.start = value }
             case "end" where isClip(parent):
-                clipEnd = value
+                if value > 0 { clipStates[stack.count - 2]?.end = value }
             default: break
             }
             if isClip(elementName) {
-                // Placed length (end - start) beats the source length for a trimmed Premiere clip.
-                let length = clipEnd > clipStart ? clipEnd - clipStart : clipLength
-                if length > 0 {
-                    clips += 1
-                    seconds += length
+                if let state = clipStates.removeValue(forKey: stack.count - 1) {
+                    // Placed length (end - start) beats the source length for a trimmed Premiere clip;
+                    // a container's own clips are counted instead of it.
+                    let length = state.end > state.start ? state.end - state.start : state.length
+                    if state.counts, !state.hasNested, length > 0 {
+                        clips += 1
+                        seconds += length
+                    }
                 }
-                clipLength = 0
             }
             text = ""
             if !stack.isEmpty { stack.removeLast() }
         }
 
+        /// The nearest video or audio track around the open element (Premiere only).
+        private func inAudio() -> Bool {
+            for name in stack.reversed() {
+                if name == "audio" { return true }
+                if name == "video" { return false }
+            }
+            return false
+        }
+
         private func isClip(_ name: String) -> Bool {
-            ["clip", "asset-clip", "title", "still", "image", "clipitem"].contains(name)
+            ["clip", "asset-clip", "title", "still", "image", "clipitem",
+             "mc-clip", "sync-clip", "ref-clip"].contains(name)
         }
 
         /// FCPXML durations look like "3600/30000s" or "00:00:01:12"; Premiere uses frames or ticks.
@@ -229,7 +307,7 @@ enum StyleAnalyzer {
             }
             let parts = s.split(separator: ":")
             if parts.count == 4, let h = Double(parts[0]), let m = Double(parts[1]), let sec = Double(parts[2]), let f = Double(parts[3]) {
-                return h * 3600 + m * 60 + sec + f / 30
+                return h * 3600 + m * 60 + sec + f / max(fps, 1)
             }
             // Premiere's ticks: 254,016,000,000 to a second. Small numbers are frames.
             if let v = Double(s), v > 0 {

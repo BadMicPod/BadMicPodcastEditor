@@ -13,8 +13,19 @@ struct ClientStyleBar: View {
 
     private var active: ClientStyle? { store.active }
 
+    private var label: String {
+        guard let active else { return "Client style" }
+        return active.summary.isEmpty ? "\(active.name) · not trained" : "\(active.name) style"
+    }
+
     var body: some View {
         Menu {
+            if let problem = store.loadProblem {
+                Section("Saved styles") {
+                    Button("Couldn't read saved styles") {}.disabled(true)
+                        .help(problem)
+                }
+            }
             Section("Client") {
                 item(name: "No client", id: nil)
                 ForEach(store.styles) { style in
@@ -34,7 +45,7 @@ struct ClientStyleBar: View {
             HStack(spacing: 5) {
                 Image(systemName: active == nil ? "person.crop.circle" : "person.crop.circle.badge.checkmark")
                     .font(.system(size: 10.5, weight: .semibold))
-                Text(active.map { "\($0.name) style" } ?? "Client style")
+                Text(label)
                     .font(.system(size: 11, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -56,9 +67,10 @@ struct ClientStyleBar: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .onHover { hovering = $0 }
-        .help(active?.profile.isEmpty == false
-              ? "Magic follows this client's style. Change it, or teach it from another episode."
-              : "Pick a client so Magic can follow their style, or teach it one from a finished episode.")
+        .help(active.map { $0.summary.isEmpty
+                ? "\($0.name) has no style yet: add notes or train from an episode they were happy with."
+                : "Magic follows \($0.name)'s style. Change it, or teach it from another episode." }
+              ?? "Pick a client so Magic can follow their style, or teach it one from a finished episode.")
     }
 
     private func item(name: String, id: UUID?) -> some View {
@@ -77,7 +89,11 @@ struct ClientStyleBar: View {
 
     private func train() {
         guard hasEdit else { return }
-        let profile = StyleAnalyzer.profile(for: model.project)
+        guard let profile = StyleAnalyzer.profile(for: model.project) else {
+            ClientStyleDialog.say("Nothing to learn from yet",
+                                  "The timeline has no picture clips, or is shorter than a second. Cut an episode first, then train from it.")
+            return
+        }
         ClientStyleDialog.learn(profile, from: "this episode", store: store)
     }
 
@@ -112,9 +128,10 @@ struct ClientStyleBar: View {
         let alert = BadMicAlert()
         alert.messageText = "Delete \(active.name)?"
         alert.informativeText = "Magic will forget their style. Episodes already edited aren't changed."
-        alert.addButton(withTitle: "Delete")
+        // Cancel first, so Return can't delete a client.
         alert.addButton(withTitle: "Cancel")
-        if alert.runModal() == .alertFirstButtonReturn { store.remove(active.id) }
+        alert.addButton(withTitle: "Delete")
+        if alert.runModal() == .alertSecondButtonReturn { store.remove(active.id) }
     }
 }
 
@@ -153,27 +170,32 @@ enum ClientStyleDialog {
         let alert = BadMicAlert()
         alert.messageText = creating ? "New client" : "\(style.name.isEmpty ? "Client" : style.name) style"
         alert.informativeText = creating
-            ? "Magic will follow this client's style on every episode you cut for them."
+            ? (style.profile.isEmpty
+                ? "Add their notes now, or train Magic from an episode once you've cut one."
+                : "Their style is already learned from \(style.trainedFrom.isEmpty ? "an earlier episode" : style.trainedFrom). Add any notes too.")
             : "Their notes and what Magic learned from their episodes. Magic follows both."
         alert.accessoryView = accessory
         alert.addButton(withTitle: creating ? "Add Client" : "Save")
         alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
 
-        let clean = name.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty else {
-            say("A client needs a name", "Give them a name so you can pick them again next episode.")
+        // Keep what was typed if the name is empty, and ask again rather than losing the notes.
+        while alert.runModal() == .alertFirstButtonReturn {
+            let clean = name.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !clean.isEmpty else {
+                alert.informativeText = "Give them a name so you can pick them again next episode."
+                continue
+            }
+            var updated = style
+            updated.name = clean
+            updated.instructions = notes.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            if store.styles.contains(where: { $0.id == updated.id }) {
+                store.update(updated)
+            } else {
+                store.add(updated)
+            }
+            store.activeID = updated.id
             return
         }
-        var updated = style
-        updated.name = clean
-        updated.instructions = notes.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        if store.styles.contains(where: { $0.id == updated.id }) {
-            store.update(updated)
-        } else {
-            store.add(updated)
-        }
-        store.activeID = updated.id
     }
 
     /// Shows what was learned and offers to keep it, on the chosen client or a new one.
@@ -204,7 +226,16 @@ enum ClientStyleDialog {
         }
 
         if let active, response == .alertFirstButtonReturn {
-            keep(active)
+            if active.profile.isEmpty {
+                keep(active)
+            } else {
+                let confirm = BadMicAlert()
+                confirm.messageText = "Replace \(active.name)'s learned style?"
+                confirm.informativeText = "The recipe from \(active.trainedFrom.isEmpty ? "their last episode" : active.trainedFrom) will be replaced. Their notes are kept."
+                confirm.addButton(withTitle: "Cancel")
+                confirm.addButton(withTitle: "Replace")
+                if confirm.runModal() == .alertSecondButtonReturn { keep(active) }
+            }
         } else if response == (active == nil ? .alertFirstButtonReturn : .alertSecondButtonReturn) {
             var style = ClientStyle(name: "")
             style.profile = profile
