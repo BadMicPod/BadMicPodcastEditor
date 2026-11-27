@@ -1975,7 +1975,7 @@ final class EditorModel: ObservableObject {
             }
         }
     }
-    func switchMulticamAngle(at t: Double, to angle: Int, scope: MulticamSwitchScope = MulticamSwitchScope(rawValue: UserDefaults.standard.string(forKey: "multicamSwitchScope") ?? "") ?? .videoOnly) {
+    func switchMulticamAngle(at t: Double, to angle: Int, scope: MulticamSwitchScope = MulticamSwitchScope(rawValue: UserDefaults.standard.string(forKey: "multicamSwitchScope") ?? "") ?? .videoAndAudio) {
         guard let c = multicamClipAtPlayhead, let group = project.multicamGroup(c.multicamGroupID) else { return }
         guard angle >= 0, angle < group.angleAssetIDs.count else { return }
         let curAngle = c.multicamAngle ?? 0

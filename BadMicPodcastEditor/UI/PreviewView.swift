@@ -465,7 +465,7 @@ struct MulticamAngleBar: View {
     let clip: Clip
     let group: MulticamGroup
 
-    @State private var scope: MulticamSwitchScope = MulticamSwitchScope(rawValue: UserDefaults.standard.string(forKey: "multicamSwitchScope") ?? "") ?? .videoOnly
+    @State private var scope: MulticamSwitchScope = MulticamSwitchScope(rawValue: UserDefaults.standard.string(forKey: "multicamSwitchScope") ?? "") ?? .videoAndAudio
 
     private func name(for i: Int) -> String {
         if let names = group.angleNames, i < names.count, !names[i].isEmpty { return names[i] }
@@ -523,7 +523,7 @@ struct MulticamAngleBar: View {
 
 /// A compact scope picker shown away from the angle previews.
 private struct MulticamScopeControl: View {
-    @State private var scope: MulticamSwitchScope = MulticamSwitchScope(rawValue: UserDefaults.standard.string(forKey: "multicamSwitchScope") ?? "") ?? .videoOnly
+    @State private var scope: MulticamSwitchScope = MulticamSwitchScope(rawValue: UserDefaults.standard.string(forKey: "multicamSwitchScope") ?? "") ?? .videoAndAudio
 
     var body: some View {
         HStack(spacing: 4) {
