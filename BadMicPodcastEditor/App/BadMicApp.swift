@@ -256,7 +256,7 @@ struct BadMicApp: App {
                 Button("Save As…") { model.saveAs() }.keyboardShortcut(keys.menu(.saveAs))
                 Divider()
                 Button("Import Media…") { model.showImportPanel() }.keyboardShortcut(keys.menu(.importMedia))
-                Button("Import FCPXML…") { model.importFCPXML() }
+                Button("Import Edit XML…") { model.importFCPXML() }
                 Button("Export…") { model.showExport = true }.keyboardShortcut(keys.menu(.export))
             }
             CommandGroup(replacing: .undoRedo) {

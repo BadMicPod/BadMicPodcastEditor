@@ -1675,14 +1675,23 @@ final class EditorModel: ObservableObject {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
-        if let t = UTType(filenameExtension: "fcpxml") { panel.allowedContentTypes = [t] }
+        var types: [UTType] = []
+        if let t = UTType(filenameExtension: "fcpxml") { types.append(t) }
+        if let t = UTType(filenameExtension: "xml") { types.append(t) }
+        panel.allowedContentTypes = types.isEmpty ? [.xml] : types
         panel.allowsOtherFileTypes = true
         panel.prompt = "Import"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task { @MainActor in
-            if !(await FCPXMLImporter.importProject(from: url, model: self)) {
+            let data = (try? Data(contentsOf: url)) ?? Data()
+            let text = String(data: data, encoding: .utf8) ?? ""
+            let isPremiere = text.contains("<xmeml")
+            let ok = isPremiere
+                ? await PremiereXMLImporter.importProject(from: url, model: self)
+                : await FCPXMLImporter.importProject(from: url, model: self)
+            if !ok {
                 let a = BadMicAlert()
-                a.messageText = "Couldn't import that FCPXML"
+                a.messageText = "Couldn't import that edit XML"
                 a.informativeText = "It may use a structure this version doesn't understand yet."
                 a.runModal()
             }
