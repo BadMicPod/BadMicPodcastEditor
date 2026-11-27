@@ -111,6 +111,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
     case split, addDissolve, detachAudio, duplicate, freezeFrame, reverse, copyGrade, pasteGrade, delete, rippleDelete, rippleTrimStart, rippleTrimEnd, addText, revealInMedia
     case addMarker, setIn, setOut, clearInOut
     case zoomIn, zoomOut, zoomToFit, snapping, sticky, skimming, audioScrubbing
+    case multicamAngle1, multicamAngle2, multicamAngle3, multicamAngle4, multicamAngle5,
+         multicamAngle6, multicamAngle7, multicamAngle8, multicamAngle9
 
     var id: String { rawValue }
 
@@ -160,6 +162,15 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
         case .sticky: "Sticky Edges"
         case .skimming: "Skimming"
         case .audioScrubbing: "Audio Scrubbing"
+        case .multicamAngle1: "Multicam Angle 1"
+        case .multicamAngle2: "Multicam Angle 2"
+        case .multicamAngle3: "Multicam Angle 3"
+        case .multicamAngle4: "Multicam Angle 4"
+        case .multicamAngle5: "Multicam Angle 5"
+        case .multicamAngle6: "Multicam Angle 6"
+        case .multicamAngle7: "Multicam Angle 7"
+        case .multicamAngle8: "Multicam Angle 8"
+        case .multicamAngle9: "Multicam Angle 9"
         }
     }
 
@@ -176,6 +187,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
         case .split, .addDissolve, .detachAudio, .duplicate, .freezeFrame, .reverse, .copyGrade, .pasteGrade, .delete, .rippleDelete, .rippleTrimStart, .rippleTrimEnd, .addText, .revealInMedia: .clip
         case .addMarker, .setIn, .setOut, .clearInOut: .mark
         case .zoomIn, .zoomOut, .zoomToFit, .snapping, .sticky, .skimming, .audioScrubbing: .view
+        case .multicamAngle1, .multicamAngle2, .multicamAngle3, .multicamAngle4, .multicamAngle5,
+             .multicamAngle6, .multicamAngle7, .multicamAngle8, .multicamAngle9: .clip
         }
     }
 
@@ -183,7 +196,9 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
     var inMenu: Bool {
         switch self {
         case .playPause, .stepBack, .stepForward, .previousEdit, .nextEdit, .goToStart, .goToEnd, .loop, .fullScreenViewer,
-             .selectTool, .cutTool: false
+             .selectTool, .cutTool,
+             .multicamAngle1, .multicamAngle2, .multicamAngle3, .multicamAngle4, .multicamAngle5,
+             .multicamAngle6, .multicamAngle7, .multicamAngle8, .multicamAngle9: false
         default: true
         }
     }
@@ -235,6 +250,15 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
         case .sticky: [KeyCombo("r")]
         case .skimming: [KeyCombo("k")]
         case .audioScrubbing: [KeyCombo("s", shift: true)]
+        case .multicamAngle1: [KeyCombo("1")]
+        case .multicamAngle2: [KeyCombo("2")]
+        case .multicamAngle3: [KeyCombo("3")]
+        case .multicamAngle4: [KeyCombo("4")]
+        case .multicamAngle5: [KeyCombo("5")]
+        case .multicamAngle6: [KeyCombo("6")]
+        case .multicamAngle7: [KeyCombo("7")]
+        case .multicamAngle8: [KeyCombo("8")]
+        case .multicamAngle9: [KeyCombo("9")]
         }
     }
 }

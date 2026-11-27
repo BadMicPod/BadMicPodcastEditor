@@ -187,23 +187,19 @@ enum KeyCommands {
             model.tool = .move
             return true
         }
-        // Multicam angle switches: digits 1-9 pick the angle under the playhead.
-        if UserDefaults.standard.object(forKey: "multicamAngleKeysEnabled") as? Bool ?? true,
-           let mc = model.multicamClipAtPlayhead,
-           let group = model.project.multicamGroup(mc.multicamGroupID),
-           e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
-           let chars = e.characters, chars.count == 1,
-           let digit = chars.first?.wholeNumberValue, (1...9).contains(digit),
-           digit - 1 < group.angleAssetIDs.count {
-            model.switchMulticamAngle(at: model.playhead, to: digit - 1)
-            return true
-        }
+        // Multicam angle switches are now handled by the shortcut system (remappable in Settings).
 
         guard let combo, let action = keys.action(for: combo) else { return false }
         // ⌘ shortcuts of menu items go to the menu, so it flashes.
         if action.inMenu, combo.command { return false }
         perform(action, model)
         return true
+    }
+
+    private static func switchMulticamAngle(_ model: EditorModel, _ angle: Int) {
+        guard UserDefaults.standard.object(forKey: "multicamAngleKeysEnabled") as? Bool ?? true else { return }
+        guard let mc = model.multicamClipAtPlayhead, let group = model.project.multicamGroup(mc.multicamGroupID), angle < group.angleAssetIDs.count else { return }
+        model.switchMulticamAngle(at: model.playhead, to: angle)
     }
 
     static func perform(_ a: ShortcutAction, _ model: EditorModel) {
@@ -227,6 +223,15 @@ enum KeyCommands {
         case .fullScreenViewer: model.toggleViewerFullScreen()
         case .selectTool: model.tool = .move
         case .cutTool: model.tool = .cut
+        case .multicamAngle1: switchMulticamAngle(model, 0)
+        case .multicamAngle2: switchMulticamAngle(model, 1)
+        case .multicamAngle3: switchMulticamAngle(model, 2)
+        case .multicamAngle4: switchMulticamAngle(model, 3)
+        case .multicamAngle5: switchMulticamAngle(model, 4)
+        case .multicamAngle6: switchMulticamAngle(model, 5)
+        case .multicamAngle7: switchMulticamAngle(model, 6)
+        case .multicamAngle8: switchMulticamAngle(model, 7)
+        case .multicamAngle9: switchMulticamAngle(model, 8)
         case .split: model.splitAtPlayhead()
         case .addDissolve: model.addTransitionAtPlayhead()
         case .detachAudio: model.detachAudio()
