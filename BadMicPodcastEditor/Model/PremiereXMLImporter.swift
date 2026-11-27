@@ -31,14 +31,23 @@ enum PremiereXMLImporter {
 
         let vTrack = project.videoTracks.first?.id ?? UUID()
         let aTrack = project.audioTracks.first?.id ?? UUID()
+        let titleTrack = project.videoTracks.count > 1 ? project.videoTracks[1].id : vTrack
 
         for clip in parsed.clips {
+            if clip.isTitle {
+                let dur = clip.duration > 0 ? clip.duration : 3.0
+                var t = Clip(trackID: titleTrack, kind: .text, start: clip.start, duration: dur)
+                t.text.string = clip.titleText.isEmpty ? "Title" : clip.titleText
+                project.clips.append(t)
+                continue
+            }
             guard let asset = assetMap[clip.assetID] else { continue }
             let dur = clip.duration > 0 ? clip.duration : max(1.0 / project.fps, asset.duration - clip.start)
             guard dur >= 1.0 / project.fps else { continue }
             if clip.isVideo {
                 var v = Clip(trackID: vTrack, kind: .video, assetID: asset.id, start: clip.start, duration: dur)
                 v.sourceStart = clip.inPoint
+                if let tk = clip.transition { v.transitionIn = Transition(kind: tk) }
                 project.clips.append(v)
                 if asset.hasAudio {
                     let link = UUID()
@@ -65,7 +74,7 @@ enum PremiereXMLImporter {
     // MARK: Parsing
 
     private struct AssetInfo { var name: String; var src: String; var duration: Double; var hasVideo: Bool; var hasAudio: Bool }
-    private struct ClipInfo { var assetID: String; var start: Double; var duration: Double; var inPoint: Double; var isVideo: Bool }
+    private struct ClipInfo { var assetID: String; var start: Double; var duration: Double; var inPoint: Double; var isVideo: Bool; var isTitle: Bool = false; var titleText: String = ""; var transition: TransitionKind? = nil }
 
     private final class Parser: NSObject, XMLParserDelegate {
         var result: Parsed?
@@ -90,8 +99,15 @@ enum PremiereXMLImporter {
         private var curAssetID = ""
         private var curHasVideo = true
         private var curHasAudio = false
+        private var curTransition: TransitionKind? = nil
         private var inClipItem = false
+        private var inGeneratorItem = false
+        private var inTransitionItem = false
         private var inFile = false
+        private var pendingTransition: TransitionKind? = nil
+        private var currentTitleText = ""
+        private var inEffectParam = false
+        private var currentParamName = "" 
         private var fileSrc = ""
         private var fileName = ""
         private var fileDuration = 0.0
@@ -118,7 +134,35 @@ enum PremiereXMLImporter {
                 curName = attributes["name"] ?? ""
                 curDuration = 0; curStart = 0; curEnd = 0; curIn = 0; curOut = 0
                 curAssetID = ""; curHasVideo = inVideoTrack; curHasAudio = inAudioTrack
+                curTransition = pendingTransition
+                pendingTransition = nil
                 fileSrc = ""; fileName = ""; fileDuration = 0
+            }
+            if elementName == "generatoritem" {
+                inGeneratorItem = true
+                curName = attributes["name"] ?? ""
+                curDuration = 0; curStart = 0; curEnd = 0; curIn = 0; curOut = 0
+                curHasVideo = inVideoTrack; curHasAudio = inAudioTrack
+                currentTitleText = ""
+                curTransition = pendingTransition
+                pendingTransition = nil
+            }
+            if elementName == "transitionitem" {
+                inTransitionItem = true
+                pendingTransition = .dissolve
+            }
+            if elementName == "effect" && (inGeneratorItem) {
+                // title text follows in a parameter
+            }
+            if elementName == "parameter" && inGeneratorItem {
+                inEffectParam = true
+                currentParamName = ""
+            }
+            if elementName == "name" && inEffectParam {
+                // text follows
+            }
+            if elementName == "value" && inEffectParam && (currentParamName.lowercased().contains("text") || currentParamName.lowercased().contains("str")) {
+                // text follows
             }
             if elementName == "file" {
                 inFile = true
@@ -141,6 +185,12 @@ enum PremiereXMLImporter {
             }
             if inClipItem && stack.last == "duration" {
                 // handled in didEndElement
+            }
+            if inEffectParam && stack.last == "name" {
+                currentParamName += string
+            }
+            if inEffectParam && stack.last == "value" && (currentParamName.lowercased().contains("text") || currentParamName.lowercased().contains("str")) {
+                currentTitleText += string
             }
         }
 
@@ -179,8 +229,19 @@ enum PremiereXMLImporter {
                 let durSec = (curOut > curIn ? (curOut - curIn) : curDuration) / timebase
                 let inSec = curIn / timebase
                 if !curAssetID.isEmpty && durSec > 0 {
-                    parsed.clips.append(ClipInfo(assetID: curAssetID, start: startSec, duration: durSec, inPoint: inSec, isVideo: curHasVideo))
+                    parsed.clips.append(ClipInfo(assetID: curAssetID, start: startSec, duration: durSec, inPoint: inSec, isVideo: curHasVideo, transition: curTransition))
                 }
+            case "generatoritem":
+                inGeneratorItem = false
+                let startSec = curStart / timebase
+                let durSec = (curOut > curIn ? (curOut - curIn) : curDuration) / timebase
+                if durSec > 0 {
+                    parsed.clips.append(ClipInfo(assetID: "", start: startSec, duration: durSec, inPoint: 0, isVideo: true, isTitle: true, titleText: currentTitleText.trimmingCharacters(in: .whitespacesAndNewlines)))
+                }
+            case "transitionitem":
+                inTransitionItem = false
+            case "parameter":
+                inEffectParam = false
             case "rate":
                 inRate = false
             case "video":
