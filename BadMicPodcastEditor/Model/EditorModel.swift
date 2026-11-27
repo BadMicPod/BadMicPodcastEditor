@@ -1949,6 +1949,7 @@ final class EditorModel: ObservableObject {
             v.linkID = link
             var au = Clip(trackID: aTrack, kind: .audio, assetID: group.angleAssetIDs[0], start: start, duration: dur)
             au.linkID = link
+            au.sourceStart = group.syncOffsets[0] + (group.audioSyncOffsets?[0] ?? 0)
             clips = [v, au]
         }
         insert(clips)
@@ -1959,6 +1960,17 @@ final class EditorModel: ObservableObject {
             guard let gi = p.multicamGroups?.firstIndex(where: { $0.id == groupID }) else { return }
             guard angle >= 0, angle < (p.multicamGroups![gi].syncOffsets.count) else { return }
             p.multicamGroups![gi].syncOffsets[angle] += seconds
+        }
+    }
+
+    func nudgeMulticamAudioOffset(groupID: UUID, angle: Int, by seconds: Double) {
+        mutate { p in
+            guard let gi = p.multicamGroups?.firstIndex(where: { $0.id == groupID }) else { return }
+            if p.multicamGroups![gi].audioSyncOffsets == nil {
+                p.multicamGroups![gi].audioSyncOffsets = Array(repeating: 0, count: p.multicamGroups![gi].angleAssetIDs.count)
+            }
+            guard angle >= 0, angle < (p.multicamGroups![gi].audioSyncOffsets?.count ?? 0) else { return }
+            p.multicamGroups![gi].audioSyncOffsets![angle] += seconds
         }
     }
 
@@ -2015,7 +2027,9 @@ final class EditorModel: ObservableObject {
                 if let link = linkID,
                    let j = p.clips.firstIndex(where: { $0.kind == .audio && $0.linkID == link && $0.start <= t + 1e-6 && $0.end > t - 1e-6 }) {
                     p.clips[j].assetID = newAsset
-                    p.clips[j].sourceStart = p.clips[j].sourceStart - oldOffset + newOffset
+                    let oldAudioOffset = group.audioSyncOffsets?[curAngle] ?? 0
+                    let newAudioOffset = group.audioSyncOffsets?[angle] ?? 0
+                    p.clips[j].sourceStart = p.clips[j].sourceStart - oldAudioOffset + newAudioOffset
                 }
             }
         }

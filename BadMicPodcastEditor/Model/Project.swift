@@ -306,13 +306,16 @@ struct MulticamGroup: Identifiable, Codable, Hashable {
     var angleAssetIDs: [UUID]
     /// Seconds each angle is shifted relative to angle 0, so they line up.
     var syncOffsets: [Double]
+    /// Extra shift applied to an angle's sound, on top of its picture sync, for lip-sync.
+    var audioSyncOffsets: [Double]?
     /// Optional display names for the angles (nil falls back to "Angle N").
     var angleNames: [String]?
 
-    init(name: String, angleAssetIDs: [UUID], syncOffsets: [Double]? = nil, angleNames: [String]? = nil) {
+    init(name: String, angleAssetIDs: [UUID], syncOffsets: [Double]? = nil, audioSyncOffsets: [Double]? = nil, angleNames: [String]? = nil) {
         self.name = name
         self.angleAssetIDs = angleAssetIDs
         self.syncOffsets = syncOffsets ?? Array(repeating: 0, count: angleAssetIDs.count)
+        self.audioSyncOffsets = audioSyncOffsets ?? Array(repeating: 0, count: angleAssetIDs.count)
         self.angleNames = angleNames
     }
 }

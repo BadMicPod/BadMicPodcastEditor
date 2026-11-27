@@ -510,8 +510,10 @@ struct MulticamAngleBar: View {
                             Divider()
                             Button("Nudge Earlier (1 frame)") { model.nudgeMulticamOffset(groupID: group.id, angle: i, by: -1.0 / model.project.fps) }
                             Button("Nudge Later (1 frame)") { model.nudgeMulticamOffset(groupID: group.id, angle: i, by: 1.0 / model.project.fps) }
-                            Button("Nudge Earlier (0.1 s)") { model.nudgeMulticamOffset(groupID: group.id, angle: i, by: -0.1) }
-                            Button("Nudge Later (0.1 s)") { model.nudgeMulticamOffset(groupID: group.id, angle: i, by: 0.1) }
+                            Button("Nudge Audio Earlier (1 frame)") { model.nudgeMulticamAudioOffset(groupID: group.id, angle: i, by: -1.0 / model.project.fps) }
+                            Button("Nudge Audio Later (1 frame)") { model.nudgeMulticamAudioOffset(groupID: group.id, angle: i, by: 1.0 / model.project.fps) }
+                            Button("Nudge Audio Earlier (0.1 s)") { model.nudgeMulticamAudioOffset(groupID: group.id, angle: i, by: -0.1) }
+                            Button("Nudge Audio Later (0.1 s)") { model.nudgeMulticamAudioOffset(groupID: group.id, angle: i, by: 0.1) }
                         }
                 }
             }
