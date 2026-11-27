@@ -75,7 +75,11 @@ struct RenderLayer {
         let ft = min(max(t, fadeStart), fadeEnd)
         if fadeIn > 0 { o = min(o, inCurve.apply((ft - fadeStart) / fadeIn)) }
         if fadeOut > 0 { o = min(o, outCurve.apply((fadeEnd - ft) / fadeOut)) }
-        if let r = reveal, r.kind != .wipe { o *= r.progress(t) }
+        if let r = reveal, r.kind != .wipe {
+            // Slide and zoom carry their own motion; the rest fade in.
+            let slideOrZoom: [TransitionKind] = [.slideLeft, .slideRight, .slideUp, .slideDown, .zoomIn, .zoomOut]
+            if !slideOrZoom.contains(r.kind) { o *= r.progress(t) }
+        }
         if let c = conceal { o *= 1 - c.progress(t) }
         return max(0, min(1, o))
     }
@@ -247,6 +251,45 @@ final class TimelineCompositor: NSObject, AVVideoCompositing {
             }
             if let w = layer.wipe(at: t) {
                 image = image.cropped(to: CGRect(x: 0, y: 0, width: size.width * w, height: size.height))
+            }
+            if let r = layer.reveal, t < r.end {
+                let p = max(0, min(1, r.progress(t)))
+                switch r.kind {
+                case .slideLeft:
+                    image = image.transformed(by: CGAffineTransform(translationX: (1 - p) * size.width, y: 0))
+                case .slideRight:
+                    image = image.transformed(by: CGAffineTransform(translationX: -(1 - p) * size.width, y: 0))
+                case .slideUp:
+                    image = image.transformed(by: CGAffineTransform(translationX: 0, y: (1 - p) * size.height))
+                case .slideDown:
+                    image = image.transformed(by: CGAffineTransform(translationX: 0, y: -(1 - p) * size.height))
+                case .zoomIn:
+                    let s = max(0.01, p)
+                    let cx = size.width / 2, cy = size.height / 2
+                    image = image.transformed(by: CGAffineTransform(translationX: -cx, y: -cy)
+                        .scaledBy(x: s, y: s)
+                        .translatedBy(x: cx, y: cy))
+                case .zoomOut:
+                    let s = max(0.01, 2 - p)
+                    let cx = size.width / 2, cy = size.height / 2
+                    image = image.transformed(by: CGAffineTransform(translationX: -cx, y: -cy)
+                        .scaledBy(x: s, y: s)
+                        .translatedBy(x: cx, y: cy))
+                case .blur:
+                    image = image.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": (1 - p) * 12])
+                    image = image.cropped(to: CGRect(origin: .zero, size: size))
+                case .spin:
+                    let a = (1 - p) * .pi * 2
+                    let cx = size.width / 2, cy = size.height / 2
+                    image = image.transformed(by: CGAffineTransform(translationX: -cx, y: -cy)
+                        .rotated(by: a)
+                        .translatedBy(x: cx, y: cy))
+                case .glitch:
+                    let off = (1 - p) * 12
+                    image = image.transformed(by: CGAffineTransform(translationX: sin(p * .pi * 6) * off, y: 0))
+                default:
+                    break
+                }
             }
             if let tf = layer.transform?.at(t - layer.fadeStart) {
                 // Scale about the frame's centre, then offset (Core Image's y runs up).

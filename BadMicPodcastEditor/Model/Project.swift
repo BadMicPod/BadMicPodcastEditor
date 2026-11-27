@@ -207,12 +207,24 @@ extension Comparable {
 
 enum TransitionKind: String, Codable, CaseIterable {
     case dissolve, dipToBlack, wipe
+    case slideLeft, slideRight, slideUp, slideDown
+    case zoomIn, zoomOut
+    case blur, spin, glitch
 
     var label: String {
         switch self {
         case .dissolve: return "Dissolve"
         case .dipToBlack: return "Dip to Black"
         case .wipe: return "Wipe"
+        case .slideLeft: return "Slide Left"
+        case .slideRight: return "Slide Right"
+        case .slideUp: return "Slide Up"
+        case .slideDown: return "Slide Down"
+        case .zoomIn: return "Zoom In"
+        case .zoomOut: return "Zoom Out"
+        case .blur: return "Blur"
+        case .spin: return "Spin"
+        case .glitch: return "Glitch"
         }
     }
 }

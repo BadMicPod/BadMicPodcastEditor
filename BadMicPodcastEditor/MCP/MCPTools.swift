@@ -100,7 +100,7 @@ enum MCPTools {
                   "temperature": num("-50...50, negative is cooler."), "tint": num("-50...50, positive is toward magenta.")], required: ["clip_ids"]),
             tool("list_looks", "List looks", "The built-in looks for set_grade.", readOnly: true),
             tool("set_audio", "Set level and fades", "A clip's sound level, and its fades: a sound clip's fade its sound, a video, photo, title or solid's fade its picture (in from black, out to black).", ["clip_id": str("A clip's id."), "gain_db": num("Sound level in dB, -60...12."), "fade_in": num("Seconds."), "fade_out": num("Seconds.")], required: ["clip_id"]),
-            tool("set_transition", "Set transition", "A transition into a clip from the clip that ends where it starts on the same track.", ["clip_id": str("The later clip's id."), "kind": ["type": "string", "enum": ["dissolve", "dipToBlack", "wipe", "none"]], "duration": num("Seconds (default 0.5).")], required: ["clip_id", "kind"]),
+            tool("set_transition", "Set transition", "A transition into a clip from the clip that ends where it starts on the same track.", ["clip_id": str("The later clip's id."), "kind": ["type": "string", "enum": ["dissolve", "dipToBlack", "wipe", "slideLeft", "slideRight", "slideUp", "slideDown", "zoomIn", "zoomOut", "blur", "spin", "glitch", "none"]], "duration": num("Seconds (default 0.5).")], required: ["clip_id", "kind"]),
             tool("add_track", "Add track", "Adds an empty track on top of the others of its kind.", ["kind": ["type": "string", "enum": ["video", "audio"]]], required: ["kind"]),
             tool("set_sequence", "Set sequence", "The frame size and frame rate of the cut.", ["width": ["type": "integer"], "height": ["type": "integer"], "fps": num("23.976, 24, 25, 29.97, 30, 50, 59.94, 60, 100, 119.88 or 120.")]),
             tool("playback", "Playback", "Play, pause or move the playhead.", ["action": ["type": "string", "enum": ["play", "pause", "seek"]], "time": num("For seek.")], required: ["action"]),
@@ -494,7 +494,7 @@ enum MCPTools {
             if kindName == "none" {
                 try await perform([.change(c.id, "No transition") { proj in if let i = proj.index(of: c.id) { proj.clips[i].transitionIn = nil } }], model, who, draft)
             } else {
-                guard let kind = TransitionKind(rawValue: kindName) else { throw MCPToolError("kind is dissolve, dipToBlack, wipe or none.") }
+                guard let kind = TransitionKind(rawValue: kindName) else { throw MCPToolError("kind is a transition (dissolve, dipToBlack, wipe, slideLeft, slideRight, slideUp, slideDown, zoomIn, zoomOut, blur, spin, glitch) or none.") }
                 guard p.clips.contains(where: { $0.trackID == c.trackID && $0.id != c.id && abs($0.end - c.start) < 1e-3 }) else {
                     throw MCPToolError("Nothing ends where this clip starts on its track, so there's nothing to transition from.")
                 }
