@@ -484,7 +484,11 @@ struct MulticamAngleBar: View {
                         .buttonStyle(.plain)
                 }
             }
-            Divider().frame(height: 90)
+        }
+        HStack(spacing: 6) {
+            Text("Switch:")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Theme.textDim)
             Picker("", selection: $scope) {
                 ForEach(MulticamSwitchScope.allCases) { s in
                     Text(s.label).tag(s)
@@ -496,6 +500,9 @@ struct MulticamAngleBar: View {
             .onChange(of: scope) { _, new in
                 UserDefaults.standard.set(new.rawValue, forKey: "multicamSwitchScope")
             }
+            Text(scope.help)
+                .font(.system(size: 10))
+                .foregroundStyle(Theme.textFaint)
         }
         .padding(6)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.panel.opacity(0.85)))
@@ -525,15 +532,26 @@ private struct AngleThumbnail: View {
 
 private func grabAngleFrame(url: URL, time: Double) async -> NSImage? {
     let asset = AVURLAsset(url: url)
+    let duration = (try? await asset.load(.duration))?.seconds ?? 0
+    let clamped = min(max(0, time), max(0, duration - 0.05))
     let gen = AVAssetImageGenerator(asset: asset)
     gen.appliesPreferredTrackTransform = true
     gen.maximumSize = CGSize(width: 256, height: 144)
-    gen.requestedTimeToleranceBefore = CMTime(seconds: 0.1, preferredTimescale: 600)
-    gen.requestedTimeToleranceAfter = CMTime(seconds: 0.1, preferredTimescale: 600)
+    gen.requestedTimeToleranceBefore = CMTime(seconds: 0.5, preferredTimescale: 600)
+    gen.requestedTimeToleranceAfter = CMTime(seconds: 0.5, preferredTimescale: 600)
     do {
-        let cg = try await gen.image(at: CMTime(seconds: max(0, time), preferredTimescale: 600)).image
+        var actual = CMTime.zero
+        let cg = try gen.copyCGImage(at: CMTime(seconds: clamped, preferredTimescale: 600), actualTime: &actual)
         return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
     } catch {
-        return nil
+        // Try the very start as a last resort.
+        do {
+            var actual = CMTime.zero
+            let cg = try gen.copyCGImage(at: .zero, actualTime: &actual)
+            return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+        } catch {
+            FileHandle.standardError.write("angle thumb failed \(url.lastPathComponent) @\(clamped): \(error.localizedDescription)\n".data(using: .utf8)!)
+            return nil
+        }
     }
 }
