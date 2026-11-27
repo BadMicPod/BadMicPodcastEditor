@@ -186,7 +186,7 @@ enum ClientStyleDialog {
 
     static func edit(_ style: ClientStyle, store: StyleStore, creating: Bool = false) {
         let hasProfile = !style.profile.isEmpty
-        let height: CGFloat = hasProfile ? 292 : 196
+        let height: CGFloat = hasProfile ? 348 : 228
         let accessory = FlippedBox(width: 360, height: height)
 
         accessory.label("Client", y: 0)
@@ -199,6 +199,10 @@ enum ClientStyleDialog {
             accessory.label("Learned from \(style.trainedFrom.isEmpty ? "past episodes" : style.trainedFrom)", y: 180)
             accessory.readOnly(style.profile, y: 200, height: 92)
         }
+
+        accessory.label("Delivery target (optional)", y: hasProfile ? 300 : 180)
+        let loudness = accessory.field(style.loudnessTarget, y: hasProfile ? 320 : 200)
+        loudness.placeholderString = "-14 LUFS for YouTube, -16 for podcasts…"
 
         let alert = BadMicAlert()
         alert.messageText = creating ? "New client" : "\(style.name.isEmpty ? "Client" : style.name) style"
@@ -221,6 +225,7 @@ enum ClientStyleDialog {
             var updated = style
             updated.name = clean
             updated.instructions = notes.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            updated.loudnessTarget = loudness.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             if store.styles.contains(where: { $0.id == updated.id }) {
                 store.update(updated)
             } else {

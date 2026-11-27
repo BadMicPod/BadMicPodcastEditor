@@ -33,6 +33,8 @@ struct ClientStyle: Identifiable, Codable, Hashable {
     var trainedFrom: String = ""
     /// The same profile as numbers, for Local and anything else that can't read prose.
     var facts: StyleFacts?
+    /// Optional delivery target the client expects, e.g. "-14 LUFS for YouTube".
+    var loudnessTarget: String = ""
     var updated = Date()
 
     init(name: String, instructions: String = "") {
@@ -50,15 +52,18 @@ struct ClientStyle: Identifiable, Codable, Hashable {
         profile = try c.decodeIfPresent(String.self, forKey: .profile) ?? ""
         trainedFrom = try c.decodeIfPresent(String.self, forKey: .trainedFrom) ?? ""
         facts = try c.decodeIfPresent(StyleFacts.self, forKey: .facts)
+        loudnessTarget = try c.decodeIfPresent(String.self, forKey: .loudnessTarget) ?? ""
         updated = try c.decodeIfPresent(Date.self, forKey: .updated) ?? Date()
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, instructions, profile, trainedFrom, facts, updated
+        case id, name, instructions, profile, trainedFrom, facts, loudnessTarget, updated
     }
 
     var summary: String {
-        [instructions, profile].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        var parts = [instructions, profile].filter { !$0.isEmpty }
+        if !loudnessTarget.isEmpty { parts.append("Delivery: \(loudnessTarget).") }
+        return parts.joined(separator: "\n\n")
     }
 }
 
@@ -259,6 +264,7 @@ enum StyleAnalyzer {
         if !audioClips.isEmpty { bullets.append("Audio level: about \(String(format: "%.0f", avgAudioGain)) dB gain across \(audioClips.count) clip\(audioClips.count == 1 ? "" : "s").") }
         if tracksUsed > 0 { bullets.append("Tracks used: \(tracksUsed).") }
         if avgGap > 0.05 { bullets.append("Tightness: average gap between shots \(String(format: "%.2f", avgGap))s.") }
+        if avgGap > 0 && avgGap <= 0.05 { bullets.append("Silence: tight cuts, little dead air between shots.") }
         if let c = p.captions {
             bullets.append("Captions: size \(Int(c.style.size)), at \(Int((c.style.y * 100).rounded()))% down\(c.style.highlight ? ", word highlight on" : "").")
         }
