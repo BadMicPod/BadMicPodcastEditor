@@ -186,6 +186,17 @@ enum KeyCommands {
             model.tool = .move
             return true
         }
+        // Multicam angle switches: digits 1-9 pick the angle under the playhead.
+        if let mc = model.multicamClipAtPlayhead,
+           let group = model.project.multicamGroup(mc.multicamGroupID),
+           e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+           let chars = e.characters, chars.count == 1,
+           let digit = chars.first?.wholeNumberValue, (1...9).contains(digit),
+           digit - 1 < group.angleAssetIDs.count {
+            model.switchMulticamAngle(at: model.playhead, to: digit - 1)
+            return true
+        }
+
         guard let combo, let action = keys.action(for: combo) else { return false }
         // ⌘ shortcuts of menu items go to the menu, so it flashes.
         if action.inMenu, combo.command { return false }

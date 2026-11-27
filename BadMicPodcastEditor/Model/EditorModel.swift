@@ -1937,12 +1937,21 @@ final class EditorModel: ObservableObject {
         let curAngle = c.multicamAngle ?? 0
         guard angle != curAngle else { return }
         let clipID = c.id
-        // Split at t if inside the clip.
-        if t > c.start + 1.0/project.fps, t < c.end - 1.0/project.fps {
+        let fps = project.fps
+        // Switching must only change the part from the playhead forward, never the footage before it.
+        // If the playhead sits at (or past) the end of the clip there is nothing forward to change.
+        guard t < c.end - 1.0 / fps else { return }
+        if t > c.start + 1.0 / fps {
             split(clip: clipID, at: t)
         }
-        // Find the segment covering t.
-        let seg = project.clips.first { $0.isMulticam && $0.multicamGroupID == c.multicamGroupID && $0.start <= t + 1e-6 && $0.end > t - 1e-6 }
+        // The segment that starts at (or after) the playhead — the forward part.
+        let seg = project.clips.first { clip in
+            clip.isMulticam && clip.multicamGroupID == c.multicamGroupID
+                && clip.start >= t - 1.0 / fps && clip.end > t - 1e-6
+        } ?? project.clips.first { clip in
+            clip.isMulticam && clip.multicamGroupID == c.multicamGroupID
+                && clip.start <= t + 1e-6 && clip.end > t - 1e-6
+        }
         guard let segID = seg?.id else { return }
         let oldOffset = group.syncOffsets[curAngle]
         let newOffset = group.syncOffsets[angle]
