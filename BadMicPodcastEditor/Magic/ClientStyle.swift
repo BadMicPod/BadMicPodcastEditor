@@ -14,6 +14,11 @@ struct StyleFacts: Codable, Hashable {
     var titles: Int?
     var hasMusic: Bool?
     var duckedMusic: Bool?
+    var audioGain: Double?
+    var captionSize: Double?
+    var captionPosition: Double?
+    var tracksUsed: Int?
+    var averageGap: Double?
 }
 
 /// A client's editing style: what they like, learned from a finished episode or an edit XML.
@@ -179,6 +184,13 @@ enum StyleAnalyzer {
         let firstText = texts.min { $0.start < $1.start }
         let first = visual.min { $0.start < $1.start }
         let last = visual.max { $0.end < $1.end }
+        let audioGains = audioClips.map(\.gainDB)
+        let avgAudioGain = audioGains.isEmpty ? 0.0 : audioGains.reduce(0, +) / Double(audioGains.count)
+        let tracksUsed = p.videoTracks.filter { t in p.clips.contains { $0.trackID == t.id } }.count
+            + p.audioTracks.filter { t in p.clips.contains { $0.trackID == t.id } }.count
+        let v1Clips = p.clips.filter { $0.trackID == p.videoTracks.first?.id }.sorted { $0.start < $1.start }
+        let gaps = zip(v1Clips, v1Clips.dropFirst()).map { $1.start - $0.end }.filter { $0 > 1e-6 }
+        let avgGap = gaps.isEmpty ? 0.0 : gaps.reduce(0, +) / Double(gaps.count)
 
         var facts = StyleFacts()
         facts.cutsPerMinute = cutsPerMin
@@ -192,6 +204,11 @@ enum StyleAnalyzer {
         facts.titles = titles
         facts.hasMusic = !musicClips.isEmpty
         facts.duckedMusic = duckedTracks > 0
+        facts.audioGain = avgAudioGain
+        facts.captionSize = p.captions?.style.size
+        facts.captionPosition = p.captions?.style.y
+        facts.tracksUsed = tracksUsed
+        facts.averageGap = avgGap
 
         var lines: [String] = []
         lines.append("Style learned from a finished \(fmt(duration)) edit: \(shots) picture clips, average shot \(String(format: "%.1f", avg))s, about \(String(format: "%.1f", cutsPerMin)) cuts per minute.")
@@ -239,6 +256,12 @@ enum StyleAnalyzer {
         bullets.append(audio)
         if audioFades > 0 { bullets.append("Sound fades: on \(audioFades) audio clip\(audioFades == 1 ? "" : "s").") }
         if duckedTracks > 0 { bullets.append("Ducking: \(duckedTracks) track\(duckedTracks == 1 ? "" : "s") turn down under the voice.") }
+        if !audioClips.isEmpty { bullets.append("Audio level: about \(String(format: "%.0f", avgAudioGain)) dB gain across \(audioClips.count) clip\(audioClips.count == 1 ? "" : "s").") }
+        if tracksUsed > 0 { bullets.append("Tracks used: \(tracksUsed).") }
+        if avgGap > 0.05 { bullets.append("Tightness: average gap between shots \(String(format: "%.2f", avgGap))s.") }
+        if let c = p.captions {
+            bullets.append("Captions: size \(Int(c.style.size)), at \(Int((c.style.y * 100).rounded()))% down\(c.style.highlight ? ", word highlight on" : "").")
+        }
         lines.append(contentsOf: bullets.map { "- \($0)" })
         lines.append("Follow this recipe when cutting a new episode: match the shot lengths, pacing, use of transitions, titles, colour and sound treatment.")
         return LearnedStyle(profile: lines.joined(separator: "\n"), facts: facts)
