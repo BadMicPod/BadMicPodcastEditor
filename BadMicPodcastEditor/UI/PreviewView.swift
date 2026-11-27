@@ -151,7 +151,7 @@ struct PreviewView: View {
                     // Multicam: quick angle switcher at the bottom of the viewer.
                     if let mc = model.multicamClipAtPlayhead, let group = model.project.multicamGroup(mc.multicamGroupID) {
                         MulticamAngleBar(model: model, clip: mc, group: group)
-                            .frame(width: w, height: 36)
+                            .frame(width: w)
                             .padding(.bottom, 8)
                             .frame(width: w, height: h, alignment: .bottom)
                     }
