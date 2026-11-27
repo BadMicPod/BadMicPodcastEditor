@@ -38,12 +38,13 @@ enum FCPXMLImporter {
 
         for item in parsed.spine {
             switch item {
-            case .assetClip(let ref, let offset, let duration, let start):
+            case .assetClip(let ref, let offset, let duration, let start, let transition):
                 guard let asset = assetMap[ref] else { continue }
                 let dur = duration > 0 ? duration : max(1.0 / project.fps, asset.duration - start)
                 guard dur >= 1.0 / project.fps else { continue }
                 var v = Clip(trackID: vTrack, kind: .video, assetID: asset.id, start: offset, duration: dur)
                 v.sourceStart = start
+                if let tk = transition { v.transitionIn = Transition(kind: tk) }
                 var clips: [Clip] = [v]
                 if asset.hasAudio {
                     let link = UUID()
@@ -72,7 +73,7 @@ enum FCPXMLImporter {
     // MARK: Parsing
 
     private struct AssetInfo { var name: String; var src: String; var duration: Double; var hasAudio: Bool }
-    private enum SpineItem { case assetClip(ref: String, offset: Double, duration: Double, start: Double)
+    private enum SpineItem { case assetClip(ref: String, offset: Double, duration: Double, start: Double, transition: TransitionKind?)
                              case title(text: String, offset: Double, duration: Double)
                              case gap }
 
@@ -90,6 +91,9 @@ enum FCPXMLImporter {
         private var currentTitleOffset = 0.0
         private var currentTitleDuration = 0.0
         private var inTitle = false
+        private var containerOffset = 0.0
+        private var containerStack: [Double] = []
+        private var pendingTransition: TransitionKind? = nil
 
         func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?,
                     qualifiedName qName: String?, attributes: [String: String] = [:]) {
@@ -108,12 +112,21 @@ enum FCPXMLImporter {
                         duration: attributes["duration"].map(Self.seconds) ?? 0,
                         hasAudio: attributes["hasAudio"] == "1")
                 }
-            case "asset-clip":
-                let ref = attributes["ref"] ?? ""
+            case "asset-clip", "mc-clip", "sync-clip", "ref-clip":
+                let ref = attributes["ref"] ?? attributes["src"] ?? ""
                 let offset = attributes["offset"].map(Self.seconds) ?? 0
                 let duration = attributes["duration"].map(Self.seconds) ?? 0
                 let start = attributes["start"].map(Self.seconds) ?? 0
-                parsed.spine.append(.assetClip(ref: ref, offset: offset, duration: duration, start: start))
+                if duration > 0 {
+                    parsed.spine.append(.assetClip(ref: ref, offset: offset + containerOffset, duration: duration, start: start, transition: pendingTransition))
+                }
+                pendingTransition = nil
+            case "clip":
+                containerStack.append(containerOffset)
+                containerOffset += attributes["offset"].map(Self.seconds) ?? 0
+            case "transition":
+                let kindName = attributes["kind"] ?? "dissolve"
+                pendingTransition = TransitionKind(rawValue: kindName) ?? .dissolve
             case "gap":
                 let offset = attributes["offset"].map(Self.seconds) ?? 0
                 let duration = attributes["duration"].map(Self.seconds) ?? 0
@@ -122,7 +135,7 @@ enum FCPXMLImporter {
             case "title":
                 inTitle = true
                 currentTitleText = attributes["name"] ?? ""
-                currentTitleOffset = attributes["offset"].map(Self.seconds) ?? 0
+                currentTitleOffset = (attributes["offset"].map(Self.seconds) ?? 0) + containerOffset
                 currentTitleDuration = attributes["duration"].map(Self.seconds) ?? 0
             case "text":
                 currentTitleText = ""
@@ -141,6 +154,9 @@ enum FCPXMLImporter {
                 parsed.spine.append(.title(text: currentTitleText.trimmingCharacters(in: .whitespacesAndNewlines),
                                            offset: currentTitleOffset, duration: currentTitleDuration))
                 inTitle = false
+            }
+            if elementName == "clip", !containerStack.isEmpty {
+                containerOffset = containerStack.removeLast()
             }
             if !stack.isEmpty { stack.removeLast() }
         }
