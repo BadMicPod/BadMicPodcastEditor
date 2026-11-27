@@ -115,6 +115,17 @@ struct InspectorView: View {
                          format: { "\(Int($0.rounded()))%" },
                          onEditing: { if !$0 { model.commitLive() } },
                          onChange: { v in model.setCaptionStyle(live: true) { $0.y = (v / 100 * 1000).rounded() / 1000 } })
+                // Font
+                HStack(spacing: 8) {
+                    RowIconView(icon: .symbol("textformat")).foregroundStyle(Theme.textDim).frame(width: 18)
+                    Text("Font").font(.system(size: 12)).foregroundStyle(Theme.text)
+                    Spacer()
+                    TextField("system", text: Binding(get: { track.style.fontName }, set: { v in model.setCaptionStyle(live: true) { $0.fontName = v } }))
+                        .textFieldStyle(.roundedBorder).frame(width: 120)
+                }
+                Toggle("Bold", isOn: Binding(get: { track.style.bold }, set: { v in model.setCaptionStyle(live: false) { $0.bold = v } }))
+                Toggle("Background box", isOn: Binding(get: { track.style.background }, set: { v in model.setCaptionStyle(live: false) { $0.background = v } }))
+                captionColorRow("Box colour", icon: "rectangle.fill", on: track.style.background ? true : nil, color: track.style.backgroundColor) { s, c in s.backgroundColor = c }
                 captionColorRow("Text", icon: "textformat", on: nil, color: track.style.textColor) { s, c in s.textColor = c }
                 captionColorRow("Word highlight", icon: "highlighter", on: track.style.highlight, color: track.style.highlightColor,
                                 toggle: { $0.highlight.toggle() }) { s, c in s.highlightColor = c }

@@ -77,7 +77,12 @@ enum CaptionRenderer {
     private static func draw(words: [String], lit: Int?, style: CaptionStyle, output: CGSize) -> CIImage? {
         let pt = CGFloat(style.size) * min(output.width, output.height) / 1080
         let ns = { (c: RGBA) in NSColor(srgbRed: c.r, green: c.g, blue: c.b, alpha: c.a) }
-        let font = NSFont.systemFont(ofSize: pt, weight: .heavy)
+        let font: NSFont
+        if !style.fontName.isEmpty, let f = NSFont(name: style.fontName, size: pt) {
+            font = f
+        } else {
+            font = NSFont.systemFont(ofSize: pt, weight: style.bold ? .heavy : .regular)
+        }
         let para = NSMutableParagraphStyle()
         para.alignment = .center
         para.lineBreakMode = .byWordWrapping
@@ -115,6 +120,11 @@ enum CaptionRenderer {
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = g
         let r = CGRect(x: pad, y: pad, width: tw, height: th)
+        if style.background {
+            let path = NSBezierPath(roundedRect: CGRect(x: 0, y: 0, width: CGFloat(w), height: CGFloat(h)), xRadius: pad * 1.4, yRadius: pad * 1.4)
+            ns(style.backgroundColor).setFill()
+            path.fill()
+        }
         if style.outline { outline.draw(with: r, options: opts) }
         fill.draw(with: r, options: opts)
         NSGraphicsContext.restoreGraphicsState()

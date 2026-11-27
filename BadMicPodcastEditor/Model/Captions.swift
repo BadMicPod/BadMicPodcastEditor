@@ -14,6 +14,10 @@ struct CaptionStyle: Codable, Hashable {
     var size: Double = 64
     /// Where the captions sit, as a fraction down the frame (their middle).
     var y: Double = 0.78
+    /// Font family; empty means the system's heavy face.
+    var fontName: String = ""
+    /// Bold (ignored when fontName is set to a specific face).
+    var bold = true
     /// The word being said lights up.
     var highlight = true
     var textColor = RGBA.white
@@ -21,6 +25,9 @@ struct CaptionStyle: Codable, Hashable {
     /// A dark edge around the letters, so they read over anything.
     var outline = true
     var outlineColor = RGBA.black
+    /// A box behind the caption, for busy backgrounds.
+    var background = false
+    var backgroundColor = RGBA(r: 0, g: 0, b: 0, a: 0.55)
 
     static let sizeRange = 28.0...140.0
 
@@ -31,11 +38,15 @@ struct CaptionStyle: Codable, Hashable {
         let d = CaptionStyle()
         size = try c.decodeIfPresent(Double.self, forKey: .size) ?? d.size
         y = try c.decodeIfPresent(Double.self, forKey: .y) ?? d.y
+        fontName = try c.decodeIfPresent(String.self, forKey: .fontName) ?? d.fontName
+        bold = try c.decodeIfPresent(Bool.self, forKey: .bold) ?? d.bold
         highlight = try c.decodeIfPresent(Bool.self, forKey: .highlight) ?? d.highlight
         textColor = try c.decodeIfPresent(RGBA.self, forKey: .textColor) ?? d.textColor
         highlightColor = try c.decodeIfPresent(RGBA.self, forKey: .highlightColor) ?? d.highlightColor
         outline = try c.decodeIfPresent(Bool.self, forKey: .outline) ?? d.outline
         outlineColor = try c.decodeIfPresent(RGBA.self, forKey: .outlineColor) ?? d.outlineColor
+        background = try c.decodeIfPresent(Bool.self, forKey: .background) ?? d.background
+        backgroundColor = try c.decodeIfPresent(RGBA.self, forKey: .backgroundColor) ?? d.backgroundColor
     }
 }
 
