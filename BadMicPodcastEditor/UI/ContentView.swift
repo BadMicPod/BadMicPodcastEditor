@@ -188,7 +188,8 @@ enum KeyCommands {
             return true
         }
         // Multicam angle switches: digits 1-9 pick the angle under the playhead.
-        if let mc = model.multicamClipAtPlayhead,
+        if UserDefaults.standard.object(forKey: "multicamAngleKeysEnabled") as? Bool ?? true,
+           let mc = model.multicamClipAtPlayhead,
            let group = model.project.multicamGroup(mc.multicamGroupID),
            e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
            let chars = e.characters, chars.count == 1,
