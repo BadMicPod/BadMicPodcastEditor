@@ -521,7 +521,13 @@ private struct AngleThumbnail: View {
             if let image {
                 Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
             } else {
-                ProgressView().controlSize(.small)
+                VStack(spacing: 2) {
+                    ProgressView().controlSize(.small)
+                    Text(url.lastPathComponent)
+                        .font(.system(size: 8))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .lineLimit(1)
+                }
             }
         }
         .task(id: Int((time * 4).rounded())) {
