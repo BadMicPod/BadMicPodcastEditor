@@ -459,19 +459,53 @@ struct MulticamAngleBar: View {
     let clip: Clip
     let group: MulticamGroup
 
+    @State private var scope: MulticamSwitchScope = MulticamSwitchScope(rawValue: UserDefaults.standard.string(forKey: "multicamSwitchScope") ?? "") ?? .videoOnly
+
+    private func name(for i: Int) -> String {
+        if let names = group.angleNames, i < names.count, !names[i].isEmpty { return names[i] }
+        return model.project.asset(group.angleAssetIDs[i])?.name ?? "Angle \(i + 1)"
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             ForEach(group.angleAssetIDs.indices, id: \.self) { i in
-                let name = model.project.asset(group.angleAssetIDs[i])?.name ?? "Angle \(i + 1)"
-                Button(name) { model.switchMulticamAngle(at: model.playhead, to: i) }
+                Button(name(for: i)) { model.switchMulticamAngle(at: model.playhead, to: i, scope: scope) }
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(i == (clip.multicamAngle ?? 0) ? Theme.bg : Theme.text)
                     .padding(.horizontal, 8).padding(.vertical, 4)
                     .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(i == (clip.multicamAngle ?? 0) ? Theme.accent : Theme.field))
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        Button("Rename Angle…") { rename(i) }
+                    }
+            }
+            Divider().frame(height: 18)
+            Picker("", selection: $scope) {
+                ForEach(MulticamSwitchScope.allCases) { s in
+                    Text(s.label).tag(s)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 96)
+            .help(scope.help)
+            .onChange(of: scope) { _, new in
+                UserDefaults.standard.set(new.rawValue, forKey: "multicamSwitchScope")
             }
         }
         .padding(6)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.panel.opacity(0.85)))
+    }
+
+    private func rename(_ i: Int) {
+        let alert = BadMicAlert()
+        alert.messageText = "Rename angle"
+        alert.informativeText = "A short name for this camera, shown on the angle bar and the keys."
+        let field = NSTextField(string: name(for: i))
+        field.frame = NSRect(x: 0, y: 0, width: 220, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        model.renameMulticamAngle(groupID: group.id, angle: i, to: field.stringValue)
     }
 }

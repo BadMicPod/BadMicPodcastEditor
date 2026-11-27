@@ -1891,7 +1891,7 @@ final class EditorModel: ObservableObject {
         guard assets.count >= 2 else { return nil }
         let urls = assets.map { URL(fileURLWithPath: $0.path) }
         let offs = await MulticamSync.offsets(for: urls)
-        let group = MulticamGroup(name: "Multicam", angleAssetIDs: assets.map(\.id), syncOffsets: offs)
+        let group = MulticamGroup(name: "Multicam", angleAssetIDs: assets.map(\.id), syncOffsets: offs, angleNames: assets.map(\.name))
         mutate { p in
             if p.multicamGroups == nil { p.multicamGroups = [] }
             p.multicamGroups?.append(group)
@@ -1931,7 +1931,20 @@ final class EditorModel: ObservableObject {
         insert(clips)
     }
 
-    func switchMulticamAngle(at t: Double, to angle: Int) {
+    func renameMulticamAngle(groupID: UUID, angle: Int, to name: String) {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        mutate { p in
+            guard let gi = p.multicamGroups?.firstIndex(where: { $0.id == groupID }) else { return }
+            if p.multicamGroups![gi].angleNames == nil {
+                p.multicamGroups![gi].angleNames = Array(repeating: "", count: p.multicamGroups![gi].angleAssetIDs.count)
+            }
+            if angle < (p.multicamGroups![gi].angleNames?.count ?? 0) {
+                p.multicamGroups![gi].angleNames?[angle] = clean
+            }
+        }
+    }
+    func switchMulticamAngle(at t: Double, to angle: Int, scope: MulticamSwitchScope = MulticamSwitchScope(rawValue: UserDefaults.standard.string(forKey: "multicamSwitchScope") ?? "") ?? .videoOnly) {
         guard let c = multicamClipAtPlayhead, let group = project.multicamGroup(c.multicamGroupID) else { return }
         guard angle >= 0, angle < group.angleAssetIDs.count else { return }
         let curAngle = c.multicamAngle ?? 0
@@ -1957,10 +1970,22 @@ final class EditorModel: ObservableObject {
         let newOffset = group.syncOffsets[angle]
         let newAsset = group.angleAssetIDs[angle]
         mutate { p in
-            guard let i = p.clips.firstIndex(where: { $0.id == segID }) else { return }
-            p.clips[i].multicamAngle = angle
-            p.clips[i].assetID = newAsset
-            p.clips[i].sourceStart = p.clips[i].sourceStart - oldOffset + newOffset
+            if scope != .audioOnly {
+                guard let i = p.clips.firstIndex(where: { $0.id == segID }) else { return }
+                p.clips[i].multicamAngle = angle
+                p.clips[i].assetID = newAsset
+                p.clips[i].sourceStart = p.clips[i].sourceStart - oldOffset + newOffset
+            }
+            if scope != .videoOnly {
+                // The linked audio clip follows the switched angle.
+                let linkID = p.clips.first(where: { $0.id == segID })?.linkID
+                    ?? (p.clips.first { $0.isMulticam && $0.multicamGroupID == c.multicamGroupID && $0.start <= t + 1e-6 && $0.end > t - 1e-6 })?.linkID
+                if let link = linkID,
+                   let j = p.clips.firstIndex(where: { $0.kind == .audio && $0.linkID == link && $0.start <= t + 1e-6 && $0.end > t - 1e-6 }) {
+                    p.clips[j].assetID = newAsset
+                    p.clips[j].sourceStart = p.clips[j].sourceStart - oldOffset + newOffset
+                }
+            }
         }
     }
 

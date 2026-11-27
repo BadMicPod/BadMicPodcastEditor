@@ -80,6 +80,7 @@ struct ContentView: View {
                     if model.isDirty {
                         Circle().fill(Theme.textFaint).frame(width: 5, height: 5)
                     }
+                    ClientStyleBar(model: model, hasEdit: model.project.clips.contains { $0.kind != .audio })
                 }
                 .id(themes.look)
             }

@@ -294,11 +294,36 @@ struct MulticamGroup: Identifiable, Codable, Hashable {
     var angleAssetIDs: [UUID]
     /// Seconds each angle is shifted relative to angle 0, so they line up.
     var syncOffsets: [Double]
+    /// Optional display names for the angles (nil falls back to "Angle N").
+    var angleNames: [String]?
 
-    init(name: String, angleAssetIDs: [UUID], syncOffsets: [Double]? = nil) {
+    init(name: String, angleAssetIDs: [UUID], syncOffsets: [Double]? = nil, angleNames: [String]? = nil) {
         self.name = name
         self.angleAssetIDs = angleAssetIDs
         self.syncOffsets = syncOffsets ?? Array(repeating: 0, count: angleAssetIDs.count)
+        self.angleNames = angleNames
+    }
+}
+
+/// What a multicam angle switch changes on the timeline.
+enum MulticamSwitchScope: String, CaseIterable, Identifiable {
+    case videoOnly = "video"
+    case videoAndAudio = "video+audio"
+    case audioOnly = "audio"
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .videoOnly: return "V"
+        case .videoAndAudio: return "V+A"
+        case .audioOnly: return "A"
+        }
+    }
+    var help: String {
+        switch self {
+        case .videoOnly: return "Switch only the picture"
+        case .videoAndAudio: return "Switch picture and sound together"
+        case .audioOnly: return "Switch only the sound"
+        }
     }
 }
 
