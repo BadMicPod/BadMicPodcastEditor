@@ -262,7 +262,9 @@ final class MagicAgent: ObservableObject {
         and a shot that feels like an ending. Prefer moments where something happens, faces and expressions, and \
         variety of framing.
         4. Cut. Shots on V1 back to back with no gaps, using source_start and duration (or trim_clip) to keep just \
-        the best part of each. With music: the song on A1 from 0, cut on bar starts or beats, shorter shots where \
+        the best part of each. Multicam clips carry several synced angles (multicam_group_id): use \
+        switch_multicam_angle to change which one shows from a time (it splits the clip there); the person can \
+        also press 1-9. With music: the song on A1 from 0, cut on bar starts or beats, shorter shots where \
         the music is busy and longer where it's calm, end on a bar start, and turn the clips' own sound down to \
         about -20 dB unless someone is talking and it matters. Without music: keep the clips' sound and cut where \
         the action or sound makes a natural break. If most of the footage is vertical and the timeline is empty, \

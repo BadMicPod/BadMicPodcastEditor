@@ -106,6 +106,10 @@ enum MCPTools {
             tool("playback", "Playback", "Play, pause or move the playhead.", ["action": ["type": "string", "enum": ["play", "pause", "seek"]], "time": num("For seek.")], required: ["action"]),
             tool("history", "Undo or redo", "Undoes or redoes the last change (each tool call is one change).", ["action": ["type": "string", "enum": ["undo", "redo"]]], required: ["action"]),
             tool("auto_edit", "Auto edit", "Builds a whole cut from the library on its own: best moments, cut to the beat of a song if there is one, titled. Replaces what's on the timeline (one undo brings it back)."),
+            tool("switch_multicam_angle", "Switch multicam angle", "On a multicam clip, changes which camera angle shows from a time onward (splits the clip there if needed).",
+                 ["clip_id": str("A multicam clip's id."), "angle": ["type": "integer", "description": "Which angle, 0-based."],
+                  "time": num("Timeline seconds where the switch happens (default: the clip's start).")],
+                 required: ["clip_id", "angle"]),
             tool("save_project", "Save project", "Saves the project to its file. A project that's never been saved has to be saved by the person."),
         ] + moreDefinitions
     }
@@ -575,6 +579,22 @@ enum MCPTools {
             try? await Task.sleep(nanoseconds: 100_000_000)
             while MagicShow.isRunning || MagicState.shared.busy { try? await Task.sleep(nanoseconds: 100_000_000) }
             return json(projectJSON(model.project, title: model.title, playhead: model.playhead))
+
+        case "switch_multicam_angle":
+            try notInMagic()
+            guard let clipIDStr = args["clip_id"] as? String, let clipID = UUID(uuidString: clipIDStr) else {
+                throw MCPToolError("clip_id must be a clip id.")
+            }
+            guard let clip = model.project.clip(clipID), clip.isMulticam else {
+                throw MCPToolError("That clip isn't a multicam clip.")
+            }
+            let angle: Int
+            if let a = args["angle"] as? Int { angle = a }
+            else if let a = args["angle"] as? Double { angle = Int(a) }
+            else { throw MCPToolError("angle is required.") }
+            let time = (args["time"] as? Double) ?? clip.start
+            model.switchMulticamAngle(at: time, to: angle)
+            return text("Switched to angle \(angle) from \(String(format: "%.2f", time))s.")
 
         case "save_project":
             try notInMagic()
