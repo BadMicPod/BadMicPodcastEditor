@@ -474,7 +474,11 @@ struct MulticamAngleBar: View {
                 let asset = model.project.asset(group.angleAssetIDs[i])
                 VStack(spacing: 4) {
                     if let url = asset?.url {
-                        Color.black.frame(width: 128, height: 72)
+                        AngleThumbnail(url: url, time: thumbTime + (group.syncOffsets.indices.contains(i) ? group.syncOffsets[i] : 0))
+                            .frame(width: 128, height: 72)
+                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(i == (clip.multicamAngle ?? 0) ? Theme.accent : Theme.ink.opacity(0.1), lineWidth: i == (clip.multicamAngle ?? 0) ? 2 : 1))
+                            .onTapGesture { model.switchMulticamAngle(at: model.playhead, to: i, scope: scope) }
                     }
                     Button(name(for: i)) { model.switchMulticamAngle(at: model.playhead, to: i, scope: scope) }
                         .font(.system(size: 11, weight: .medium))
