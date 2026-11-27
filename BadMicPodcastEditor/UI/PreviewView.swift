@@ -466,6 +466,19 @@ struct MulticamAngleBar: View {
         return model.project.asset(group.angleAssetIDs[i])?.name ?? "Angle \(i + 1)"
     }
 
+    private func rename(_ i: Int) {
+        let alert = BadMicAlert()
+        alert.messageText = "Rename angle"
+        alert.informativeText = "A short name for this camera, shown on the angle bar."
+        let field = NSTextField(string: name(for: i))
+        field.frame = NSRect(x: 0, y: 0, width: 220, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        model.renameMulticamAngle(groupID: group.id, angle: i, to: field.stringValue)
+    }
+
     private var thumbTime: Double { (model.playhead - clip.start) }
 
     var body: some View {
@@ -486,6 +499,14 @@ struct MulticamAngleBar: View {
                         .padding(.horizontal, 8).padding(.vertical, 4)
                         .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(i == (clip.multicamAngle ?? 0) ? Theme.accent : Theme.field))
                         .buttonStyle(.plain)
+                        .contextMenu {
+                            Button("Rename Angle…") { rename(i) }
+                            Divider()
+                            Button("Nudge Earlier (1 frame)") { model.nudgeMulticamOffset(groupID: group.id, angle: i, by: -1.0 / model.project.fps) }
+                            Button("Nudge Later (1 frame)") { model.nudgeMulticamOffset(groupID: group.id, angle: i, by: 1.0 / model.project.fps) }
+                            Button("Nudge Earlier (0.1 s)") { model.nudgeMulticamOffset(groupID: group.id, angle: i, by: -0.1) }
+                            Button("Nudge Later (0.1 s)") { model.nudgeMulticamOffset(groupID: group.id, angle: i, by: 0.1) }
+                        }
                 }
             }
         }
@@ -534,7 +555,7 @@ private struct AngleThumbnail: View {
                 }
             }
         }
-        .task(id: Int((time * 4).rounded())) {
+        .task(id: Int((time * 20).rounded())) {
             image = await grabAngleFrame(url: url, time: time)
         }
     }

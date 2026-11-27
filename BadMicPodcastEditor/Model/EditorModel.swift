@@ -1954,6 +1954,14 @@ final class EditorModel: ObservableObject {
         insert(clips)
     }
 
+    func nudgeMulticamOffset(groupID: UUID, angle: Int, by seconds: Double) {
+        mutate { p in
+            guard let gi = p.multicamGroups?.firstIndex(where: { $0.id == groupID }) else { return }
+            guard angle >= 0, angle < (p.multicamGroups![gi].syncOffsets.count) else { return }
+            p.multicamGroups![gi].syncOffsets[angle] += seconds
+        }
+    }
+
     func renameMulticamAngle(groupID: UUID, angle: Int, to name: String) {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return }
