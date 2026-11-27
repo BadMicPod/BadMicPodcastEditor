@@ -321,6 +321,8 @@ private struct PromptForm: View {
          "Make an engaging vlog, up to 8 minutes: hook in the first few seconds, keep the parts where someone is talking or something happens, cut pauses, retakes and repeats, and add short titles to mark each part."),
         ("Vertical reel", "iphone",
          "Make a fast, punchy 15 to 30 second vertical video for Reels and TikTok: 1080 by 1920, a hook in the first second, quick cuts on the beat."),
+        ("Multicam cut", "arrow.triangle.2.circlepath",
+         "Cut this multicam episode: switch to the close-up when someone talks and the wide shot for action, and keep the angle switches on the beat of the music."),
     ]
 
     private static let improve: [Idea] = [
