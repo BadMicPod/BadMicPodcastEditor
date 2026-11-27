@@ -1651,6 +1651,9 @@ final class EditorModel: ObservableObject {
         isDirty = true
     }
 
+    /// Marks the project as unsaved (used by importers).
+    func markDirty() { isDirty = true }
+
     /// Whose style this episode is cut in. Remembered in the project, so reopening it brings the client back.
     func setClientStyle(_ id: UUID?) {
         guard project.clientStyleID != id else { return }
@@ -1664,6 +1667,26 @@ final class EditorModel: ObservableObject {
         project.exportName = name
         project.exportDir = directory
         isDirty = true
+    }
+
+    /// Imports an FCPXML edit as a new project.
+    func importFCPXML() {
+        guard confirmDiscard() else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        if let t = UTType(filenameExtension: "fcpxml") { panel.allowedContentTypes = [t] }
+        panel.allowsOtherFileTypes = true
+        panel.prompt = "Import"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { @MainActor in
+            if !(await FCPXMLImporter.importProject(from: url, model: self)) {
+                let a = BadMicAlert()
+                a.messageText = "Couldn't import that FCPXML"
+                a.informativeText = "It may use a structure this version doesn't understand yet."
+                a.runModal()
+            }
+        }
     }
 
     /// Renders the frame under the playhead, for previews.
