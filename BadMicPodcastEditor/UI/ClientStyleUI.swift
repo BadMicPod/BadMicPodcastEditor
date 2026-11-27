@@ -127,7 +127,10 @@ struct ClientStyleBar: View {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.xml]
+        var types: [UTType] = [.xml]
+        if let fcpxml = UTType(filenameExtension: "fcpxml") { types.append(fcpxml) }
+        panel.allowedContentTypes = types
+        panel.allowsOtherFileTypes = true
         panel.prompt = "Learn"
         panel.message = "Choose an edit XML (FCPXML or Premiere) from an episode you cut."
         guard panel.runModal() == .OK, let url = panel.url else { return }
