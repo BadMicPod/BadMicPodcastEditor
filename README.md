@@ -22,7 +22,7 @@ Download the latest release from [GitHub Releases](https://github.com/BadMicPod/
 - Markers and in/out points, to mark the moments that matter and work on or export just part of your edit
 - Split, ripple delete, close gaps, detach audio, duplicate, freeze frame and reverse
 - Text and solids, on as many video and audio tracks as you need
-- Multicam: angles from one recording, synced by sound and switched in a click
+- Multicam: angles from one recording, synced by sound. Switch with the angle bar or keys 1-9; choose whether a switch changes picture, picture+sound, or sound only
 - Editable keyboard shortcuts
 
 ### Color
