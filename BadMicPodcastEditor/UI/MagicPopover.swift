@@ -332,6 +332,8 @@ private struct PromptForm: View {
          "Smooth this out: fix jumpy cuts, add a dissolve only where the scene changes, even out the sound, and fade in and out."),
         ("One look", "camera.filters",
          "Give it one consistent look: the same warm film grade on every shot, matched in brightness so it feels like one film."),
+        ("Best angles", "arrow.triangle.2.circlepath",
+         "Switch to the best camera angle at each cut on the multicam clips: close-ups when someone is talking, the wide shot for action, and keep the angle changes on the beat."),
     ]
 
     private static let sound: [Idea] = [
