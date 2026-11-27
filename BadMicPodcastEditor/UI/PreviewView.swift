@@ -148,6 +148,12 @@ struct PreviewView: View {
                     if let s = source.current {
                         SourceFrame(current: s).frame(width: w, height: h)
                     }
+                    // Multicam: scope control in the upper corner, away from the angle previews.
+                    if model.multicamClipAtPlayhead != nil {
+                        MulticamScopeControl()
+                            .padding(8)
+                            .frame(width: w, height: h, alignment: .topTrailing)
+                    }
                     // Multicam: quick angle switcher at the bottom of the viewer.
                     if let mc = model.multicamClipAtPlayhead, let group = model.project.multicamGroup(mc.multicamGroupID) {
                         MulticamAngleBar(model: model, clip: mc, group: group)
@@ -487,7 +493,7 @@ struct MulticamAngleBar: View {
                 let asset = model.project.asset(group.angleAssetIDs[i])
                 VStack(spacing: 4) {
                     if let url = asset?.url {
-                        AngleThumbnail(url: url, time: thumbTime + (group.syncOffsets.indices.contains(i) ? group.syncOffsets[i] : 0))
+                        LiveAngleView(url: url, time: thumbTime + (group.syncOffsets.indices.contains(i) ? group.syncOffsets[i] : 0), isPlaying: model.isPlaying)
                             .frame(width: 128, height: 72)
                             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                             .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(i == (clip.multicamAngle ?? 0) ? Theme.accent : Theme.ink.opacity(0.1), lineWidth: i == (clip.multicamAngle ?? 0) ? 2 : 1))
@@ -510,10 +516,20 @@ struct MulticamAngleBar: View {
                 }
             }
         }
-        HStack(spacing: 6) {
+        .padding(6)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.panel.opacity(0.85)))
+    }
+}
+
+/// A compact scope picker shown away from the angle previews.
+private struct MulticamScopeControl: View {
+    @State private var scope: MulticamSwitchScope = MulticamSwitchScope(rawValue: UserDefaults.standard.string(forKey: "multicamSwitchScope") ?? "") ?? .videoOnly
+
+    var body: some View {
+        HStack(spacing: 4) {
             Text("Switch:")
                 .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(Theme.textDim)
+                .foregroundStyle(Theme.text)
             Picker("", selection: $scope) {
                 ForEach(MulticamSwitchScope.allCases) { s in
                     Text(s.label).tag(s)
@@ -525,64 +541,67 @@ struct MulticamAngleBar: View {
             .onChange(of: scope) { _, new in
                 UserDefaults.standard.set(new.rawValue, forKey: "multicamSwitchScope")
             }
-            Text(scope.help)
-                .font(.system(size: 10))
-                .foregroundStyle(Theme.textFaint)
         }
         .padding(6)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.panel.opacity(0.85)))
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.panel.opacity(0.9)))
     }
 }
-
-/// A live thumbnail of one multicam angle at the playhead.
-private struct AngleThumbnail: View {
+private struct LiveAngleView: View {
     let url: URL
     let time: Double
-    @State private var image: NSImage?
+    let isPlaying: Bool
+    @State private var player: AVPlayer?
 
     var body: some View {
-        ZStack {
-            Color.black
-            if let image {
-                Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+        Group {
+            if let player {
+                AnglePlayerView(player: player)
             } else {
-                VStack(spacing: 2) {
-                    ProgressView().controlSize(.small)
-                    Text(url.lastPathComponent)
-                        .font(.system(size: 8))
-                        .foregroundStyle(.white.opacity(0.6))
-                        .lineLimit(1)
-                }
+                Color.black
             }
         }
-        .task(id: Int((time * 20).rounded())) {
-            image = await grabAngleFrame(url: url, time: time)
+        .onAppear {
+            let p = AVPlayer(url: url)
+            p.isMuted = true
+            player = p
+            seek(p, to: time)
+            if isPlaying { p.play() }
         }
+        .onDisappear {
+            player?.pause()
+            player = nil
+        }
+        .onChange(of: time) { _, new in
+            guard let p = player, !isPlaying else { return }
+            seek(p, to: new)
+        }
+        .onChange(of: isPlaying) { _, playing in
+            guard let p = player else { return }
+            if playing { p.play() } else { p.pause(); seek(p, to: time) }
+        }
+    }
+
+    private func seek(_ p: AVPlayer, to t: Double) {
+        p.seek(to: CMTime(seconds: max(0, t), preferredTimescale: 600),
+               toleranceBefore: CMTime(seconds: 0.05, preferredTimescale: 600),
+               toleranceAfter: CMTime(seconds: 0.05, preferredTimescale: 600))
     }
 }
 
-private func grabAngleFrame(url: URL, time: Double) async -> NSImage? {
-    let asset = AVURLAsset(url: url)
-    let duration = (try? await asset.load(.duration))?.seconds ?? 0
-    let clamped = min(max(0, time), max(0, duration - 0.05))
-    let gen = AVAssetImageGenerator(asset: asset)
-    gen.appliesPreferredTrackTransform = true
-    gen.maximumSize = CGSize(width: 256, height: 144)
-    gen.requestedTimeToleranceBefore = CMTime(seconds: 0.5, preferredTimescale: 600)
-    gen.requestedTimeToleranceAfter = CMTime(seconds: 0.5, preferredTimescale: 600)
-    do {
-        var actual = CMTime.zero
-        let cg = try gen.copyCGImage(at: CMTime(seconds: clamped, preferredTimescale: 600), actualTime: &actual)
-        return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
-    } catch {
-        // Try the very start as a last resort.
-        do {
-            var actual = CMTime.zero
-            let cg = try gen.copyCGImage(at: .zero, actualTime: &actual)
-            return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
-        } catch {
-            FileHandle.standardError.write("angle thumb failed \(url.lastPathComponent) @\(clamped): \(error.localizedDescription)\n".data(using: .utf8)!)
-            return nil
+private struct AnglePlayerView: NSViewRepresentable {
+    let player: AVPlayer
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        let layer = AVPlayerLayer(player: player)
+        layer.videoGravity = .resizeAspectFill
+        view.layer = layer
+        return view
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let layer = nsView.layer as? AVPlayerLayer {
+            layer.player = player
+            layer.frame = nsView.bounds
         }
     }
 }
