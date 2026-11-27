@@ -556,6 +556,36 @@ private struct MagicSettings: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
+                    SectionLabel(text: "Multicam")
+                    VStack(spacing: 0) {
+                        ToggleRow(title: "Number keys switch angles",
+                                  note: "Pressing 1–9 switches the angle of the multicam clip under the playhead. Turn off if you want those keys for typing.",
+                                  isOn: Binding(get: { UserDefaults.standard.object(forKey: "multicamAngleKeysEnabled") as? Bool ?? true },
+                                                set: { UserDefaults.standard.set($0, forKey: "multicamAngleKeysEnabled") }),
+                                  boxed: false)
+                        Divider().overlay(Theme.stroke)
+                        HStack(alignment: .center, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Default switch scope").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.text)
+                                Text("What an angle switch changes unless you pick another in the viewer.")
+                                    .font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+                            }
+                            Spacer()
+                            Picker("", selection: Binding(
+                                get: { MulticamSwitchScope(rawValue: UserDefaults.standard.string(forKey: "multicamSwitchScope") ?? "") ?? .videoAndAudio },
+                                set: { UserDefaults.standard.set($0.rawValue, forKey: "multicamSwitchScope") })) {
+                                ForEach(MulticamSwitchScope.allCases) { s in Text(s.label).tag(s) }
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(width: 110)
+                        }
+                        .padding(12)
+                        // Scope default
+                    }
+                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.field))
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
                     SectionLabel(text: "AI apps")
                     VStack(spacing: 0) {
                         ForEach(Array(apps.enumerated()), id: \.element) { i, app in
