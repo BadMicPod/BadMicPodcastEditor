@@ -566,7 +566,12 @@ enum MCPTools {
         case "auto_edit":
             try notInMagic()
             while MagicShow.isRunning || MagicState.shared.busy { try? await Task.sleep(nanoseconds: 50_000_000) }
-            MagicShow.start(model: model, fromMouse: false)
+            // The episode's client, so the cut follows their style too.
+            let id = model.project.clientStyleID
+            StyleStore.shared.activeID = StyleStore.shared.styles.contains { $0.id == id } ? id : nil
+            var recipe = LocalRecipe.plain
+            if let style = StyleStore.shared.active { StyleAnalyzer.applyLocalDefaults(style, to: &recipe) }
+            MagicShow.start(model: model, fromMouse: false, recipe: recipe)
             try? await Task.sleep(nanoseconds: 100_000_000)
             while MagicShow.isRunning || MagicState.shared.busy { try? await Task.sleep(nanoseconds: 100_000_000) }
             return json(projectJSON(model.project, title: model.title, playhead: model.playhead))

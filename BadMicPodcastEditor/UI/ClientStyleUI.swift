@@ -86,6 +86,9 @@ struct ClientStyleBar: View {
         .onAppear {
             // The episode decides the client: reopening a client's project brings their style back.
             let id = model.project.clientStyleID
+            if let id, !store.styles.contains(where: { $0.id == id }) {
+                model.setClientStyle(nil)
+            }
             store.activeID = store.styles.contains { $0.id == id } ? id : nil
             // A saved file the store couldn't read: say so where it can be seen, once per run.
             if let problem = store.unshownProblem() {
