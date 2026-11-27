@@ -466,20 +466,25 @@ struct MulticamAngleBar: View {
         return model.project.asset(group.angleAssetIDs[i])?.name ?? "Angle \(i + 1)"
     }
 
+    private var thumbTime: Double { (model.playhead - clip.start) }
+
     var body: some View {
         HStack(spacing: 6) {
             ForEach(group.angleAssetIDs.indices, id: \.self) { i in
-                Button(name(for: i)) { model.switchMulticamAngle(at: model.playhead, to: i, scope: scope) }
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(i == (clip.multicamAngle ?? 0) ? Theme.bg : Theme.text)
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(i == (clip.multicamAngle ?? 0) ? Theme.accent : Theme.field))
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        Button("Rename Angle…") { rename(i) }
+                let asset = model.project.asset(group.angleAssetIDs[i])
+                VStack(spacing: 4) {
+                    if let url = asset?.url {
+                        Color.black.frame(width: 128, height: 72)
                     }
+                    Button(name(for: i)) { model.switchMulticamAngle(at: model.playhead, to: i, scope: scope) }
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(i == (clip.multicamAngle ?? 0) ? Theme.bg : Theme.text)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(i == (clip.multicamAngle ?? 0) ? Theme.accent : Theme.field))
+                        .buttonStyle(.plain)
+                }
             }
-            Divider().frame(height: 18)
+            Divider().frame(height: 90)
             Picker("", selection: $scope) {
                 ForEach(MulticamSwitchScope.allCases) { s in
                     Text(s.label).tag(s)
@@ -495,17 +500,40 @@ struct MulticamAngleBar: View {
         .padding(6)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.panel.opacity(0.85)))
     }
+}
 
-    private func rename(_ i: Int) {
-        let alert = BadMicAlert()
-        alert.messageText = "Rename angle"
-        alert.informativeText = "A short name for this camera, shown on the angle bar and the keys."
-        let field = NSTextField(string: name(for: i))
-        field.frame = NSRect(x: 0, y: 0, width: 220, height: 24)
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Rename")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        model.renameMulticamAngle(groupID: group.id, angle: i, to: field.stringValue)
+/// A live thumbnail of one multicam angle at the playhead.
+private struct AngleThumbnail: View {
+    let url: URL
+    let time: Double
+    @State private var image: NSImage?
+
+    var body: some View {
+        ZStack {
+            Color.black
+            if let image {
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+        }
+        .task(id: Int((time * 4).rounded())) {
+            image = await grabAngleFrame(url: url, time: time)
+        }
+    }
+}
+
+private func grabAngleFrame(url: URL, time: Double) async -> NSImage? {
+    let asset = AVURLAsset(url: url)
+    let gen = AVAssetImageGenerator(asset: asset)
+    gen.appliesPreferredTrackTransform = true
+    gen.maximumSize = CGSize(width: 256, height: 144)
+    gen.requestedTimeToleranceBefore = CMTime(seconds: 0.1, preferredTimescale: 600)
+    gen.requestedTimeToleranceAfter = CMTime(seconds: 0.1, preferredTimescale: 600)
+    do {
+        let cg = try await gen.image(at: CMTime(seconds: max(0, time), preferredTimescale: 600)).image
+        return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+    } catch {
+        return nil
     }
 }
