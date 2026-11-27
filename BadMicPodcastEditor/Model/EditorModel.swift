@@ -2000,6 +2000,7 @@ final class EditorModel: ObservableObject {
         let oldOffset = group.syncOffsets[curAngle]
         let newOffset = group.syncOffsets[angle]
         let newAsset = group.angleAssetIDs[angle]
+        let newHasAudio = self.project.asset(newAsset)?.hasAudio ?? false
         mutate { p in
             if scope != .audioOnly {
                 guard let i = p.clips.firstIndex(where: { $0.id == segID }) else { return }
@@ -2007,7 +2008,7 @@ final class EditorModel: ObservableObject {
                 p.clips[i].assetID = newAsset
                 p.clips[i].sourceStart = p.clips[i].sourceStart - oldOffset + newOffset
             }
-            if scope != .videoOnly {
+            if scope != .videoOnly && newHasAudio {
                 // The linked audio clip follows the switched angle.
                 let linkID = p.clips.first(where: { $0.id == segID })?.linkID
                     ?? (p.clips.first { $0.isMulticam && $0.multicamGroupID == c.multicamGroupID && $0.start <= t + 1e-6 && $0.end > t - 1e-6 })?.linkID
