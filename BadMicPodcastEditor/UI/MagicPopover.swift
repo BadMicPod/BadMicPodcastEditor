@@ -115,6 +115,12 @@ struct MagicPopover: View {
                     }
                 }
                 .padding(.bottom, 8)
+                // Local follows what it can of the client's style: pace and frame shape.
+                HStack(spacing: 0) {
+                    ClientStyleBar(model: model, hasEdit: hasEdit)
+                    Spacer(minLength: 0)
+                }
+                .padding(.bottom, 8)
                 if LocalBrain.available {
                     // Apple's on-device model reads the request into settings Local follows.
                     PromptBox(model: model, text: $ai.prompt,
@@ -1054,6 +1060,9 @@ struct MagicNoteView: View {
 @MainActor
 enum LocalMagic {
     static func run(_ typedWithMarkers: String, model: EditorModel) {
+        // The episode decides the client.
+        let id = model.project.clientStyleID
+        StyleStore.shared.activeID = StyleStore.shared.styles.contains { $0.id == id } ? id : nil
         // Markers named with @ are read as their times ("from @Jump to @Landing" is "from 0:12 to 0:18").
         let typed = MagicMention.markersAsTimes(typedWithMarkers, project: model.project)
         // What they're pointing at, before Magic locks the window and clears the selection; and the
@@ -1067,7 +1076,11 @@ enum LocalMagic {
         // No request: Local's own improvement, with the same note at the end (Undo, Done).
         guard !request.isEmpty else {
             let started = Date()
-            return MagicShow.start(model: model, fromMouse: false) { said, changed in
+            var recipe = LocalRecipe.plain
+            if let style = StyleStore.shared.active {
+                StyleAnalyzer.applyLocalDefaults(style, to: &recipe)
+            }
+            return MagicShow.start(model: model, fromMouse: false, recipe: recipe) { said, changed in
                 if CommandLine.arguments.contains("--magic-local") { logTitles(model) }
                 note(said, changed: changed, detail: ["On this Mac", "\(Int(Date().timeIntervalSince(started).rounded()))s"])
             }
@@ -1240,6 +1253,10 @@ enum LocalMagic {
                 }
                 // Asked for something specific: do just that, not the general clean-up as well.
                 recipe.onlyAsked = !LocalBrain.isGeneral(request)
+                // A client's house style, for what this on-device cut can honor.
+                if !recipe.onlyAsked, let style = StyleStore.shared.active {
+                    StyleAnalyzer.applyLocalDefaults(style, to: &recipe)
+                }
             } catch {
                 guard run == MagicShow.runID else { return }
                 state.busy = false

@@ -11,11 +11,19 @@ struct ClientStyleBar: View {
 
     @State private var hovering = false
 
-    private var active: ClientStyle? { store.active }
+    private var activeID: UUID? { model.project.clientStyleID }
+
+    private var active: ClientStyle? { store.styles.first { $0.id == activeID } }
 
     private var label: String {
         guard let active else { return "Client style" }
         return active.summary.isEmpty ? "\(active.name) · not trained" : "\(active.name) style"
+    }
+
+    /// Picks the client for this episode: remembered in the project, and used by Magic now.
+    private func choose(_ id: UUID?) {
+        store.activeID = id
+        model.setClientStyle(id)
     }
 
     var body: some View {
@@ -34,7 +42,10 @@ struct ClientStyleBar: View {
                 }
             }
             Divider()
-            Button("New Client…") { ClientStyleDialog.newClient(store: store) }
+            Button("New Client…") {
+                ClientStyleDialog.newClient(store: store)
+                choose(store.activeID)
+            }
             Button("Train from This Episode…") { train() }
                 .disabled(!hasEdit)
             Button("Import Edit XML…") { importXML() }
@@ -73,6 +84,9 @@ struct ClientStyleBar: View {
                 : "Magic follows \($0.name)'s style. Change it, or teach it from another episode." }
               ?? "Pick a client so Magic can follow their style, or teach it one from a finished episode.")
         .onAppear {
+            // The episode decides the client: reopening a client's project brings their style back.
+            let id = model.project.clientStyleID
+            store.activeID = store.styles.contains { $0.id == id } ? id : nil
             // A saved file the store couldn't read: say so where it can be seen, once per run.
             if let problem = store.unshownProblem() {
                 ClientStyleDialog.say("Couldn't read saved client styles", problem)
@@ -82,9 +96,9 @@ struct ClientStyleBar: View {
 
     private func item(name: String, id: UUID?) -> some View {
         Button {
-            store.activeID = id
+            choose(id)
         } label: {
-            if store.activeID == id {
+            if activeID == id {
                 Label(name, systemImage: "checkmark")
             } else {
                 Text(name)
@@ -96,12 +110,13 @@ struct ClientStyleBar: View {
 
     private func train() {
         guard hasEdit else { return }
-        guard let profile = StyleAnalyzer.profile(for: model.project) else {
+        guard let learned = StyleAnalyzer.learned(for: model.project) else {
             ClientStyleDialog.say("Nothing to learn from yet",
                                   "The timeline has no picture clips, or is shorter than a second. Cut an episode first, then train from it.")
             return
         }
-        ClientStyleDialog.learn(profile, from: "this episode", store: store)
+        ClientStyleDialog.learn(learned, from: "this episode", store: store)
+        choose(store.activeID)
     }
 
     private func importXML() {
@@ -117,17 +132,19 @@ struct ClientStyleBar: View {
             ClientStyleDialog.say("Couldn't open that XML", "It isn't UTF-8 text, or it can't be read.")
             return
         }
-        guard let profile = StyleAnalyzer.profile(fromXML: text) else {
+        guard let learned = StyleAnalyzer.learned(fromXML: text) else {
             ClientStyleDialog.say("Couldn't learn from that XML",
                                   "No picture clips were found in \(url.lastPathComponent). Export the timeline as FCPXML or Premiere XML and try again.")
             return
         }
-        ClientStyleDialog.learn(profile, from: url.lastPathComponent, store: store)
+        ClientStyleDialog.learn(learned, from: url.lastPathComponent, store: store)
+        choose(store.activeID)
     }
 
     private func editActive() {
         guard let active else { return }
         ClientStyleDialog.edit(active, store: store)
+        choose(store.activeID)
     }
 
     private func deleteActive() {
@@ -138,7 +155,10 @@ struct ClientStyleBar: View {
         // Cancel first, so Return can't delete a client.
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: "Delete")
-        if alert.runModal() == .alertSecondButtonReturn { store.remove(active.id) }
+        if alert.runModal() == .alertSecondButtonReturn {
+            store.remove(active.id)
+            choose(nil)
+        }
     }
 }
 
@@ -206,12 +226,12 @@ enum ClientStyleDialog {
     }
 
     /// Shows what was learned and offers to keep it, on the chosen client or a new one.
-    static func learn(_ profile: String, from source: String, store: StyleStore) {
+    static func learn(_ learned: LearnedStyle, from source: String, store: StyleStore) {
         let alert = BadMicAlert()
         alert.messageText = "Learn this style?"
         alert.informativeText = "Magic read \(source) and would follow this recipe on future episodes."
         let accessory = FlippedBox(width: 380, height: 208)
-        accessory.readOnly(profile, y: 0, height: 208)
+        accessory.readOnly(learned.profile, y: 0, height: 208)
         alert.accessoryView = accessory
 
         let active = store.active
@@ -222,7 +242,8 @@ enum ClientStyleDialog {
 
         func keep(_ style: ClientStyle) {
             var updated = style
-            updated.profile = profile
+            updated.profile = learned.profile
+            updated.facts = learned.facts
             updated.trainedFrom = source
             if store.styles.contains(where: { $0.id == updated.id }) {
                 store.update(updated)
@@ -245,7 +266,8 @@ enum ClientStyleDialog {
             }
         } else if response == (active == nil ? .alertFirstButtonReturn : .alertSecondButtonReturn) {
             var style = ClientStyle(name: "")
-            style.profile = profile
+            style.profile = learned.profile
+            style.facts = learned.facts
             style.trainedFrom = source
             edit(style, store: store, creating: true)
         }

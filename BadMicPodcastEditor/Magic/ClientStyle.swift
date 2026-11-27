@@ -1,6 +1,21 @@
 import Foundation
 import SwiftUI
 
+/// The numbers behind a learned style, kept apart from the words so Local and later features can use them.
+struct StyleFacts: Codable, Hashable {
+    var cutsPerMinute: Double?
+    var averageShot: Double?
+    var width: Int?
+    var height: Int?
+    var fps: Double?
+    var multicam: Bool?
+    var captions: Bool?
+    var transitions: Int?
+    var titles: Int?
+    var hasMusic: Bool?
+    var duckedMusic: Bool?
+}
+
 /// A client's editing style: what they like, learned from a finished episode or an edit XML.
 struct ClientStyle: Identifiable, Codable, Hashable {
     var id = UUID()
@@ -11,6 +26,8 @@ struct ClientStyle: Identifiable, Codable, Hashable {
     var profile: String = ""
     /// What the profile was learned from ("Episode 12", "client.xml").
     var trainedFrom: String = ""
+    /// The same profile as numbers, for Local and anything else that can't read prose.
+    var facts: StyleFacts?
     var updated = Date()
 
     init(name: String, instructions: String = "") {
@@ -27,11 +44,12 @@ struct ClientStyle: Identifiable, Codable, Hashable {
         instructions = try c.decodeIfPresent(String.self, forKey: .instructions) ?? ""
         profile = try c.decodeIfPresent(String.self, forKey: .profile) ?? ""
         trainedFrom = try c.decodeIfPresent(String.self, forKey: .trainedFrom) ?? ""
+        facts = try c.decodeIfPresent(StyleFacts.self, forKey: .facts)
         updated = try c.decodeIfPresent(Date.self, forKey: .updated) ?? Date()
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, instructions, profile, trainedFrom, updated
+        case id, name, instructions, profile, trainedFrom, facts, updated
     }
 
     var summary: String {
@@ -52,14 +70,14 @@ final class StyleStore: ObservableObject {
     @Published private(set) var loadProblem: String?
     private var problemShown = false
 
+    var active: ClientStyle? { styles.first { $0.id == activeID } }
+
     /// The load problem, the first time it's asked for in this run (to show it once, not every popover).
     func unshownProblem() -> String? {
         guard let loadProblem, !problemShown else { return nil }
         problemShown = true
         return loadProblem
     }
-
-    var active: ClientStyle? { styles.first { $0.id == activeID } }
 
     private let file: URL = {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -122,9 +140,15 @@ final class StyleStore: ObservableObject {
     }
 }
 
+/// A learned style: the words Magic reads, and the same facts as numbers.
+struct LearnedStyle {
+    var profile: String
+    var facts: StyleFacts
+}
+
 /// Turns an edit (a project or an XML) into a short style profile an AI can follow.
 enum StyleAnalyzer {
-    static func profile(for p: Project) -> String? {
+    static func learned(for p: Project) -> LearnedStyle? {
         let visual = p.clips.filter { $0.kind != .audio }
         let duration = p.duration
         guard !visual.isEmpty, duration >= 1 else { return nil }
@@ -142,32 +166,87 @@ enum StyleAnalyzer {
         let multicam = visual.filter(\.isMulticam).count
         let markers = p.markers?.count ?? 0
         let captions = p.captions != nil
-        let musicLike = p.clips.filter { c in
-            c.kind == .audio && c.linkID == nil
+        let audioClips = p.clips.filter { $0.kind == .audio }
+        let musicClips = audioClips.filter { $0.linkID == nil }
+        let duckedTracks = p.audioTracks.filter { $0.duckUnder != nil }.count
+        let audioFades = audioClips.filter { $0.fadeIn > 0 || $0.fadeOut > 0 }.count
+        let fadeIns = visual.filter { $0.fadeIn > 0 }.count
+        let fadeOuts = visual.filter { $0.fadeOut > 0 }.count
+        let overlays = visual.filter { c in
+            (p.videoTracks.firstIndex { $0.id == c.trackID } ?? 0) > 0
         }.count
+        let texts = p.clips.filter { $0.kind == .text }
+        let firstText = texts.min { $0.start < $1.start }
+        let first = visual.min { $0.start < $1.start }
+        let last = visual.max { $0.end < $1.end }
+
+        var facts = StyleFacts()
+        facts.cutsPerMinute = cutsPerMin
+        facts.averageShot = avg
+        facts.width = p.width
+        facts.height = p.height
+        facts.fps = p.fps
+        facts.multicam = multicam > 0
+        facts.captions = captions
+        facts.transitions = transitions
+        facts.titles = titles
+        facts.hasMusic = !musicClips.isEmpty
+        facts.duckedMusic = duckedTracks > 0
+
         var lines: [String] = []
         lines.append("Style learned from a finished \(fmt(duration)) edit: \(shots) picture clips, average shot \(String(format: "%.1f", avg))s, about \(String(format: "%.1f", cutsPerMin)) cuts per minute.")
-        var facts: [String] = []
-        facts.append("Frame: \(p.width) by \(p.height) at \(String(format: "%g", p.fps)) fps.")
-        facts.append("Pacing: \(pacing(cutsPerMin, avg: avg)).")
-        facts.append("Transitions: \(transitions == 0 ? "hard cuts only, no transitions" : "\(transitions) transition\(transitions == 1 ? "" : "s")").")
-        if titles > 0 { facts.append("Titles: \(titles) on the timeline.") }
-        if solids > 0 { facts.append("Solids: \(solids).") }
-        if grades > 0 { facts.append("Colour: \(grades) graded clip\(grades == 1 ? "" : "s").") }
-        if ramps > 0 { facts.append("Speed ramps: \(ramps).") }
-        if frozen > 0 { facts.append("Freeze frames: \(frozen).") }
-        if reversed > 0 { facts.append("Reversed clips: \(reversed).") }
-        if multicam > 0 {
-            facts.append("Camera: multicam, \(multicam) angle cut\(multicam == 1 ? "" : "s") across the episode.")
+        var bullets: [String] = []
+        bullets.append("Frame: \(p.width) by \(p.height) at \(String(format: "%g", p.fps)) fps.")
+        bullets.append("Pacing: \(pacing(cutsPerMin, avg: avg)).")
+        if let first, visual.count > 1 { bullets.append("Opening shot: \(fmt(first.duration)); closing shot: \(fmt(last?.duration ?? first.duration)).") }
+        if transitions == 0 {
+            bullets.append("Transitions: hard cuts only, no transitions.")
         } else {
-            facts.append("Camera: one angle throughout.")
+            let kinds = Dictionary(grouping: p.clips.compactMap(\.transitionIn), by: \.kind)
+            let mix = TransitionKind.allCases.compactMap { kind -> String? in
+                let n = kinds[kind]?.count ?? 0
+                return n > 0 ? "\(n) \(kind.label.lowercased())" : nil
+            }
+            bullets.append("Transitions: \(transitions), \(mix.joined(separator: ", ")).")
         }
-        if captions { facts.append("Captions: on.") }
-        if markers > 0 { facts.append("Markers: \(markers).") }
-        facts.append("Audio: \(audioTracks) audio track\(audioTracks == 1 ? "" : "s")\(musicLike > 0 ? ", \(musicLike) standalone sound/music clip\(musicLike == 1 ? "" : "s")" : "").")
-        lines.append(contentsOf: facts.map { "- \($0)" })
+        if fadeIns + fadeOuts > 0 { bullets.append("Picture fades: \(fadeIns) in, \(fadeOuts) out.") }
+        if overlays > 0 { bullets.append("Overlays: \(overlays) clip\(overlays == 1 ? "" : "s") above V1.") }
+        if titles > 0 {
+            if let firstText {
+                bullets.append("Titles: \(titles), the first at \(fmt(firstText.start)). Look: \(titleLook(firstText.text)).")
+            } else {
+                bullets.append("Titles: \(titles).")
+            }
+        }
+        if solids > 0 { bullets.append("Solids: \(solids).") }
+        if grades > 0 { bullets.append("Colour: \(grades) graded clip\(grades == 1 ? "" : "s").") }
+        if ramps > 0 { bullets.append("Speed ramps: \(ramps).") }
+        if frozen > 0 { bullets.append("Freeze frames: \(frozen).") }
+        if reversed > 0 { bullets.append("Reversed clips: \(reversed).") }
+        if multicam > 0 {
+            bullets.append("Camera: multicam, \(multicam) angle cut\(multicam == 1 ? "" : "s") across the episode.")
+        } else {
+            bullets.append("Camera: one angle throughout.")
+        }
+        if captions { bullets.append("Captions: on.") }
+        if markers > 0 { bullets.append("Markers: \(markers).") }
+        var audio = "Audio: \(audioTracks) audio track\(audioTracks == 1 ? "" : "s")"
+        if !musicClips.isEmpty {
+            let gain = musicClips.map(\.gainDB).reduce(0, +) / Double(musicClips.count)
+            audio += ", \(musicClips.count) standalone music/sound clip\(musicClips.count == 1 ? "" : "s") at about \(String(format: "%.0f", gain)) dB gain"
+        }
+        audio += "."
+        bullets.append(audio)
+        if audioFades > 0 { bullets.append("Sound fades: on \(audioFades) audio clip\(audioFades == 1 ? "" : "s").") }
+        if duckedTracks > 0 { bullets.append("Ducking: \(duckedTracks) track\(duckedTracks == 1 ? "" : "s") turn down under the voice.") }
+        lines.append(contentsOf: bullets.map { "- \($0)" })
         lines.append("Follow this recipe when cutting a new episode: match the shot lengths, pacing, use of transitions, titles, colour and sound treatment.")
-        return lines.joined(separator: "\n")
+        return LearnedStyle(profile: lines.joined(separator: "\n"), facts: facts)
+    }
+
+    private static func titleLook(_ text: TextStyle) -> String {
+        let font = text.fontName.isEmpty ? "the system font" : text.fontName
+        return "\(font) \(Int(text.size)) pt \(text.bold ? "bold" : "regular"), \(Int((text.x * 100).rounded()))% across and \(Int((text.y * 100).rounded()))% down"
     }
 
     private static func pacing(_ cutsPerMin: Double, avg: Double) -> String {
@@ -183,7 +262,7 @@ enum StyleAnalyzer {
     }
 
     /// Pulls the basic shape out of an FCPXML or Premiere XML: clip count, lengths, transitions.
-    static func profile(fromXML text: String) -> String? {
+    static func learned(fromXML text: String) -> LearnedStyle? {
         let parser = XMLShape()
         guard let data = text.data(using: .utf8) else { return nil }
         let xml = XMLParser(data: data)
@@ -194,10 +273,28 @@ enum StyleAnalyzer {
         let total = parser.seconds
         let avg = total / Double(parser.clips)
         let cutsPerMin = Double(parser.clips) / max(total / 60, 0.01)
-        return """
+        var facts = StyleFacts()
+        facts.cutsPerMinute = cutsPerMin
+        facts.averageShot = avg
+        facts.transitions = parser.transitions
+        let profile = """
         Style learned from an edit XML: \(parser.clips) picture clips over \(fmt(total)), average shot \(String(format: "%.1f", avg))s, about \(String(format: "%.1f", cutsPerMin)) cuts per minute, \(parser.transitions) transition\(parser.transitions == 1 ? "" : "s").
         Use the same shot lengths, order logic and transition habits when cutting a new episode.
         """
+        return LearnedStyle(profile: profile, facts: facts)
+    }
+
+    // MARK: Local
+
+    /// What Local can take from a client: its pace and frame shape.
+    static func applyLocalDefaults(_ style: ClientStyle, to recipe: inout LocalRecipe) {
+        guard let facts = style.facts else { return }
+        if recipe.pace == .unchanged, let cuts = facts.cutsPerMinute {
+            if cuts >= 10 { recipe.pace = .fast } else if cuts <= 4 { recipe.pace = .calm }
+        }
+        if recipe.frame == .unchanged, let w = facts.width, let h = facts.height {
+            if h > w { recipe.frame = .vertical } else if h == w { recipe.frame = .square }
+        }
     }
 
     private final class XMLShape: NSObject, XMLParserDelegate {

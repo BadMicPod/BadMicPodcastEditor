@@ -386,6 +386,8 @@ struct Project: Codable, Equatable {
     var hiddenMedia: [String]?
     /// Multicam groups: sets of camera angles played together.
     var multicamGroups: [MulticamGroup]?
+    /// The client whose style this episode is cut in (optional so older projects open).
+    var clientStyleID: UUID?
 }
 
 struct Marker: Codable, Hashable, Identifiable {

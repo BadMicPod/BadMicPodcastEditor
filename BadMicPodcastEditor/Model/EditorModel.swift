@@ -1651,6 +1651,13 @@ final class EditorModel: ObservableObject {
         isDirty = true
     }
 
+    /// Whose style this episode is cut in. Remembered in the project, so reopening it brings the client back.
+    func setClientStyle(_ id: UUID?) {
+        guard project.clientStyleID != id else { return }
+        project.clientStyleID = id
+        isDirty = true
+    }
+
     /// Remembers where exports go. Not an undoable edit.
     func setExportTarget(name: String, directory: String) {
         guard project.exportName != name || project.exportDir != directory else { return }

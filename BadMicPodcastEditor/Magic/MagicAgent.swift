@@ -375,6 +375,9 @@ final class MagicAgent: ObservableObject {
 
     func start(request: String, with kind: Kind, model: EditorModel) {
         guard !running, !MagicShow.isRunning else { return }
+        // The episode decides the client; sync before building the brief (covers --magic-ai too).
+        let id = model.project.clientStyleID
+        StyleStore.shared.activeID = StyleStore.shared.styles.contains { $0.id == id } ? id : nil
         // Disconnected in AI Agents means Magic doesn't use it either.
         AgentConnect.shared.refresh()
         guard available.contains(kind) else {
